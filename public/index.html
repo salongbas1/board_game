@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hearts LAN — 4 หรือ 8 ผู้เล่น</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1 id="pageTitle">♥ Hearts LAN — เลือกได้ 4 หรือ 8 ผู้เล่น ♥</h1>
+<div id="connStatus">กำลังเชื่อมต่อ...</div>
+
+<div id="mainMenuScreen">
+  <h2 style="color:#ffd76b; margin-top:0;">เลือกเกม</h2>
+  <div id="gameMenuList">
+    <div class="gameCard" id="gameCardHearts">
+      <div class="gameCardIcon">♥</div>
+      <div class="gameCardInfo">
+        <div class="gameCardName">Hearts</div>
+        <div class="gameCardDesc">เกมไพ่คลาสสิก เล่นได้ 4 หรือ 8 คนผ่าน LAN</div>
+      </div>
+      <div class="gameCardBtn">เล่นเลย</div>
+    </div>
+    <div class="gameCard" id="gameCardDnd">
+      <div class="gameCardIcon">🐉</div>
+      <div class="gameCardInfo">
+        <div class="gameCardName">Dungeons &amp; Dragons</div>
+        <div class="gameCardDesc">เครื่องมือช่วยเล่น: ทอยลูกเต๋า, การ์ดตัวละคร, DM คุม HP ปาร์ตี้</div>
+      </div>
+      <div class="gameCardBtn">เล่นเลย</div>
+    </div>
+    <div class="gameCard locked">
+      <div class="gameCardIcon">🃏</div>
+      <div class="gameCardInfo">
+        <div class="gameCardName">ไพ่แคง</div>
+        <div class="gameCardDesc">เกมไพ่ยอดนิยม</div>
+      </div>
+      <div class="gameCardBadge">เร็วๆ นี้</div>
+    </div>
+    <div class="gameCard locked">
+      <div class="gameCardIcon">🎴</div>
+      <div class="gameCardInfo">
+        <div class="gameCardName">Uno</div>
+        <div class="gameCardDesc">เกมไพ่สนุกสำหรับทุกวัย</div>
+      </div>
+      <div class="gameCardBadge">เร็วๆ นี้</div>
+    </div>
+    <div class="gameCard locked">
+      <div class="gameCardIcon">♠</div>
+      <div class="gameCardInfo">
+        <div class="gameCardName">โปเกอร์</div>
+        <div class="gameCardDesc">Texas Hold'em ผ่าน LAN</div>
+      </div>
+      <div class="gameCardBadge">เร็วๆ นี้</div>
+    </div>
+  </div>
+</div>
+
+<div id="joinScreen" style="display:none;">
+  <div>ตั้งชื่อของคุณเพื่อเข้าห้อง</div>
+  <input id="nameInput" maxlength="16" placeholder="ชื่อผู้เล่น">
+  <div id="joinError"></div>
+  <div><button id="joinBtn">เข้าห้อง</button></div>
+  <div><button id="backToMenuBtn" class="linkBtn">← กลับไปเลือกเกม</button></div>
+</div>
+
+<div id="dndJoinScreen">
+  <div>ตั้งชื่อผู้เล่นก่อนเข้าห้อง D&amp;D</div>
+  <input id="dndNameInput" maxlength="16" placeholder="ชื่อผู้เล่น">
+  <div id="dndJoinHint" style="font-size:12px; color:#9aa4b2; margin-top:6px;">คนแรกที่เข้าห้องจะเป็น Dungeon Master (DM) โดยอัตโนมัติ ปรับ HP ผู้เล่นคนอื่นได้</div>
+  <div><button id="dndJoinBtn">เข้าห้อง (ตัวละครใหม่)</button></div>
+  <div id="dndSeatListBox" style="display:none; margin-top:14px; text-align:left;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <span style="font-size:12px; color:#9aa4b2;">ที่นั่งที่เคยออกไป — กดเพื่อกลับเข้านั่งที่เดิม</span>
+      <button type="button" id="dndSeatRefreshBtn" class="linkBtn" style="font-size:11px !important;">🔄 รีเฟรช</button>
+    </div>
+    <div id="dndSeatList" style="margin:8px 0;"></div>
+  </div>
+  <div><button id="dndBackToMenuBtn" class="linkBtn">← กลับไปเลือกเกม</button></div>
+</div>
+
+<div id="dndScreen">
+  <div id="dndHeaderRow">
+    <h2 style="color:#ffd76b; text-align:center; margin:4px 0;">🐉 D&amp;D — เครื่องมือช่วยเล่น <span id="dndYouAreDm" style="display:none; font-size:13px;">(คุณเป็น DM)</span></h2>
+    <button id="dndHowToBtn" type="button">📖 วิธีเล่น</button>
+    <button id="dndPatchNotesBtn" type="button">📜 อัปเดตล่าสุด</button>
+  </div>
+  <div id="dndErrorToast" style="display:none;"></div>
+  <div id="dndSceneBanner">
+    <div id="dndSceneLocation"></div>
+    <div id="dndSceneSituation"></div>
+  </div>
+  <div id="dndLayout">
+    <div id="dndLeftCol">
+      <div id="dndParty">
+        <h3>ปาร์ตี้</h3>
+        <div id="dndPartyList"></div>
+      </div>
+
+      <!-- มุมมองการ์ดตัวละครหลังล็อกแล้ว (อ่านอย่างเดียว) — อยู่ทางซ้ายคู่กับปาร์ตี้ -->
+      <div id="dndMySheetBox" style="display:none;">
+        <h3>การ์ดตัวละครของฉัน 🔒</h3>
+        <div id="dndMySheetView"></div>
+        <div class="dndRangeHint" style="margin-top:6px;">ล็อกแล้ว — ให้ DM เป็นผู้แก้ไขหรือปลดล็อกให้เท่านั้น</div>
+
+        <div id="dndEquipBox">
+          <h4>🎒 อุปกรณ์สวมใส่ <span class="dndRangeHint">(DM เป็นผู้จัดการ — ป้องกันรวม: <span id="dndTotalDefVal">0</span> · โจมตีรวม: <span id="dndTotalAtkVal">0</span>)</span></h4>
+          <div id="dndEquipGrid" class="dndEquipGrid"></div>
+        </div>
+
+        <div class="dndAppearanceBox">
+          <h4 style="margin:10px 0 0 0; color:#ffd76b; font-size:12px;">💇 แต่งหน้าตาตัวละคร <span class="dndRangeHint">(แก้ไขได้เองตลอดเวลา ไม่ต้องรอ DM ปลดล็อก)</span></h4>
+          <label>ทรงผม</label>
+          <div class="dndApPickRow" id="dndMySheetHairRow"></div>
+          <label>สีผม</label>
+          <div class="dndApPickRow" id="dndMySheetHairColorRow"></div>
+          <label>สีหน้า</label>
+          <div class="dndApPickRow" id="dndMySheetFaceRow"></div>
+        </div>
+      </div>
+    </div>
+    <div id="dndMidCol">
+      <!-- แผงสถานะสำหรับ DM — DM ไม่ต้องสร้างการ์ดตัวละครของตัวเอง เพราะเป็นบทบาทที่คุมเกม ไม่ใช่ตัวละครในปาร์ตี้ -->
+      <div id="dndDmStatusBox" style="display:none;">
+        <h3>🎛️ สถานะห้อง (DM)</h3>
+        <div id="dndDmStatusContent"></div>
+      </div>
+
+      <!-- DM จัดลำดับเทิร์นผู้เล่นเอง (เลื่อนขึ้น/ลง ไม่ทอย initiative) แล้วกดเลื่อนตาไปเรื่อยๆ วนลูป -->
+      <div id="dndTurnBox" style="display:none;">
+        <h3>🎯 ลำดับเทิร์นผู้เล่น</h3>
+        <div id="dndTurnOrderList"></div>
+        <div id="dndTurnBtnRow">
+          <button type="button" id="dndTurnStartBtn">▶️ เริ่มเทิร์น</button>
+          <button type="button" id="dndTurnNextBtn">⏭️ ตาถัดไป</button>
+          <button type="button" id="dndTurnStopBtn">⏹️ หยุด</button>
+        </div>
+      </div>
+
+      <!-- DM เท่านั้นที่ประกาศสถานที่/สถานการณ์ปัจจุบันให้ทุกคนเห็นพร้อมกันได้ -->
+      <div id="dndSceneEditBox" style="display:none;">
+        <h4>📍 ประกาศสถานที่ / สถานการณ์ <span class="dndRangeHint">(ขึ้นจอทุกคนทันที)</span></h4>
+        <div class="dndFieldRow">
+          <div class="dndField"><label>สถานที่ปัจจุบัน</label><input id="dndSceneLocationInput" maxlength="60" placeholder="เช่น ป่าต้องคำสาป"></div>
+        </div>
+        <div class="dndFieldRow">
+          <div class="dndField"><label>สถานการณ์</label><textarea id="dndSceneSituationInput" rows="2" maxlength="300" placeholder="เช่น หมาป่าฝูงใหญ่ล้อมปาร์ตี้ไว้"></textarea></div>
+        </div>
+        <div id="dndSceneEditBtnRow">
+          <button id="dndSceneAnnounceBtn" type="button">📢 ประกาศ</button>
+          <button id="dndSceneClearBtn" type="button">ล้างประกาศ</button>
+        </div>
+      </div>
+
+      <!-- สร้างตัวละครครั้งแรก (บันทึกได้ครั้งเดียว) -->
+      <div id="dndCreateBox" style="display:none;">
+        <h3>สร้างการ์ดตัวละคร <span class="dndRangeHint">(บันทึกได้ครั้งเดียว ล็อกถาวร)</span></h3>
+        <div class="dndFieldRow">
+          <div class="dndField"><label>ชื่อตัวละคร</label><input id="dndCreateName" maxlength="40"></div>
+        </div>
+        <label>เลือกเผ่าพันธุ์ (Race)</label>
+        <div id="dndRaceCards" class="dndCardGrid"></div>
+        <label>เลือกสกิลติดตัว (Passive) ประจำเผ่าพันธุ์ <span class="dndRangeHint" id="dndPassiveHint">(เลือกเผ่าพันธุ์ก่อน)</span></label>
+        <div id="dndPassiveCards" class="dndCardGrid"></div>
+        <label>เลือกคลาส (Class)</label>
+        <div id="dndClassCards" class="dndCardGrid"></div>
+        <div id="dndPointBuyBox">
+          <label>แจกแต้มสเตตัส — เหลือ <span id="dndPointsLeft">10</span> แต้ม</label>
+          <div id="dndStatAllocGrid" class="dndStatAllocGrid"></div>
+        </div>
+        <div class="dndFieldRow" style="display:none;">
+          <div class="dndField"><label>AC <span class="dndRangeHint" id="dndAcRangeHint"></span></label>
+            <div class="dndInputWithBtn"><input id="dndCreateAc" type="number"><button type="button" id="dndRollAcBtn">🎲 สุ่ม</button></div>
+          </div>
+          <div class="dndField"><label>HP สูงสุด <span class="dndRangeHint" id="dndHpRangeHint"></span></label>
+            <div class="dndInputWithBtn"><input id="dndCreateMaxHp" type="number"><button type="button" id="dndRollHpBtn">🎲 สุ่ม</button></div>
+          </div>
+        </div>
+        <div class="dndRangeHint" style="margin-bottom:8px;">AC และ HP สูงสุดจะถูกสุ่มให้อัตโนมัติตอนกดบันทึกการ์ดตัวละคร</div>
+        <div class="dndFieldRow">
+          <div class="dndField"><label>ประวัติที่มาของตัวละคร <span class="dndRangeHint">(ไม่บังคับ — เช่น บ้านเกิด อาชีพเดิม เหตุผลที่ออกเดินทาง)</span></label><textarea id="dndCreateBackstory" rows="4" maxlength="800" placeholder="เล่าที่มาของตัวละครคุณ..."></textarea></div>
+        </div>
+        <div class="dndFieldRow">
+          <div class="dndField"><label>ไอเทม / กระเป๋า</label><textarea id="dndCreateInventory" rows="3" maxlength="500"></textarea></div>
+        </div>
+        <label>อุปกรณ์สวมใส่เริ่มต้น <span class="dndRangeHint">(เติมให้อัตโนมัติตามคลาสที่เลือก — สเตตัสต่ำๆ แก้ไข/ลบทิ้งได้ตลอด)</span></label>
+        <div id="dndCreateEquipGrid" class="dndEquipGrid"></div>
+        <div class="dndFieldRow">
+          <div class="dndField"><label>ทองเริ่มต้น <span class="dndRangeHint">(ไม่บังคับ 0-200 — DM ปรับเพิ่ม/ลดทีหลังได้เสมอ)</span></label><input id="dndCreateGold" type="number" min="0" max="200" value="0"></div>
+        </div>
+        <label>แต่งหน้าตาตัวละคร <span class="dndRangeHint">(แก้ไขเพิ่มทีหลังได้ตลอด ไม่ต้องรอ DM ปลดล็อก)</span></label>
+        <div class="dndAvatarWrap" id="dndCreateAvatarPreview" style="margin-bottom:8px;"></div>
+        <div class="dndAppearanceBox">
+          <label>ทรงผม</label>
+          <div class="dndApPickRow" id="dndCreateHairRow"></div>
+          <label>สีผม</label>
+          <div class="dndApPickRow" id="dndCreateHairColorRow"></div>
+          <label>สีหน้า</label>
+          <div class="dndApPickRow" id="dndCreateFaceRow"></div>
+        </div>
+        <div id="dndCreateError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
+        <button id="dndCreateSaveBtn">บันทึกการ์ดตัวละคร (ล็อกถาวร)</button>
+      </div>
+
+      <!-- แท็บสลับระหว่างลูกเต๋ากับสกิล -->
+      <div id="dndToolTabs">
+        <button type="button" class="dndToolTabBtn active" id="dndToolTabDice" data-tool="dice">🎲 ทอยลูกเต๋า</button>
+        <button type="button" class="dndToolTabBtn" id="dndToolTabAttack" data-tool="attack">⚔️ โจมตีปกติ</button>
+        <button type="button" class="dndToolTabBtn" id="dndToolTabSkill" data-tool="skill">✨ สกิล</button>
+        <button type="button" class="dndToolTabBtn" id="dndToolTabMap" data-tool="map">🗺️ แผนที่</button>
+        <button type="button" class="dndToolTabBtn" id="dndToolTabShop" data-tool="shop">🛍️ ร้านค้า</button>
+        <button type="button" class="dndToolTabBtn" id="dndToolTabBag" data-tool="bag">🎒 กระเป๋า/แลกเปลี่ยน</button>
+      </div>
+
+      <div id="dndDiceBox">
+        <h3>ทอยลูกเต๋า</h3>
+        <div class="dndDiceGrid" id="dndDiceGrid">
+          <button type="button" class="dndDieBtn" data-die="4">d4</button>
+          <button type="button" class="dndDieBtn" data-die="6">d6</button>
+          <button type="button" class="dndDieBtn" data-die="8">d8</button>
+          <button type="button" class="dndDieBtn" data-die="10">d10</button>
+          <button type="button" class="dndDieBtn" data-die="12">d12</button>
+          <button type="button" class="dndDieBtn active" data-die="20">d20</button>
+          <button type="button" class="dndDieBtn" data-die="100">d100</button>
+        </div>
+        <div class="dndDiceOptsRow">
+          <div><label>จำนวนลูก</label><input id="dndDiceCount" type="number" min="1" max="20" value="1"></div>
+          <div><label>Modifier</label><input id="dndDiceMod" type="number" value="0"></div>
+          <div style="flex:2;"><label>ป้ายกำกับ (ไม่บังคับ)</label><input id="dndDiceLabel" maxlength="30" placeholder="เช่น Attack Roll"></div>
+        </div>
+        <button id="dndRollBtn">🎲 ทอยลูกเต๋า</button>
+      </div>
+
+      <div id="dndAttackBox" style="display:none;">
+        <h3>⚔️ โจมตีปกติ</h3>
+        <div class="dndRangeHint" style="margin-bottom:8px;">ผู้เล่นทุกคนใช้ได้ — เลือกมอนสเตอร์เป็นเป้าหมาย แล้วระบบจะทอยโจมตีและดาเมจพร้อมหัก HP ให้อัตโนมัติ</div>
+        <div id="dndNormalAttackInfo" class="dndAttackInfoBox"></div>
+        <button id="dndNormalAttackBtn" type="button">🎯 เลือกเป้าหมายและโจมตี</button>
+      </div>
+
+      <div id="dndSkillBox" style="display:none;">
+        <h3>สกิล</h3>
+        <div id="dndSkillDmForm" style="display:none;">
+          <div class="dndRangeHint" style="margin-bottom:6px;">DM เท่านั้นที่ออกแบบสกิลใหม่ได้ — ทุกคนในปาร์ตี้จะเห็นสกิลที่เพิ่ม</div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ชื่อสกิล</label><input id="dndSkillName" maxlength="40" placeholder="เช่น จู่โจมเงา"></div>
+            <div class="dndField"><label>ผูกสเตตัส (ไม่บังคับ)</label><select id="dndSkillStat"></select></div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>คำอธิบาย</label><textarea id="dndSkillDesc" rows="2" maxlength="200" placeholder="อธิบายว่าสกิลนี้ทำอะไร"></textarea></div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ดาเมจ (ไม่บังคับ)</label><select id="dndSkillDmgDie"></select></div>
+            <div class="dndField"><label>จำนวนลูก</label><input id="dndSkillDmgCount" type="number" min="1" max="20" value="1"></div>
+            <div class="dndField"><label>Modifier</label><input id="dndSkillDmgMod" type="number" value="0"></div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>💚 ชุบ HP (ไม่บังคับ — ใช้ชุบ/ปลุกเพื่อนที่หมดสติได้)</label><select id="dndSkillHealDie"></select></div>
+            <div class="dndField"><label>จำนวนลูก</label><input id="dndSkillHealCount" type="number" min="1" max="20" value="1"></div>
+            <div class="dndField"><label>Modifier</label><input id="dndSkillHealMod" type="number" value="0"></div>
+          </div>
+          <div class="dndRangeHint" style="margin-bottom:6px;">ถ้าตั้งค่าชุบ HP ไว้ สกิลนี้จะกลายเป็นสกิลชุบทันที (ใช้เป้าหมายเป็นผู้เล่น ไม่ทอยโจมตี ไม่มีดาเมจ)</div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>☠️ ชื่อสถานะ/ดีบัฟ (ไม่บังคับ)</label><input id="dndSkillStatusName" maxlength="24" placeholder="เช่น มึนงง, พิษ, ป้องกัน+2"></div>
+            <div class="dndField"><label>รายละเอียดสถานะ</label><input id="dndSkillStatusNote" maxlength="100" placeholder="เช่น เสียโอกาสโจมตี 1 ตา"></div>
+          </div>
+          <div class="dndRangeHint" style="margin-bottom:6px;">ถ้าตั้งชื่อสถานะไว้ เป้าหมายของสกิลนี้จะติดสถานะนั้นให้อัตโนมัติทุกครั้งที่ใช้สำเร็จ (ใช้ร่วมกับดาเมจ/ฮีลในสกิลเดียวกันได้ เช่น โจมตีแล้วติดพิษ หรือชุบ HP แล้วให้พรไปด้วย)</div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>💥 รัศมี AOE (0-100, 0 = เป้าเดี่ยวปกติ)</label><input id="dndSkillAoeRadius" type="number" min="0" max="100" value="0"></div>
+          </div>
+          <div class="dndRangeHint" style="margin-bottom:6px;">เลือกเป้าหมายหลักเหมือนเดิม แต่ถ้าตั้งรัศมีไว้ ดาเมจจะกระจายไปโดนเป้าหมายอื่น ๆ (ทั้งผู้เล่นและมอนสเตอร์) ที่อยู่ในระยะรอบเป้าหมายหลักบนแผนที่ด้วย — ยิ่งอยู่ไกลจากจุดศูนย์กลางยิ่งโดนดาเมจน้อยลง ห่างเกินรัศมีจะไม่โดน (ต้องตั้งค่าดาเมจไว้ด้วยถึงจะมีผล)</div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label><input id="dndSkillCleanseEnabled" type="checkbox" style="width:auto; margin-right:6px;">✨ สกิลลบล้างสถานะผิดปกติ</label></div>
+            <div class="dndField"><label>ชื่อสถานะที่จะลบ (ว่าง = ล้างทั้งหมด)</label><input id="dndSkillCleanseName" maxlength="24" placeholder="เช่น พิษ (ว่าง = ล้างทุกสถานะ)"></div>
+          </div>
+          <div class="dndRangeHint" style="margin-bottom:6px;">ถ้าเปิดใช้ สกิลนี้จะเลือกเป้าหมายได้เฉพาะผู้เล่น และใช้แล้วจะลบสถานะ/ดีบัฟที่ติดอยู่ออกแทนที่จะโจมตี (ใช้ร่วมกับชุบ HP/ติดสถานะในสกิลเดียวกันได้ เช่น ทำสกิลชุบ HP พร้อมแก้พิษไปในตัว)</div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>คูลดาวน์ (วินาที, 0 = ไม่มี)</label><input id="dndSkillCooldown" type="number" min="0" max="3600" value="0"></div>
+            <div class="dndField"><label>จำนวนครั้งที่ใช้ได้ (0 = ไม่จำกัด)</label><input id="dndSkillMaxUses" type="number" min="0" max="99" value="0"></div>
+          </div>
+          <label style="display:block; font-size:11px; color:#9aa4b2; margin:8px 0 6px 0;">มอบสกิลให้ผู้เล่น (ไม่เลือกใคร = ทั้งปาร์ตี้ใช้ได้หมด)</label>
+          <div id="dndSkillAssignBox" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;"></div>
+          <div id="dndSkillFormError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
+          <button id="dndSkillAddBtn" type="button">+ เพิ่มสกิล</button>
+        </div>
+        <div id="dndSkillEmptyHint" class="dndRangeHint" style="display:none;">ยังไม่มีสกิลในห้องนี้ — รอ DM ออกแบบสกิลก่อน</div>
+        <div id="dndSkillList"></div>
+
+        <div id="dndPassiveManageSection" style="display:none; margin-top:18px; padding-top:14px; border-top:1px solid #2a3550;">
+          <h3>✨ สกิลติดตัว (Passive) ประจำเผ่าพันธุ์</h3>
+          <div class="dndRangeHint" style="margin-bottom:6px;">DM เท่านั้นที่ออกแบบสกิลติดตัวใหม่ได้ — เลือกผูกกับเผ่าใดเผ่าหนึ่ง หรือ "ทุกเผ่าพันธุ์" ก็ได้ ผู้เล่นจะเห็นเป็นตัวเลือกเพิ่มตอนสร้างตัวละคร (นอกเหนือจากสกิลติดตัวที่มีมาให้ในระบบ)</div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ชื่อสกิลติดตัว</label><input id="dndPassiveName" maxlength="40" placeholder="เช่น สายเลือดนักรบ"></div>
+            <div class="dndField"><label>ไอคอน (อีโมจิ)</label><input id="dndPassiveIcon" maxlength="4" placeholder="✨"></div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ผูกกับเผ่าพันธุ์</label><select id="dndPassiveRace"></select></div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>คำอธิบาย</label><textarea id="dndPassiveDesc" rows="2" maxlength="150" placeholder="อธิบายว่าสกิลติดตัวนี้ทำอะไร"></textarea></div>
+          </div>
+          <label style="display:block; font-size:11px; color:#9aa4b2; margin:8px 0 6px 0;">ผลกลไก (ใส่ 0 ในช่องที่ไม่ต้องการ)</label>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>โจมตี (Attack)</label><input id="dndPassiveAtk" type="number" value="0"></div>
+            <div class="dndField"><label>ดาเมจ (Damage)</label><input id="dndPassiveDmg" type="number" value="0"></div>
+            <div class="dndField"><label>ป้องกัน (AC)</label><input id="dndPassiveAc" type="number" value="0"></div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>HP สูงสุด</label><input id="dndPassiveHp" type="number" value="0"></div>
+            <div class="dndField"><label>ขยายช่วงคริติคอล (0-5)</label><input id="dndPassiveCritRange" type="number" min="0" max="5" value="0"></div>
+            <div class="dndField"><label>ทองเริ่มต้น</label><input id="dndPassiveGold" type="number" value="0"></div>
+          </div>
+          <div id="dndPassiveFormError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
+          <button id="dndPassiveAddBtn" type="button">+ เพิ่มสกิลติดตัว</button>
+          <div id="dndPassiveEmptyHint" class="dndRangeHint" style="display:none; margin-top:8px;">ยังไม่มีสกิลติดตัวที่ DM สร้างเอง — ผู้เล่นยังเลือกได้จากสกิลติดตัวประจำเผ่าที่มีมาให้ในระบบ</div>
+          <div id="dndPassiveList" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div id="dndMapBox" style="display:none;">
+        <h3>🗺️ แผนที่การต่อสู้</h3>
+        <div id="dndMapTabsRow"></div>
+        <div id="dndMapCurrentLabel" style="display:none;"></div>
+        <div id="dndMapHint">ลาก token เพื่อจัดตำแหน่ง — ผู้เล่นลากได้เฉพาะ token ตัวเอง, DM ลากได้ทุก token</div>
+        <div id="dndMapCanvasWrap">
+          <div id="dndMapCanvas"></div>
+        </div>
+        <div id="dndMapMyTokenBox" style="display:none;">
+          <h4>🎨 token ของฉัน</h4>
+          <div class="dndTokenColorRow" id="dndMyTokenColorRow"></div>
+          <div class="dndTokenImgRow">
+            <input type="file" id="dndMyTokenImgInput" accept="image/*">
+            <button type="button" id="dndMyTokenImgClearBtn" class="linkBtn" style="font-size:11px !important;">ลบรูป</button>
+          </div>
+          <div class="dndRangeHint">รูปไม่เกิน ~300KB — ถ้าไม่อัปโหลด จะใช้วงกลมสี+ชื่อย่อแทน</div>
+        </div>
+        <div id="dndMapNpcAddBox" style="display:none;">
+          <h4 id="dndMapBgHeading">🖼️ พื้นหลังแผนที่ (DM)</h4>
+          <div class="dndTokenImgRow">
+            <input type="file" id="dndMapBgInput" accept="image/*">
+            <button type="button" id="dndMapBgClearBtn" class="linkBtn" style="font-size:11px !important;">ลบพื้นหลัง</button>
+          </div>
+          <div class="dndRangeHint">อัปโหลดภาพพื้นหลังของแผนที่ที่กำลังเลือกอยู่ ได้ไม่เกิน ~300KB และผู้เล่นทุกคนจะเห็นเหมือนกัน</div>
+          <h4 style="margin-top:12px;">📖 มอนสเตอร์สำเร็จรูป (สร้างได้เลย)</h4>
+          <div class="dndFieldRow">
+            <div class="dndField" style="flex:1;">
+              <label>เลือกมอนสเตอร์</label>
+              <select id="dndMonsterPresetSelect"></select>
+            </div>
+          </div>
+          <div id="dndMonsterPresetPreview" class="dndRangeHint" style="margin-bottom:8px;"></div>
+          <button type="button" id="dndMonsterPresetAddBtn">➕ สร้างและวางลงแผนที่</button>
+          <h4 style="margin-top:14px;">➕ เพิ่ม token NPC / มอนสเตอร์ (กำหนดเอง)</h4>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ชื่อ</label><input id="dndNpcNameInput" maxlength="20" placeholder="เช่น หมาป่า"></div>
+            <div class="dndField"><label>HP สูงสุด</label><input id="dndNpcMaxHpInput" type="number" min="1" max="9999" value="20"></div>
+            <div class="dndField"><label>AC (ป้องกัน)</label><input id="dndNpcAcInput" type="number" min="0" max="40" value="10"></div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ขนาดวง token</label>
+              <select id="dndNpcSizeInput">
+                <option value="normal">ปกติ</option>
+                <option value="large">ใหญ่ (บอส)</option>
+                <option value="huge">ใหญ่มาก (บอสใหญ่)</option>
+              </select>
+            </div>
+          </div>
+          <div class="dndTokenColorRow" id="dndNpcColorRow"></div>
+          <div class="dndTokenImgRow">
+            <input type="file" id="dndNpcImgInput" accept="image/*">
+          </div>
+          <div id="dndNpcAddError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
+          <button type="button" id="dndNpcAddBtn">➕ เพิ่มลงแผนที่</button>
+          <div id="dndMapNpcList"></div>
+        </div>
+      </div>
+
+      <div id="dndShopBox" style="display:none;">
+        <h3>🛍️ ร้านค้า</h3>
+        <div id="dndShopDmForm" style="display:none;">
+          <div class="dndRangeHint" style="margin-bottom:6px;">DM เท่านั้นที่เปิด/ปิดร้านและจัดการไอเทมในร้านได้ — ร้านไอเทมใหม่จะมี Red Potion (ยาแดง) ให้เริ่มต้นเสมอ, ร้านตีบวกใหม่จะมีระดับ +1/+2/+3 ให้เริ่มต้นเสมอ</div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ชื่อร้านใหม่</label><input id="dndShopNameInput" maxlength="40" placeholder="เช่น ร้านขายยาในเมือง"></div>
+            <div class="dndField"><label>ประเภทร้าน</label>
+              <select id="dndShopTypeInput">
+                <option value="item">🛍️ ร้านไอเทม (ซื้อ/ขาย)</option>
+                <option value="forge">⚒️ ร้านตีบวก (อัปเกรดอุปกรณ์)</option>
+              </select>
+            </div>
+          </div>
+          <button type="button" id="dndShopAddBtn">🏪 เปิดร้านใหม่</button>
+        </div>
+        <div id="dndShopList"></div>
+      </div>
+
+      <div id="dndBagBox" style="display:none;">
+        <h3>🎒 กระเป๋าไอเทม / แลกเปลี่ยน</h3>
+
+        <div id="dndMyBagSection" style="display:none;">
+          <h4>กระเป๋าของฉัน <span class="dndRangeHint">(ทอง: <span id="dndBagGoldVal">0</span>)</span></h4>
+          <div class="dndBagList" id="dndMyBagList"></div>
+          <div id="dndArmorRepairBox" style="margin-top:10px;"></div>
+        </div>
+
+        <div id="dndTradeSection" style="display:none;">
+          <h4 style="margin-top:14px;">🔄 แลกเปลี่ยนกับเพื่อนร่วมทีม</h4>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>แลกกับ</label><select id="dndTradeTargetSelect"></select></div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField">
+              <label>สิ่งที่คุณจะให้</label>
+              <div id="dndTradeOfferItems" class="dndTradePickList"></div>
+              <div class="dndFieldRow" style="margin-top:6px;"><div class="dndField"><label>ทองที่ให้</label><input id="dndTradeOfferGold" type="number" min="0" value="0"></div></div>
+            </div>
+            <div class="dndField">
+              <label>สิ่งที่คุณต้องการ</label>
+              <div id="dndTradeRequestItems" class="dndTradePickList"></div>
+              <div class="dndFieldRow" style="margin-top:6px;"><div class="dndField"><label>ทองที่ขอ</label><input id="dndTradeRequestGold" type="number" min="0" value="0"></div></div>
+            </div>
+          </div>
+          <button type="button" id="dndTradeOfferBtn">📨 ส่งข้อเสนอแลกเปลี่ยน</button>
+
+          <h4 style="margin-top:14px;">📥 ข้อเสนอที่ได้รับ</h4>
+          <div id="dndTradeIncomingList"></div>
+
+          <h4 style="margin-top:14px;">📤 ข้อเสนอที่ส่งไป</h4>
+          <div id="dndTradeOutgoingList"></div>
+        </div>
+
+        <div id="dndGiveItemBox" style="display:none;">
+          <h4>🎁 มอบ / เรียกคืนไอเทม (DM)</h4>
+          <div class="dndRangeHint" style="margin-bottom:6px;">มอบ/เรียกคืนไอเทมให้ผู้เล่นคนไหนก็ได้โดยตรง — ซิงค์เข้ากระเป๋าทันทีเหมือนซื้อจากร้าน</div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ผู้เล่น</label><select id="dndGiveTargetSelect"></select></div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ชื่อไอเทม</label><input id="dndGiveItemName" maxlength="40"></div>
+            <div class="dndField"><label>จำนวน</label><input id="dndGiveItemQty" type="number" min="1" value="1"></div>
+          </div>
+          <div id="dndGiveItemBtnRow">
+            <button type="button" id="dndGiveItemBtn">🎁 มอบไอเทม</button>
+            <button type="button" id="dndTakeItemBtn">🗑️ เรียกคืน</button>
+          </div>
+
+          <h4 style="margin-top:14px;">⚙️ ตั้งค่าไอเทมใช้งานได้</h4>
+          <div class="dndRangeHint" style="margin-bottom:6px;">ตั้งชื่อไอเทม (ต้องตรงกับชื่อในกระเป๋าผู้เล่นเป๊ะๆ) + ผลตอนใช้ — ผู้เล่นจะเห็นปุ่ม "ใช้" ในกระเป๋าของตัวเองสำหรับไอเทมที่ตรงกับรายการนี้ ใช้แล้วไอเทมหายไป 1 ชิ้นทันที ถ้าตั้งเป็น "สวมใส่" ผู้เล่นกดใช้แล้วจะสวมใส่อุปกรณ์ชิ้นนั้นให้ทันที (ของเดิมในช่องจะถูกถอดเก็บเข้ากระเป๋าแทน) — ⚠️ "ฟื้นฟู HP" ใช้ปลุกคนหมดสติไม่ได้เด็ดขาด ต้องตั้งเป็น "🌟 ชุบชีวิต" เท่านั้นถึงจะปลุกคนหมดสติได้</div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ชื่อไอเทม</label><input id="dndItemEffectName" maxlength="40"></div>
+            <div class="dndField"><label>ผล</label>
+              <select id="dndItemEffectType">
+                <option value="heal">ฟื้นฟู HP (ปลุกคนหมดสติไม่ได้)</option>
+                <option value="revive">🌟 ชุบชีวิต (ปลุกจากหมดสติ + ฟื้นฟู HP)</option>
+                <option value="gold">ให้ทอง</option>
+                <option value="equip">สวมใส่ (อุปกรณ์)</option>
+                <option value="none">ไม่มีผลพิเศษ (ใช้แล้วหายไป)</option>
+              </select>
+            </div>
+          </div>
+          <div class="dndFieldRow" id="dndItemEffectValueRow">
+            <div class="dndField"><label>จำนวน</label><input id="dndItemEffectValue" type="number" min="0" value="0"></div>
+          </div>
+          <div class="dndFieldRow" id="dndItemEffectNoneRow" style="display:none;">
+            <div class="dndField"><label>ข้อความตอนใช้ (ไม่บังคับ)</label><input id="dndItemEffectDesc" maxlength="100" placeholder="เช่น กินอิ่มท้องแล้ว / เปิดประตูลับได้แล้ว"></div>
+          </div>
+          <div class="dndFieldRow" id="dndItemEffectEquipRow" style="display:none;">
+            <div class="dndField"><label>ช่องสวมใส่</label>
+              <select id="dndItemEffectSlot">
+                <option value="weapon">อาวุธ</option>
+                <option value="armor">เกราะ</option>
+                <option value="shoes">รองเท้า</option>
+                <option value="accessory">เครื่องประดับ</option>
+              </select>
+            </div>
+            <div class="dndField"><label>ATK</label><input id="dndItemEffectAtk" type="number" min="0" value="0"></div>
+            <div class="dndField"><label>DEF</label><input id="dndItemEffectDef" type="number" min="0" value="0"></div>
+            <div class="dndField"><label>ความคงทน (0=ไม่จำกัด)</label><input id="dndItemEffectDurability" type="number" min="0" value="0"></div>
+            <div class="dndField">
+              <label>🖼️ รูปไอเทม (PNG/JPG, ≤250KB)</label>
+              <input id="dndItemEffectIconFile" type="file" accept="image/png,image/jpeg,image/webp">
+              <img id="dndItemEffectIconPreview" class="dndEquipItemIcon" style="display:none;">
+            </div>
+          </div>
+          <button type="button" id="dndItemEffectAddBtn">➕ เพิ่มไอเทมใช้งาน</button>
+          <div id="dndItemEffectList" style="margin-top:8px;"></div>
+
+          <h4 style="margin-top:14px;">🛡️ มอบอุปกรณ์ (DM)</h4>
+          <div class="dndRangeHint" style="margin-bottom:6px;">สวมใส่อุปกรณ์ให้ผู้เล่นคนไหนก็ได้โดยตรงทันที พร้อมระบุรายละเอียด — ถ้าช่องนั้นมีของสวมอยู่แล้ว ของเดิมจะถูกถอดเก็บเข้ากระเป๋าให้เอง</div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ผู้เล่น</label><select id="dndGiveEquipTargetSelect"></select></div>
+            <div class="dndField"><label>ช่องสวมใส่</label>
+              <select id="dndGiveEquipSlot">
+                <option value="weapon">อาวุธ</option>
+                <option value="armor">เกราะ</option>
+                <option value="shoes">รองเท้า</option>
+                <option value="accessory">เครื่องประดับ</option>
+              </select>
+            </div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ชื่ออุปกรณ์</label><input id="dndGiveEquipName" maxlength="40"></div>
+            <div class="dndField"><label>ATK</label><input id="dndGiveEquipAtk" type="number" min="0" value="0"></div>
+            <div class="dndField"><label>DEF</label><input id="dndGiveEquipDef" type="number" min="0" value="0"></div>
+            <div class="dndField"><label>ความคงทน (0=ไม่จำกัด)</label><input id="dndGiveEquipDurability" type="number" min="0" value="0"></div>
+          </div>
+          <div class="dndFieldRow">
+            <div class="dndField">
+              <label>🖼️ รูปไอเทม (PNG/JPG, ≤250KB)</label>
+              <input id="dndGiveEquipIconFile" type="file" accept="image/png,image/jpeg,image/webp">
+              <img id="dndGiveEquipIconPreview" class="dndEquipItemIcon" style="display:none;">
+            </div>
+          </div>
+          <button type="button" id="dndGiveEquipBtn">🛡️ มอบอุปกรณ์ (สวมใส่ทันที)</button>
+
+          <h4 style="margin-top:14px;">🔄 การแลกเปลี่ยนที่กำลังดำเนินอยู่ในห้อง</h4>
+          <div id="dndAllTradesList"></div>
+        </div>
+      </div>
+    </div>
+    <div id="dndRightCol">
+      <div id="dndLogBox">
+        <h3>บันทึกการทอย / แชท</h3>
+        <div id="dndLog"></div>
+        <div id="dndChatInputRow">
+          <input id="dndChatInput" maxlength="300" placeholder="พิมพ์ข้อความ...">
+          <button id="dndChatSendBtn">ส่ง</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div style="text-align:center; margin-top:6px; display:flex; gap:14px; justify-content:center; flex-wrap:wrap;">
+    <button id="dndLeaveBtn" class="linkBtn">ออกจากที่นั่ง</button>
+    <button id="dndRestartBtn" class="linkBtn" style="display:none;">🔄 รีเซตห้องทั้งหมด (เริ่มใหม่หมด)</button>
+  </div>
+</div>
+
+<!-- เลือกเป้าหมายสำหรับการโจมตี/ใช้สกิล -->
+<div id="dndTargetOverlay" class="dndModalOverlay">
+  <div class="dndModalBox" style="max-width:460px;">
+    <h3 id="dndTargetTitle">เลือกเป้าหมาย</h3>
+    <div id="dndTargetHint" class="dndRangeHint" style="margin-bottom:10px;"></div>
+    <div id="dndTargetList" class="dndTargetList"></div>
+    <div id="dndTargetError" style="color:#ff8080;font-size:12px;min-height:16px;margin-top:8px;"></div>
+    <button id="dndTargetConfirmBtn" type="button">🎯 ยืนยันเป้าหมาย</button>
+    <button id="dndTargetCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- เลือกท่าโจมตีของมอนสเตอร์ก่อนทอย — เปิดจากปุ่ม 🎲 ในรายการมอนสเตอร์ตอนมีมากกว่า 1 ท่า -->
+<div id="dndAttackPickOverlay" class="dndModalOverlay">
+  <div class="dndModalBox" style="max-width:460px;">
+    <h3 id="dndAttackPickTitle">เลือกท่าโจมตี</h3>
+    <div id="dndAttackPickList" class="dndTargetList"></div>
+    <button id="dndAttackPickCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- DM: แก้ไขข้อมูลผู้เล่นคนไหนก็ได้ ทุกช่อง ทุกเมื่อ -->
+<div id="dndDmEditOverlay" class="dndModalOverlay">
+  <div class="dndModalBox" id="dndDmEditBox">
+    <h3 id="dndDmEditTitle">แก้ไขข้อมูลตัวละคร (DM)</h3>
+    <div class="dndFieldRow"><div class="dndField"><label>ชื่อตัวละคร</label><input id="dndEditName" maxlength="40"></div></div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>เผ่าพันธุ์ (Race)</label><select id="dndEditRace"></select></div>
+      <div class="dndField"><label>คลาส (Class)</label><select id="dndEditClass"></select></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>สกิลติดตัว (Passive)</label><select id="dndEditPassive"></select></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>Level (คำนวณจาก EXP)</label><input id="dndEditLevel" type="number" min="1" max="20" readonly><small id="dndEditLevelHint" class="dndRangeHint">เพิ่ม EXP แล้วเลเวลจะคำนวณอัตโนมัติ</small></div>
+      <div class="dndField"><label>AC</label><input id="dndEditAc" type="number" min="0" max="40"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>HP ปัจจุบัน</label><input id="dndEditHp" type="number" min="0"></div>
+      <div class="dndField"><label>HP สูงสุด</label><input id="dndEditMaxHp" type="number" min="1"></div>
+    </div>
+    <div class="dndStatGrid">
+      <div class="dndField"><label class="dndStatTip" data-tip="💪 พละกำลัง — เพิ่มพลังโจมตีและดาเมจระยะประชิด">STR</label><input id="dndEditStr" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="🏃 ความคล่องตัว — เพิ่มความแม่นยำและการหลบหลีก">DEX</label><input id="dndEditDex" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="❤️ ความแข็งแกร่ง — เพิ่มความทนทานและ HP">CON</label><input id="dndEditCon" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="🧠 สติปัญญา — ช่วยด้านเวทมนตร์และความรู้">INT</label><input id="dndEditInt" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="👁️ ปัญญา — ช่วยด้านการรับรู้และสัญชาตญาณ">WIS</label><input id="dndEditWis" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="🗣️ เสน่ห์ — ช่วยด้านการพูดคุยและโน้มน้าว">CHA</label><input id="dndEditCha" type="number" min="1" max="30"></div>
+    </div>
+    <div class="dndFieldRow"><div class="dndField"><label>ประวัติที่มาของตัวละคร</label><textarea id="dndEditBackstory" rows="3" maxlength="800"></textarea></div></div>
+    <div class="dndFieldRow"><div class="dndField"><label>ไอเทม / กระเป๋า</label><textarea id="dndEditInventory" rows="3" maxlength="500"></textarea></div></div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>EXP</label><input id="dndEditExp" type="number" min="0"></div>
+      <div class="dndField"><label>ทอง</label><input id="dndEditGold" type="number" min="0"></div>
+    </div>
+    <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">🎒 อุปกรณ์สวมใส่</h4>
+    <div id="dndEditEquipGrid" class="dndEquipGrid"></div>
+    <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">✨ สกิลของผู้เล่นคนนี้</h4>
+    <div id="dndEditSkillsBox" class="dndPCardSkills" style="margin-bottom:8px;"></div>
+    <div class="dndStatusManagerBox">
+      <h5>☠️ สถานะ / ดีบัฟ (มอบให้ตอนนี้เลย ไม่ต้องรอบันทึก)</h5>
+      <div id="dndEditStatusList"></div>
+      <div class="dndStatusAddRow">
+        <input id="dndEditStatusName" maxlength="24" placeholder="ชื่อสถานะ เช่น มึนงง">
+        <input id="dndEditStatusNote" maxlength="100" placeholder="หมายเหตุ (ไม่บังคับ)">
+        <input id="dndEditStatusDuration" type="number" min="0" max="86400" placeholder="คูลดาวน์ (วิ, 0=ไม่มี)" style="max-width:150px;">
+      </div>
+      <div class="dndStatusAddRow">
+        <input id="dndEditStatusAtk" type="number" min="-20" max="20" placeholder="โจมตี ±" style="max-width:110px;" title="ปรับค่าทอยโจมตี ระหว่างติดสถานะนี้">
+        <input id="dndEditStatusDmg" type="number" min="-20" max="20" placeholder="ดาเมจ ±" style="max-width:110px;" title="ปรับค่าดาเมจ ระหว่างติดสถานะนี้">
+        <input id="dndEditStatusDef" type="number" min="-20" max="20" placeholder="ป้องกัน(AC) ±" style="max-width:120px;" title="ปรับค่า AC ระหว่างติดสถานะนี้">
+        <input id="dndEditStatusTick" type="number" min="-1000" max="1000" placeholder="HP/ติ๊ก ±" style="max-width:110px;" title="ลบ=โดนดาเมจต่อเนื่อง (พิษ/ไฟลุก) บวก=ฟื้น HP ต่อเนื่อง (รีเจน) ทุกกี่วินาทีตั้งช่องถัดไป">
+        <input id="dndEditStatusTickInterval" type="number" min="1" max="3600" placeholder="ทุกกี่วิ" style="max-width:90px;" title="ระยะห่างระหว่างแต่ละติ๊ก (วินาที) ใช้ก็ต่อเมื่อตั้ง HP/ติ๊ก ไว้">
+        <button type="button" id="dndEditStatusAddBtn">+ มอบสถานะ</button>
+      </div>
+    </div>
+    <label class="dndLockRow"><input type="checkbox" id="dndEditLocked"> ล็อกการ์ดตัวละคร (ผู้เล่นแก้ไขเองไม่ได้)</label>
+    <button id="dndDmEditSaveBtn">บันทึกการแก้ไข</button>
+    <button id="dndDmEditCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- DM: แก้ไขสกิลที่มีอยู่แล้ว หรือมอบ/ถอนสิทธิ์ให้ผู้เล่นคนไหนก็ได้ทุกเมื่อ -->
+<div id="dndSkillEditOverlay" class="dndModalOverlay">
+  <div class="dndModalBox">
+    <h3 id="dndSkillEditTitle">แก้ไขสกิล (DM)</h3>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ชื่อสกิล</label><input id="dndSkillEditName" maxlength="40"></div>
+      <div class="dndField"><label>ผูกสเตตัส (ไม่บังคับ)</label><select id="dndSkillEditStat"></select></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>คำอธิบาย</label><textarea id="dndSkillEditDesc" rows="2" maxlength="200"></textarea></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ดาเมจ (ไม่บังคับ)</label><select id="dndSkillEditDmgDie"></select></div>
+      <div class="dndField"><label>จำนวนลูก</label><input id="dndSkillEditDmgCount" type="number" min="1" max="20" value="1"></div>
+      <div class="dndField"><label>Modifier</label><input id="dndSkillEditDmgMod" type="number" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>💚 ชุบ HP (ไม่บังคับ)</label><select id="dndSkillEditHealDie"></select></div>
+      <div class="dndField"><label>จำนวนลูก</label><input id="dndSkillEditHealCount" type="number" min="1" max="20" value="1"></div>
+      <div class="dndField"><label>Modifier</label><input id="dndSkillEditHealMod" type="number" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>☠️ ชื่อสถานะ/ดีบัฟ (ไม่บังคับ)</label><input id="dndSkillEditStatusName" maxlength="24" placeholder="เช่น มึนงง, พิษ"></div>
+      <div class="dndField"><label>รายละเอียดสถานะ</label><input id="dndSkillEditStatusNote" maxlength="100" placeholder="เช่น เสียโอกาสโจมตี 1 ตา"></div>
+      <div class="dndField"><label>💥 รัศมี AOE (0-100, 0 = เป้าเดี่ยวปกติ)</label><input id="dndSkillEditAoeRadius" type="number" min="0" max="100" value="0"></div>
+      <div class="dndField"><label><input id="dndSkillEditCleanseEnabled" type="checkbox" style="width:auto; margin-right:6px;">✨ สกิลลบล้างสถานะผิดปกติ</label></div>
+      <div class="dndField"><label>ชื่อสถานะที่จะลบ (ว่าง = ล้างทั้งหมด)</label><input id="dndSkillEditCleanseName" maxlength="24" placeholder="เช่น พิษ (ว่าง = ล้างทุกสถานะ)"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>คูลดาวน์ (วินาที, 0 = ไม่มี)</label><input id="dndSkillEditCooldown" type="number" min="0" max="3600" value="0"></div>
+      <div class="dndField"><label>จำนวนครั้งที่ใช้ได้ (0 = ไม่จำกัด)</label><input id="dndSkillEditMaxUses" type="number" min="0" max="99" value="0"></div>
+    </div>
+    <label style="display:block; font-size:11px; color:#9aa4b2; margin:8px 0 6px 0;">มอบสกิลให้ผู้เล่น (ไม่เลือกใคร = ทั้งปาร์ตี้ใช้ได้หมด) — เปลี่ยนได้ตลอด</label>
+    <div id="dndSkillEditAssignBox" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;"></div>
+    <div id="dndSkillEditError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
+    <button id="dndSkillEditSaveBtn">บันทึกการแก้ไข</button>
+    <button id="dndSkillEditCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- DM: แก้ไขสกิลติดตัว (Passive) ที่ตัวเองสร้างเอง -->
+<div id="dndPassiveEditOverlay" class="dndModalOverlay">
+  <div class="dndModalBox">
+    <h3 id="dndPassiveEditTitle">แก้ไขสกิลติดตัว (DM)</h3>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ชื่อสกิลติดตัว</label><input id="dndPassiveEditName" maxlength="40"></div>
+      <div class="dndField"><label>ไอคอน (อีโมจิ)</label><input id="dndPassiveEditIcon" maxlength="4"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ผูกกับเผ่าพันธุ์</label><select id="dndPassiveEditRace"></select></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>คำอธิบาย</label><textarea id="dndPassiveEditDesc" rows="2" maxlength="150"></textarea></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>โจมตี (Attack)</label><input id="dndPassiveEditAtk" type="number"></div>
+      <div class="dndField"><label>ดาเมจ (Damage)</label><input id="dndPassiveEditDmg" type="number"></div>
+      <div class="dndField"><label>ป้องกัน (AC)</label><input id="dndPassiveEditAc" type="number"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>HP สูงสุด</label><input id="dndPassiveEditHp" type="number"></div>
+      <div class="dndField"><label>ขยายช่วงคริติคอล</label><input id="dndPassiveEditCritRange" type="number" min="0" max="5"></div>
+      <div class="dndField"><label>ทองเริ่มต้น</label><input id="dndPassiveEditGold" type="number"></div>
+    </div>
+    <div id="dndPassiveEditError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
+    <button id="dndPassiveEditSaveBtn">บันทึกการแก้ไข</button>
+    <button id="dndPassiveEditCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- DM: แก้ไข token NPC/มอนสเตอร์ — HP, AC, ท่าโจมตี, สถานะดีบัฟ -->
+<div id="dndTokenEditOverlay" class="dndModalOverlay">
+  <div class="dndModalBox" id="dndTokenEditBox">
+    <h3 id="dndTokenEditTitle">แก้ไข Token (DM)</h3>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ชื่อ</label><input id="dndTokenEditName" maxlength="20"></div>
+    </div>
+    <div class="dndTokenImgRow">
+      <input type="file" id="dndTokenEditImgInput" accept="image/*">
+      <button type="button" id="dndTokenEditImgClearBtn" class="linkBtn" style="font-size:11px !important;">ลบรูป</button>
+    </div>
+    <div class="dndRangeHint" style="margin-bottom:8px;">เปลี่ยนรูปมอนสเตอร์ตัวนี้ได้ทุกเมื่อ ไม่เกิน ~300KB</div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>HP ปัจจุบัน</label><input id="dndTokenEditHp" type="number" min="0"></div>
+      <div class="dndField"><label>HP สูงสุด</label><input id="dndTokenEditMaxHp" type="number" min="1"></div>
+      <div class="dndField"><label>AC (ป้องกัน)</label><input id="dndTokenEditAc" type="number" min="0" max="40"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ขนาดวง token</label>
+        <select id="dndTokenEditSize">
+          <option value="normal">ปกติ</option>
+          <option value="large">ใหญ่ (บอส)</option>
+          <option value="huge">ใหญ่มาก (บอสใหญ่)</option>
+        </select>
+      </div>
+    </div>
+    <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">💪 ค่าพลัง (มีผลกับโบนัสท่าโจมตีที่ผูกกับค่าพลังนั้น)</h4>
+    <div class="dndFieldRow" id="dndTokenStatRow">
+      <div class="dndField"><label>STR <span id="dndTokenStatMod-str" class="dndRangeHint"></span></label><input id="dndTokenStat-str" type="number" min="1" max="30" value="10"></div>
+      <div class="dndField"><label>DEX <span id="dndTokenStatMod-dex" class="dndRangeHint"></span></label><input id="dndTokenStat-dex" type="number" min="1" max="30" value="10"></div>
+      <div class="dndField"><label>CON <span id="dndTokenStatMod-con" class="dndRangeHint"></span></label><input id="dndTokenStat-con" type="number" min="1" max="30" value="10"></div>
+      <div class="dndField"><label>INT <span id="dndTokenStatMod-int" class="dndRangeHint"></span></label><input id="dndTokenStat-int" type="number" min="1" max="30" value="10"></div>
+      <div class="dndField"><label>WIS <span id="dndTokenStatMod-wis" class="dndRangeHint"></span></label><input id="dndTokenStat-wis" type="number" min="1" max="30" value="10"></div>
+      <div class="dndField"><label>CHA <span id="dndTokenStatMod-cha" class="dndRangeHint"></span></label><input id="dndTokenStat-cha" type="number" min="1" max="30" value="10"></div>
+    </div>
+    <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">🎁 รางวัลเมื่อกำจัดมอนสเตอร์</h4>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>EXP ที่ดรอป</label><input id="dndTokenEditExp" type="number" min="0"></div>
+      <div class="dndField"><label>ทองที่ดรอป</label><input id="dndTokenEditGold" type="number" min="0"></div>
+    </div>
+    <div class="dndFieldRow"><div class="dndField"><label>ของดรอป (หนึ่งรายการต่อบรรทัด เช่น Potion x1)</label><textarea id="dndTokenEditLoot" rows="3" maxlength="1000" placeholder="Potion x1
+Goblin Fang x2"></textarea></div></div>
+    <div id="dndTokenEditError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
+    <button id="dndTokenEditSaveBtn" type="button">บันทึก HP/AC/ชื่อ</button>
+
+    <h4 style="color:#ffd76b; font-size:13px; margin:14px 0 8px 0;">🗡️ ท่าโจมตี</h4>
+    <div id="dndTokenAttackList"></div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ชื่อท่า</label><input id="dndAtkNameInput" maxlength="30" placeholder="เช่น กัดฉีก"></div>
+      <div class="dndField"><label>ใช้ค่าพลัง (ไม่บังคับ)</label>
+        <select id="dndAtkStatSelect">
+          <option value="">ไม่ใช้ (กำหนดโบนัสเองล้วนๆ)</option>
+        </select>
+      </div>
+      <div class="dndField"><label>ทอยโจมตี modifier เพิ่มเติม</label><input id="dndAtkToHitInput" type="number" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ดาเมจ (ลูกเต๋า)</label><select id="dndAtkDieSelect"></select></div>
+      <div class="dndField"><label>จำนวนลูก</label><input id="dndAtkCountInput" type="number" min="1" max="20" value="1"></div>
+      <div class="dndField"><label>Modifier ดาเมจ เพิ่มเติม</label><input id="dndAtkModInput" type="number" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>คำอธิบาย (ไม่บังคับ)</label><input id="dndAtkDescInput" maxlength="150"></div>
+      <div class="dndField"><label>💥 รัศมี AOE (0-100, 0 = เป้าเดี่ยวปกติ)</label><input id="dndAtkAoeRadiusInput" type="number" min="0" max="100" value="0"></div>
+    </div>
+    <div class="dndRangeHint" style="margin-bottom:6px;">เลือกเป้าหมายหลักเหมือนเดิม แต่ถ้าตั้งรัศมีไว้ ดาเมจจะกระจายไปโดนผู้เล่นคนอื่นที่อยู่ในระยะรอบเป้าหมายหลักบนแผนที่ด้วย ยิ่งอยู่ไกลจากจุดศูนย์กลางยิ่งโดนดาเมจน้อยลง (ไม่โดนมอนสเตอร์ตัวอื่น)</div>
+    <button id="dndAtkAddBtn" type="button">+ เพิ่มท่าโจมตี</button>
+
+    <div class="dndStatusManagerBox">
+      <h5>☠️ สถานะ / ดีบัฟ</h5>
+      <div id="dndTokenStatusList"></div>
+      <div class="dndStatusAddRow">
+        <input id="dndTokenStatusName" maxlength="24" placeholder="ชื่อสถานะ เช่น ติดพิษ">
+        <input id="dndTokenStatusNote" maxlength="100" placeholder="หมายเหตุ (ไม่บังคับ)">
+        <input id="dndTokenStatusDuration" type="number" min="0" max="86400" placeholder="คูลดาวน์ (วิ, 0=ไม่มี)" style="max-width:150px;">
+      </div>
+      <div class="dndStatusAddRow">
+        <input id="dndTokenStatusAtk" type="number" min="-20" max="20" placeholder="โจมตี ±" style="max-width:110px;" title="ปรับค่าทอยโจมตี ระหว่างติดสถานะนี้">
+        <input id="dndTokenStatusDmg" type="number" min="-20" max="20" placeholder="ดาเมจ ±" style="max-width:110px;" title="ปรับค่าดาเมจ ระหว่างติดสถานะนี้">
+        <input id="dndTokenStatusDef" type="number" min="-20" max="20" placeholder="ป้องกัน(AC) ±" style="max-width:120px;" title="ปรับค่า AC ระหว่างติดสถานะนี้">
+        <input id="dndTokenStatusTick" type="number" min="-1000" max="1000" placeholder="HP/ติ๊ก ±" style="max-width:110px;" title="ลบ=โดนดาเมจต่อเนื่อง (พิษ/ไฟลุก) บวก=ฟื้น HP ต่อเนื่อง (รีเจน)">
+        <input id="dndTokenStatusTickInterval" type="number" min="1" max="3600" placeholder="ทุกกี่วิ" style="max-width:90px;" title="ระยะห่างระหว่างแต่ละติ๊ก (วินาที) ใช้ก็ต่อเมื่อตั้ง HP/ติ๊ก ไว้">
+        <button type="button" id="dndTokenStatusAddBtn">+ มอบสถานะ</button>
+      </div>
+    </div>
+    <button id="dndTokenEditCloseBtn" class="dndDmEditCancelBtn" type="button" style="margin-top:12px;">ปิด</button>
+  </div>
+</div>
+
+<!-- วิธีเล่น -->
+<div id="dndHowToOverlay" class="dndModalOverlay">
+  <div class="dndModalBox">
+    <h3>📖 วิธีเล่น D&amp;D ในห้องนี้</h3>
+    <p><b>🎲 ลูกเต๋าใช้ยังไง</b><br>
+    เลือกลูกเต๋า (d4–d100) เลือกจำนวนลูก ใส่ตัวปรับค่า (modifier) ถ้ามี แล้วกด "ทอยลูกเต๋า" ผลจะขึ้นในบันทึกให้ทุกคนเห็นพร้อมกัน ใช้ทอยเช็คทักษะ (Skill Check), โจมตี (Attack Roll), หรือทอยความเสียหาย (Damage Roll) ตามที่ DM บอกให้ทอย</p>
+    <p><b>🧑‍🎨 การสร้างตัวละคร (ทำได้ครั้งเดียว)</b></p>
+    <ul>
+      <li>ตั้งชื่อ แล้วเลือกการ์ด <b>เผ่าพันธุ์</b> และ <b>คลาส</b> — แต่ละใบให้โบนัสสเตตัสประจำตัวต่างกัน</li>
+      <li>แจกแต้มสเตตัส (Point Buy) ทั้งหมด <b>10 แต้ม</b> ลงใน STR/DEX/CON/INT/WIS/CHA ได้สูงสุด <b>+5 ต่อค่า</b> (ทุกค่าเริ่มที่ 10 พื้นฐาน) เพื่อไม่ให้ทุ่มลงค่าเดียวจนเวอร์เกิน</li>
+      <li>AC และ HP สูงสุด กรอกเองได้ในช่วงที่ระบบคำนวณให้อัตโนมัติ (จาก DEX/CON และคลาสที่เลือก)</li>
+      <li>เมื่อกดบันทึก การ์ดจะ <b>ล็อกถาวร</b> แก้ไขเองไม่ได้อีก ต้องให้ DM เป็นผู้ปรับให้เท่านั้น</li>
+    </ul>
+    <p><b>🛡️ บทบาท DM (Dungeon Master)</b><br>
+    คนแรกที่เข้าห้องจะเป็น DM โดยอัตโนมัติ DM สามารถแก้ไขข้อมูลของผู้เล่น <b>ทุกคน ทุกช่อง ได้ตลอดเวลา</b> ไม่มีการล็อก — ใช้ตอนเลเวลอัพ โดนตี ใช้ไอเทม เปลี่ยนอาวุธ หรือแก้ไขความผิดพลาด กดปุ่ม "แก้ไข" ที่การ์ดของผู้เล่นแต่ละคนในรายชื่อปาร์ตี้เพื่อเปิดหน้าต่างแก้ไข</p>
+    <p><b>🎒 อุปกรณ์สวมใส่</b><br>
+    ทุกคนมีช่องสวมใส่ 4 ช่อง: <b>อาวุธ / เกราะ / รองเท้า / เครื่องประดับ</b> แต่ละชิ้นตั้งชื่อ ใส่ค่าป้องกัน และความคงทน (ปัจจุบัน/สูงสุด) ได้เอง แก้ไขได้ตลอดเวลาไม่ต้องรอ DM ปลดล็อก — กดปุ่ม "บันทึกอุปกรณ์" ใต้การ์ดตัวละครของตัวเอง ค่าป้องกันรวมของแต่ละคนจะโชว์บนการ์ดในปาร์ตี้ให้ทุกคนเห็น</p>
+    <p><b>📍 ประกาศสถานที่ / สถานการณ์</b><br>
+    <b>DM เท่านั้น</b>ที่ประกาศสถานที่ปัจจุบันและสถานการณ์ของฉากได้ ผ่านช่อง "ประกาศสถานที่ / สถานการณ์" ในแผงสถานะห้อง กดประกาศแล้วข้อความจะขึ้นเป็นป้ายด้านบนจอของทุกคนทันที ใช้ "ล้างประกาศ" เพื่อซ่อนป้ายเมื่อไม่ต้องการแสดงแล้ว</p>
+    <button class="dndModalCloseBtn" id="dndHowToCloseBtn" type="button">เข้าใจแล้ว</button>
+  </div>
+</div>
+
+<!-- ประกาศอัปเดต / Patch Notes -->
+<div id="dndPatchNotesOverlay" class="dndModalOverlay">
+  <div class="dndModalBox">
+    <h3>📜 ประกาศอัปเดต</h3>
+
+    <p><b>⚔️ ระบบต่อสู้</b></p>
+    <ul>
+      <li>ตอนเลือกเป้าหมายโจมตี เอาเลข HP ของมอนสเตอร์ออกจากหน้าเลือกแล้ว จะได้ไม่รู้เลือดล่วงหน้าจนเกินไป</li>
+      <li>ดาเมจ AOE คำนวณตามระยะห่างจริงของ token บนแผนที่แล้ว ยิงโดนใครบ้างขึ้นอยู่กับตำแหน่งจริง ไม่ใช่เหมารวมทั้งปาร์ตี้</li>
+      <li>มอนสเตอร์ที่ถูกกำจัดแล้วจะติดสถานะ "ตาย" ☠️ ให้เห็นชัดเจนบนแผนที่</li>
+    </ul>
+
+    <p><b>🎒 ไอเทม &amp; ร้านค้า</b></p>
+    <ul>
+      <li>แก้บั๊กไอเทมไม่เด้งเข้ากระเป๋าไอเทม/แลกเปลี่ยน แต่ดันไปโผล่ในช่องไอเทมแบบข้อความของการ์ดตัวละครแทน</li>
+      <li>เพิ่มประเภทไอเทม "ใช้แล้วหายไป" ให้ DM ตั้งค่าได้ตอนสร้างไอเทมใช้งาน</li>
+      <li>เพิ่มระบบร้านตีบวก ให้ DM เป็นคนเปิดร้านและจัดการเองได้เต็มรูปแบบ</li>
+      <li>แก้บั๊กยาฟื้นฟู HP ใช้ไม่ได้ผล พร้อมเปิดทางให้ DM สร้างสกิล/ไอเทมชุบชีวิตได้เองแล้ว</li>
+    </ul>
+
+    <p><b>✨ สกิล (มุมมอง DM)</b></p>
+    <ul>
+      <li>DM สร้างสกิลฮีล HP ให้ผู้เล่นได้แล้ว</li>
+      <li>DM สร้างสกิลลบล้างสถานะผิดปกติให้ผู้เล่นได้แล้ว</li>
+      <li>DM สร้างพาสซีฟสกิลของตัวเองแจกให้ผู้เล่นได้แล้ว (นอกเหนือจากพาสซีฟประจำเผ่า)</li>
+    </ul>
+
+    <p><b>☠️ สถานะผิดปกติ</b></p>
+    <ul>
+      <li>สถานะผิดปกติเพิ่มระบบคูลดาวน์ได้แล้ว หมดเวลาหลุดสถานะให้อัตโนมัติ ไม่ต้องรอ DM ถอนมือ</li>
+      <li>DM แก้ไขคูลดาวน์ของสถานะที่มอบไปแล้วได้ตลอดเวลา</li>
+      <li>ใหม่! สถานะผิดปกติใส่ผลจริงได้แล้ว: ตั้งค่า HP ที่จะโดน/ฟื้นทุก ๆ กี่วินาที (พิษ/ไฟลุก/เลือดไหล/รีเจน) และปรับค่าพลังโจมตี/ดาเมจ/ป้องกัน (AC) ระหว่างติดสถานะได้ (บัฟ/ดีบัฟ) มีผลจริงตอนคำนวณสู้รบทุกช่องทาง (สกิล, โจมตีปกติ, ท่าโจมตีมอนสเตอร์)</li>
+    </ul>
+
+    <p><b>🧝 การสร้างตัวละคร</b></p>
+    <ul>
+      <li>เพิ่มการเลือกพาสซีฟสกิลประจำเผ่าตอนสร้างตัวละคร โดยอิงตามธีมเผ่าแบบ D&amp;D</li>
+    </ul>
+
+    <p><b>🎛️ เครื่องมือ DM</b></p>
+    <ul>
+      <li>DM แก้ไข AC ของมอนสเตอร์ได้โดยตรงแล้ว</li>
+      <li>DM แก้ไขสถานะผิดปกติของมอนสเตอร์ได้เหมือนกับผู้เล่น</li>
+      <li>สร้าง token บนแผนที่ตอนนี้เลือกได้ว่าจะทำวงบอสตัวใหญ่ เพื่อรองรับมอนสเตอร์ไซซ์พิเศษ</li>
+      <li>เพิ่ม List มอนสเตอร์สำเร็จรูป 10 ชนิด พร้อมสเตตัส ท่าโจมตี และสกิลครบชุด กด "สร้าง" ได้ทันทีไม่ต้องตั้งเองใหม่ทั้งหมด</li>
+    </ul>
+
+    <p><b>📋 Log &amp; ความเป็นส่วนตัว</b></p>
+    <ul>
+      <li>Log ตอน DM มอบไอเทมให้ผู้เล่น จะเห็นเฉพาะผู้เล่นที่ได้รับของเท่านั้น ผู้เล่นคนอื่นในห้องจะไม่เห็นข้อความนี้</li>
+    </ul>
+
+    <button class="dndModalCloseBtn" id="dndPatchNotesCloseBtn" type="button">เข้าใจแล้ว</button>
+  </div>
+</div>
+
+<div id="lobbyScreen" style="display:none;">
+  <h2 style="color:#ffd76b;">ห้องรอผู้เล่น</h2>
+
+  <div id="hostSettings" style="display:none; text-align:left; margin-bottom:14px;">
+    <div class="settingRow">
+      <div class="settingLabel">โหมดผู้เล่น</div>
+      <div class="settingOptions" id="modeOptions">
+        <button type="button" class="optBtn" data-mode="4">4 คน · 1 สำรับ</button>
+        <button type="button" class="optBtn" data-mode="8">8 คน · 2 สำรับ</button>
+      </div>
+    </div>
+    <div class="settingRow">
+      <div class="settingLabel">ระดับบอท</div>
+      <div class="settingOptions" id="botLevelOptions">
+        <button type="button" class="optBtn" data-level="easy">ง่าย</button>
+        <button type="button" class="optBtn" data-level="normal">ปานกลาง</button>
+        <button type="button" class="optBtn" data-level="hard">ยาก</button>
+      </div>
+    </div>
+  </div>
+  <div id="guestSettings" style="display:none; font-size:13px; color:#9fb; margin-bottom:12px;"></div>
+
+  <div id="lobbyList"></div>
+  <div id="lobbyHint"></div>
+  <button id="startBtn" style="display:none;">เริ่มเกม</button>
+  <div><button id="leaveLobbyBtn" class="linkBtn">ออกจากห้อง</button></div>
+</div>
+
+<div id="seatPickerScreen" style="display:none;">
+  <h2 style="color:#ffd76b;">เลือกที่นั่ง</h2>
+  <div id="seatPickerHint" style="font-size:12px; color:#9aa4b2; margin-bottom:10px;">เกมกำลังเล่นอยู่ — กดที่นั่งของบอทเพื่อเข้านั่งแทน</div>
+  <div id="seatPickerList"></div>
+</div>
+
+<div id="chatSlotLobby" style="width:100%; max-width:780px;"></div>
+
+<div id="gameScreen">
+  <div id="layout">
+    <div id="scorePanel">
+      <div id="scoreboard"></div>
+      <div id="log"></div>
+    </div>
+    <div id="tableWrap">
+      <div id="table"></div>
+      <div id="emojiPalette"></div>
+    </div>
+    <div id="chatSlotGame"></div>
+  </div>
+  <div id="status"></div>
+  <div id="handArea"></div>
+  <div id="controls">
+    <button id="passBtn">ส่งไพ่ที่เลือก (0/3)</button>
+    <div><button id="leaveSeatBtn" class="linkBtn">ออกจากโต๊ะ</button></div>
+  </div>
+  <div id="rules">
+    กติกาโดยย่อ: กติกาพื้นฐานเหมือน Hearts ดั้งเดิม
+    ผู้ที่ถือ 2♣ เป็นคนนำไพ่ใบแรกของแต้มนั้น ต้องเดินตามดอกถ้ามี ห้ามนำโพแดงจนกว่าจะ "แตกโพ" (มีคนทิ้งโพแดงหรือ Q♠ ไปแล้ว)
+    ห้ามทิ้งไพ่แต้ม (โพแดง/Q♠) ในกองแรกถ้ายังมีไพ่ดอกอื่นให้เดิน แต้ม: โพแดงใบละ 1, Q♠ ใบละ 13, <b>J♦ ใบละ -10 แต้ม</b> — ใครกิน J♦ ได้จะถูกหักแต้ม ไม่เกี่ยวกับการกินหมดกระดาน
+    ใครกิน "หมดกระดาน" ถือว่ากินพระจันทร์ ตัวเองได้ 0 คนอื่นโดนคนละเท่าแต้มเต็มกระดาน (ส่วน J♦ ยังคิดแยกตามจริงเสมอ)
+    ตัวเลข "มือนี้" ในตารางคะแนน/ที่นั่งจะอัปเดตแบบเรียลไทม์ระหว่างเล่น
+    <div id="rulesDynamic" style="margin-top:6px; color:#ffd76b;"></div>
+  </div>
+</div>
+
+<div id="chatPanel" class="chatInLobby" style="display:none;">
+  <div id="chatBox"></div>
+  <div id="chatInputRow">
+    <input id="chatInput" maxlength="300" placeholder="พิมพ์ข้อความคุยกับเพื่อนร่วมโต๊ะ...">
+    <button id="chatSendBtn">ส่ง</button>
+  </div>
+</div>
+
+<button id="newGameBtn" style="display:none;">🔄 เริ่มเกมใหม่</button>
+<button id="alarmBtn" style="display:none;">🚨 สัญญาณเตือน</button>
+<div id="blackout"><span>จอมืด — แตะที่นี่เพื่อเปิดหน้าจอกลับมาเล่นต่อ</span></div>
+
+<div id="overlay"><div id="overlayBox"></div></div>
+
+<script src="app.js"></script>
+</body>
+</html>
