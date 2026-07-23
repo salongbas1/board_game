@@ -555,6 +555,10 @@
       </div>
     </div>
     <div id="dndRightCol">
+      <div id="dndDmSkillsOverviewBox" style="display:none;">
+        <h3>🎓 สกิลผู้เล่น (DM)</h3>
+        <div id="dndDmSkillsOverviewList"></div>
+      </div>
       <div id="dndLogBox">
         <h3>บันทึกการทอย / แชท</h3>
         <div id="dndLog"></div>
@@ -568,6 +572,9 @@
   <div style="text-align:center; margin-top:6px; display:flex; gap:14px; justify-content:center; flex-wrap:wrap;">
     <button id="dndLeaveBtn" class="linkBtn">ออกจากที่นั่ง</button>
     <button id="dndRestartBtn" class="linkBtn" style="display:none;">🔄 รีเซตห้องทั้งหมด (เริ่มใหม่หมด)</button>
+    <button id="dndSaveGameBtn" class="linkBtn" style="display:none;">💾 บันทึกเกมเป็นไฟล์</button>
+    <button id="dndLoadGameBtn" class="linkBtn" style="display:none;">📂 โหลดเกมจากไฟล์</button>
+    <input id="dndLoadGameFileInput" type="file" accept="application/json,.json" style="display:none;">
   </div>
 </div>
 
@@ -613,12 +620,12 @@
       <div class="dndField"><label>HP สูงสุด</label><input id="dndEditMaxHp" type="number" min="1"></div>
     </div>
     <div class="dndStatGrid">
-      <div class="dndField"><label class="dndStatTip" data-tip="💪 พละกำลัง — เพิ่มพลังโจมตีและดาเมจระยะประชิด">STR</label><input id="dndEditStr" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="🏃 ความคล่องตัว — เพิ่มความแม่นยำและการหลบหลีก">DEX</label><input id="dndEditDex" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="❤️ ความแข็งแกร่ง — เพิ่มความทนทานและ HP">CON</label><input id="dndEditCon" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="🧠 สติปัญญา — ช่วยด้านเวทมนตร์และความรู้">INT</label><input id="dndEditInt" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="👁️ ปัญญา — ช่วยด้านการรับรู้และสัญชาตญาณ">WIS</label><input id="dndEditWis" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="🗣️ เสน่ห์ — ช่วยด้านการพูดคุยและโน้มน้าว">CHA</label><input id="dndEditCha" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="💪 พละกำลัง (STR) — เพิ่มพลังโจมตีและดาเมจระยะประชิด ค่าเฉลี่ยคนทั่วไป ~10">STR <span id="dndEditStrMod" class="dndStatModBadge"></span></label><input id="dndEditStr" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="🏃 ความคล่องตัว (DEX) — เพิ่มความแม่นยำและการหลบหลีก ค่าเฉลี่ยคนทั่วไป ~10">DEX <span id="dndEditDexMod" class="dndStatModBadge"></span></label><input id="dndEditDex" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="❤️ ความแข็งแกร่ง/ความอึด (CON) — ผูกกับ HP สูงสุดโดยตรง แก้ค่านี้แล้ว HP จะคำนวณใหม่อัตโนมัติตามกลไก D&D">CON <span id="dndEditConMod" class="dndStatModBadge"></span></label><input id="dndEditCon" type="number" min="1" max="30"><small id="dndEditConHpHint" class="dndRangeHint"></small></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="🧠 สติปัญญา (INT) — ช่วยด้านเวทมนตร์และความรู้ ค่าเฉลี่ยคนทั่วไป ~10">INT <span id="dndEditIntMod" class="dndStatModBadge"></span></label><input id="dndEditInt" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="👁️ ปัญญา/การรับรู้ (WIS) — ช่วยด้านการรับรู้และสัญชาตญาณ ค่าเฉลี่ยคนทั่วไป ~10">WIS <span id="dndEditWisMod" class="dndStatModBadge"></span></label><input id="dndEditWis" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="🗣️ เสน่ห์ (CHA) — ช่วยด้านการพูดคุยและโน้มน้าว ค่าเฉลี่ยคนทั่วไป ~10">CHA <span id="dndEditChaMod" class="dndStatModBadge"></span></label><input id="dndEditCha" type="number" min="1" max="30"></div>
     </div>
     <div class="dndFieldRow"><div class="dndField"><label>ประวัติที่มาของตัวละคร</label><textarea id="dndEditBackstory" rows="3" maxlength="800"></textarea></div></div>
     <div class="dndFieldRow"><div class="dndField"><label>ไอเทม / กระเป๋า</label><textarea id="dndEditInventory" rows="3" maxlength="500"></textarea></div></div>
@@ -650,6 +657,46 @@
     <label class="dndLockRow"><input type="checkbox" id="dndEditLocked"> ล็อกการ์ดตัวละคร (ผู้เล่นแก้ไขเองไม่ได้)</label>
     <button id="dndDmEditSaveBtn">บันทึกการแก้ไข</button>
     <button id="dndDmEditCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- DM: แก้ไขสกิลประจำคลาส (🎓) เฉพาะของผู้เล่นคนเดียว — ไม่กระทบคนอื่นในคลาสเดียวกัน -->
+<div id="dndClassSkillEditOverlay" class="dndModalOverlay">
+  <div class="dndModalBox">
+    <h3 id="dndClassSkillEditTitle">แก้ไขสกิลประจำคลาส (DM)</h3>
+    <p class="dndRangeHint" style="margin:-4px 0 10px 0;">แก้ตรงนี้จะเปลี่ยนเฉพาะผู้เล่นคนนี้คนเดียว ผู้เล่นคนอื่นในคลาสเดียวกันจะไม่ได้รับผลกระทบ</p>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ชื่อสกิล</label><input id="dndClassSkillEditName" maxlength="40"></div>
+      <div class="dndField"><label>ผูกสเตตัส (ไม่บังคับ)</label><select id="dndClassSkillEditStat"></select></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>คำอธิบาย</label><textarea id="dndClassSkillEditDesc" rows="2" maxlength="200"></textarea></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ดาเมจ (ไม่บังคับ)</label><select id="dndClassSkillEditDmgDie"></select></div>
+      <div class="dndField"><label>จำนวนลูก</label><input id="dndClassSkillEditDmgCount" type="number" min="1" max="20" value="1"></div>
+      <div class="dndField"><label>Modifier</label><input id="dndClassSkillEditDmgMod" type="number" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>💚 ชุบ HP (ไม่บังคับ)</label><select id="dndClassSkillEditHealDie"></select></div>
+      <div class="dndField"><label>จำนวนลูก</label><input id="dndClassSkillEditHealCount" type="number" min="1" max="20" value="1"></div>
+      <div class="dndField"><label>Modifier</label><input id="dndClassSkillEditHealMod" type="number" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>☠️ ชื่อสถานะ/ดีบัฟ (ไม่บังคับ)</label><input id="dndClassSkillEditStatusName" maxlength="24" placeholder="เช่น มึนงง, พิษ"></div>
+      <div class="dndField"><label>รายละเอียดสถานะ</label><input id="dndClassSkillEditStatusNote" maxlength="100" placeholder="เช่น เสียโอกาสโจมตี 1 ตา"></div>
+      <div class="dndField"><label>💥 รัศมี AOE (0-100, 0 = เป้าเดี่ยวปกติ)</label><input id="dndClassSkillEditAoeRadius" type="number" min="0" max="100" value="0"></div>
+      <div class="dndField"><label><input id="dndClassSkillEditCleanseEnabled" type="checkbox" style="width:auto; margin-right:6px;">✨ สกิลลบล้างสถานะผิดปกติ</label></div>
+      <div class="dndField"><label>ชื่อสถานะที่จะลบ (ว่าง = ล้างทั้งหมด)</label><input id="dndClassSkillEditCleanseName" maxlength="24" placeholder="เช่น พิษ (ว่าง = ล้างทุกสถานะ)"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>คูลดาวน์ (วินาที, 0 = ไม่มี)</label><input id="dndClassSkillEditCooldown" type="number" min="0" max="3600" value="0"></div>
+      <div class="dndField"><label>จำนวนครั้งที่ใช้ได้ (0 = ไม่จำกัด)</label><input id="dndClassSkillEditMaxUses" type="number" min="0" max="99" value="0"></div>
+    </div>
+    <div id="dndClassSkillEditError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
+    <button id="dndClassSkillEditSaveBtn">บันทึกการแก้ไข (เฉพาะคนนี้)</button>
+    <button id="dndClassSkillEditResetBtn" type="button" style="background:#3a2f14; margin-top:6px;">♻️ รีเซ็ตสกิลนี้กลับเป็นค่าเริ่มต้นของคลาส</button>
+    <button id="dndClassSkillEditCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
   </div>
 </div>
 

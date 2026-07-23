@@ -452,11 +452,16 @@
   .dndEditableSkillChip { cursor: pointer; }
   .dndEditableSkillChip:hover { border-color: #ffd76b; }
   .dndSkillCardRules { color: #6fd3ff; font-size: 11px; margin: 0 0 8px 0; }
-  #dndSheetBox, #dndDiceBox, #dndLogBox, #dndSkillBox, #dndAttackBox {
+  #dndSheetBox, #dndDiceBox, #dndLogBox, #dndSkillBox, #dndAttackBox, #dndDmSkillsOverviewBox {
     width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px;
     padding: 12px; margin-bottom: 12px;
   }
-  #dndSheetBox h3, #dndDiceBox h3, #dndLogBox h3, #dndSkillBox h3, #dndAttackBox h3, #dndParty h3 { margin: 0 0 8px 0; color: #ffd76b; font-size: 14px; }
+  #dndSheetBox h3, #dndDiceBox h3, #dndLogBox h3, #dndSkillBox h3, #dndAttackBox h3, #dndParty h3, #dndDmSkillsOverviewBox h3 { margin: 0 0 8px 0; color: #ffd76b; font-size: 14px; }
+  .dndDmSkillsPlayerRow { padding: 8px 0; border-top: 1px solid #23283033; }
+  .dndDmSkillsPlayerRow:first-child { border-top: none; padding-top: 0; }
+  .dndDmSkillsPlayerName { font-size: 12px; font-weight: bold; color: #eee; margin-bottom: 5px; }
+  .dndDmSkillsChips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .dndSkillChipLocked { opacity: 0.45; }
   #dndToolTabs { display: flex; gap: 6px; margin-bottom: 10px; }
   .dndToolTabBtn {
     flex: 1; padding: 8px; border: 1px solid #3a4150; border-radius: 6px; background: #0d1117; color: #9aa4b2;
@@ -736,6 +741,7 @@
   .dndSheetStatRow div { background: #0d1117; border-radius: 6px; padding: 5px 2px; }
   .dndSheetStatRow .dndStatKey { font-size: 10px; color: #9aa4b2; }
   .dndSheetStatRow .dndStatVal { font-size: 14px; font-weight: bold; color: #ffd76b; }
+  .dndStatModBadge { font-size: 10px; font-weight: normal; color: #9aa4b2; }
   .dndStatPlusBtn { margin-top: 4px; width: 100%; border: 1px solid #3fbf5f; background: #133a1f; color: #7ee787; border-radius: 5px; font-size: 10px; font-weight: bold; padding: 2px 0; cursor: pointer; }
   .dndStatPlusBtn:hover:not(:disabled) { background: #1c5230; }
   .dndStatPlusBtn:disabled { border-color: #3a3f47; background: #16191d; color: #5a616b; cursor: not-allowed; }
