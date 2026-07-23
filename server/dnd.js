@@ -5,7 +5,8 @@
 
 const WebSocket = require('ws');
 
-const { DND_RACES, DND_CLASSES, DND_CLASS_STARTER_GEAR, DND_HAIR_STYLES, DND_HAIR_COLORS, DND_FACE_STYLES, DND_LEVEL_EXP, DND_POINT_BUY_TOTAL, DND_STARTING_GOLD_MAX } = require('./data/characters');
+const { DND_RACES, DND_CLASSES, DND_CLASS_STARTER_GEAR, DND_HAIR_STYLES, DND_HAIR_COLORS, DND_FACE_STYLES, DND_LEVEL_EXP, DND_STARTING_GOLD_MAX } = require('./data/characters');
+const { POINT_BUY_MIN, POINT_BUY_BUDGET, STAT_POINTS_PER_LEVEL, POINT_BUY_COST, POINT_BUY_COST_MAX_DEFINED, POINT_BUY_COST_PER_STEP_ABOVE_MAX, pointBuyCostOf, pointBuyStepCost } = require('./data/point-buy');
 const { DND_RACE_PASSIVES, DND_PASSIVE_EFFECT_KEYS, DND_CLASS_SKILLS, DND_CLASS_SKILL_ID_BASE } = require('./data/skills');
 const { DND_EQUIP_SLOTS, DND_EQUIP_SLOT_LABELS, DND_EQUIP_ICON_MAX_LEN, DND_SHOP_TYPES, DND_FORGE_FAIL_POLICIES, DND_FORGE_FAIL_POLICY_LABELS, DND_ITEM_EFFECT_TYPES } = require('./data/equipment');
 const { DND_TOKEN_COLORS, DND_MAX_TOKEN_IMAGE_CHARS, DND_TOKEN_SIZES, DND_MAX_MAP_BG_CHARS } = require('./data/tokens-map');
@@ -20,6 +21,10 @@ let dndNextSkillId = 1;
 let dndCustomPassives = []; // [{id, key, raceKey ('any' or a race key), name, icon, desc, effect}] — passive skills the DM designs, on top of the built-in ones
 let dndNextPassiveId = 1;
 let dndScene = { location: '', situation: '' }; // ป้ายประกาศสถานที่/สถานการณ์บนจอทุกคน — DM เท่านั้นที่กำหนดได้
+let dndGameTime = { day: 1, hour: 8, minute: 0 }; // นาฬิกาในเกม — DM เดินเวลา/ข้ามวัน/แก้ไขเวลาได้เท่านั้น เริ่มที่วันที่ 1 เวลา 08:00
+// เวลาวิ่งอัตโนมัติ — DM กดเปิด/ปิดได้ + ปรับความเร็ว (กี่นาทีในเกม ต่อ 1 นาทีจริง) ประมวลผลจาก tick ทุก 1 วิ ใน dndSweepExpiredStatuses
+let dndTimeAuto = { running: false, speed: 10 };
+let dndTimeAutoAccumMinutes = 0; // สะสมเศษนาทีในเกมที่ยังไม่ครบ 1 นาที (เพราะ speed อาจทำให้นาทีในเกมต่อ tick เป็นเศษส่วน)
 // ---- ลำดับเทิร์นผู้เล่น: DM จัดลำดับเอง (ไม่ทอย initiative) แล้วกดเลื่อนตาไปเรื่อยๆ วนลูป ----
 let dndTurnOrder = []; // array of player ids (non-DM) ตามลำดับที่ DM ตั้งไว้
 let dndTurnIndex = -1; // index ใน dndTurnOrder ของตาปัจจุบัน, -1 = ยังไม่ได้เริ่ม/หยุดแล้ว
@@ -546,10 +551,11 @@ function dndHpRange(level, conMod, hitDie) {
 function dndComputeFinalStats(pointBuy, race, cls) {
   const stats = {};
   for (const k of ['str', 'dex', 'con', 'int', 'wis', 'cha']) {
-    const pb = Math.max(0, Math.min(DND_POINT_BUY_TOTAL, Math.round(Number(pointBuy && pointBuy[k]) || 0)));
+    let score = Math.round(Number(pointBuy && pointBuy[k]));
+    if (!Number.isFinite(score) || score < POINT_BUY_MIN) score = POINT_BUY_MIN;
     const rb = (race && race.bonus && race.bonus[k]) || 0;
     const cb = (cls && cls.bonus && cls.bonus[k]) || 0;
-    stats[k] = 1 + pb + rb + cb;
+    stats[k] = score + rb + cb;
   }
   return stats;
 }
@@ -560,7 +566,7 @@ function newDndCharacter(displayName) {
     hp: 10, maxHp: 10, ac: 10,
     str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10,
     inventory: '', backstory: '', locked: false, pointBuy: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
-    equipment: dndSanitizeEquipment(null), statuses: [], exp: 0, gold: 0,
+    equipment: dndSanitizeEquipment(null), statuses: [], exp: 0, gold: 0, statPoints: 0,
     appearance: dndSanitizeAppearance(null), bag: [],
   };
 }
@@ -603,7 +609,12 @@ function dndBroadcastState() {
         passives: DND_RACE_PASSIVES,
         customPassives: dndCustomPassives,
         skills: dndVisibleSkills(p),
-        pointBuyTotal: DND_POINT_BUY_TOTAL,
+        pointBuyMin: POINT_BUY_MIN,
+        pointBuyBudget: POINT_BUY_BUDGET,
+        pointBuyCost: POINT_BUY_COST,
+        pointBuyCostMaxDefined: POINT_BUY_COST_MAX_DEFINED,
+        pointBuyCostPerStepAboveMax: POINT_BUY_COST_PER_STEP_ABOVE_MAX,
+        statPointsPerLevel: STAT_POINTS_PER_LEVEL,
         equipSlots: DND_EQUIP_SLOTS,
         equipSlotLabels: DND_EQUIP_SLOT_LABELS,
         hairStyles: DND_HAIR_STYLES,
@@ -614,6 +625,8 @@ function dndBroadcastState() {
         itemEffects: dndItemEffects,
         trades: dndTradesForPlayer(p),
         scene: dndScene,
+        gameTime: dndGameTime,
+        timeAuto: dndTimeAuto,
         tokens: dndTokensPublic(),
         mapBackground: dndCurrentMap().background,
         maps: dndMaps.map(m => ({ id: m.id, name: m.name })),
@@ -757,15 +770,16 @@ function dndHandleCreateCharacter(ws, payload) {
   const passiveEffect = passive.effect || {};
 
   const pointBuy = { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 };
-  let spent = 0;
+  let spentCost = 0;
   for (const k of Object.keys(pointBuy)) {
     const raw = payload.pointBuy && payload.pointBuy[k];
-    const n = Math.max(0, Math.min(DND_POINT_BUY_TOTAL, Math.round(Number(raw) || 0)));
-    pointBuy[k] = n;
-    spent += n;
+    let score = Math.round(Number(raw));
+    if (!Number.isFinite(score) || score < POINT_BUY_MIN) score = POINT_BUY_MIN;
+    pointBuy[k] = score;
+    spentCost += pointBuyCostOf(score);
   }
-  if (spent !== DND_POINT_BUY_TOTAL) {
-    dndSendError(ws, `ต้องแจกแต้มสเตตัสให้ครบพอดี ${DND_POINT_BUY_TOTAL} แต้ม (ตอนนี้ใช้ไป ${spent} แต้ม)`);
+  if (spentCost !== POINT_BUY_BUDGET) {
+    dndSendError(ws, `ต้องใช้พอยต์ให้ครบพอดี ${POINT_BUY_BUDGET} พอย (ตอนนี้ใช้ไป ${spentCost} พอย)`);
     return;
   }
 
@@ -805,6 +819,7 @@ function dndHandleCreateCharacter(ws, payload) {
     int: finalStats.int, wis: finalStats.wis, cha: finalStats.cha,
     inventory, backstory, locked: true, pointBuy, equipment, statuses: (p.character.statuses || []),
     appearance, gold: (p.character.gold || 0) + gold, bag: dndSanitizeBag(p.character.bag),
+    statPoints: (p.character.statPoints || 0),
   };
   // สร้าง token บนแผนที่ให้อัตโนมัติ (ครั้งแรกที่ล็อกการ์ดตัวละครเท่านั้น เพราะฟังก์ชันนี้ทำงานได้แค่ครั้งเดียวต่อคน)
   if (!dndTokens.some(t => t.kind === 'pc' && t.ownerId === p.id)) {
@@ -817,9 +832,37 @@ function dndHandleCreateCharacter(ws, payload) {
   dndAddLog(`${charName} (${race.name} ${cls.name} · สกิลติดตัว: ${passive.name}) สร้างการ์ดตัวละครแล้ว — บันทึกล็อกเรียบร้อย`);
 }
 
+// ผู้เล่นกดใช้ "แต้มสเตตัส" ที่ได้จากการเลเวลอัพ เพิ่มสเตตัสตัวใดตัวหนึ่งขึ้นทีละ 1 แต้ม
+// ต้นทุนต่อ 1 แต้มที่เพิ่มขึ้นอยู่กับค่าปัจจุบัน (ขั้นบันไดเดียวกับตอนสร้างตัวละคร — ดู data/point-buy.js)
+// สำคัญ: ต้องคิดต้นทุนจากค่า "point-buy ดิบ" (c.pointBuy[key]) เท่านั้น ห้ามใช้ค่าสเตตัสสุดท้าย (c[key])
+// เพราะค่าสุดท้ายอาจถูกบวกโบนัสจากเผ่าพันธุ์/คลาสไปแล้ว ถ้าเอาค่าที่บวกโบนัสมาคิดต้นทุนจะทำให้ราคาผิดเพี้ยน
+// (โดยเฉพาะช่วงใกล้ค่า 15-16 ที่ต้นทุนกระโดดจาก 2 เป็น 9) — ต้องแยกค่าดิบกับค่าสุดท้ายออกจากกันเสมอ
+const DND_STAT_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+function dndHandleSpendStatPoint(ws, stat) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.character || !p.character.locked) { dndSendError(ws, 'ต้องสร้างการ์ดตัวละครก่อนถึงจะอัพสเตตัสได้'); return; }
+  const key = (stat || '').toString();
+  if (!DND_STAT_KEYS.includes(key)) { dndSendError(ws, 'สเตตัสไม่ถูกต้อง'); return; }
+  const c = p.character;
+  if (!c.pointBuy) c.pointBuy = { str: POINT_BUY_MIN, dex: POINT_BUY_MIN, con: POINT_BUY_MIN, int: POINT_BUY_MIN, wis: POINT_BUY_MIN, cha: POINT_BUY_MIN };
+  const currentRaw = Math.round(Number(c.pointBuy[key])) || POINT_BUY_MIN;
+  const cost = pointBuyStepCost(currentRaw);
+  const available = Math.round(Number(c.statPoints) || 0);
+  if (available < cost) { dndSendError(ws, `แต้มสเตตัสไม่พอ (เพิ่ม ${key.toUpperCase()} อีก 1 ต้องใช้ ${cost} แต้ม ตอนนี้มี ${available} แต้ม)`); return; }
+  const race = dndRaceByKey(c.raceKey);
+  const cls = dndClassByKey(c.classKey);
+  const raceBonus = (race && race.bonus && race.bonus[key]) || 0;
+  const clsBonus = (cls && cls.bonus && cls.bonus[key]) || 0;
+  c.pointBuy[key] = currentRaw + 1;
+  c[key] = c.pointBuy[key] + raceBonus + clsBonus;
+  c.statPoints = available - cost;
+  dndAddLog(`📈 ${c.charName || p.name} เพิ่ม ${key.toUpperCase()} เป็น ${c[key]} (ใช้แต้มสเตตัส ${cost} แต้ม เหลือ ${c.statPoints} แต้ม)`);
+  dndBroadcastState();
+}
+
 const DND_DM_STR_FIELDS = ['charName', 'race', 'cls', 'inventory', 'backstory'];
 const DND_DM_STR_FIELD_MAXLEN = { inventory: 500, backstory: 800 };
-const DND_DM_NUM_FIELDS = ['level', 'maxHp', 'ac', 'str', 'dex', 'con', 'int', 'wis', 'cha', 'exp', 'gold'];
+const DND_DM_NUM_FIELDS = ['level', 'maxHp', 'ac', 'str', 'dex', 'con', 'int', 'wis', 'cha', 'exp', 'gold', 'statPoints'];
 // DM แก้ไขข้อมูลของผู้เล่นคนไหนก็ได้ ทุกช่อง ทุกเมื่อ ไม่มีการล็อกหรือจำกัดช่วงค่า
 function dndHandleDmUpdate(ws, targetId, updates) {
   const p = dndFindByWs(ws);
@@ -847,6 +890,8 @@ function dndHandleDmUpdate(ws, targetId, updates) {
   for (const f of DND_DM_STR_FIELDS) {
     if (updates[f] !== undefined) c[f] = updates[f].toString().slice(0, DND_DM_STR_FIELD_MAXLEN[f] || 40);
   }
+  // ต้องจับเลเวลเดิมไว้ "ก่อน" ที่ค่า exp จะถูกเขียนทับด้านล่าง ไม่งั้นจะเทียบเลเวลเดิมกับเลเวลใหม่ไม่ได้เลย (เดิมเป็นบั๊ก)
+  const previousLevel = dndLevelFromExp(c.exp);
   for (const f of DND_DM_NUM_FIELDS) {
     if (f === 'level') continue; // Level คำนวณจาก EXP อัตโนมัติ
     if (updates[f] !== undefined) {
@@ -854,10 +899,10 @@ function dndHandleDmUpdate(ws, targetId, updates) {
       if (Number.isFinite(n)) c[f] = Math.max(0, Math.min(9999, Math.round(n)));
     }
   }
-  const previousLevel = dndLevelFromExp(c.exp);
   dndSyncLevelFromExp(c);
   if (c.level > previousLevel) {
-    dndAddLog(`🎉 ${c.charName || target.name} เลเวลอัป! Lv.${previousLevel} → Lv.${c.level}`);
+    c.statPoints = Math.round(Number(c.statPoints) || 0) + STAT_POINTS_PER_LEVEL * (c.level - previousLevel);
+    dndAddLog(`🎉 ${c.charName || target.name} เลเวลอัป! Lv.${previousLevel} → Lv.${c.level} (ได้แต้มสเตตัส +${STAT_POINTS_PER_LEVEL * (c.level - previousLevel)})`);
     dndAnnounceClassSkillUnlocks(target, previousLevel, c.level);
   }
   let revived = false;
@@ -1273,6 +1318,72 @@ function dndHandleSceneUpdate(ws, payload) {
     : '(ล้างประกาศแล้ว)';
   dndAddLog(`🖥️ DM ประกาศสถานการณ์: ${text}`);
 }
+// ---- นาฬิกาในเกม — DM เท่านั้นที่เดินเวลา/ข้ามวัน/ตั้งเวลาเองได้ ----
+const DND_TIME_DAY_LABELS_TH = ['วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์', 'วันอาทิตย์'];
+function dndFormatGameTime(t) {
+  const hh = String(t.hour).padStart(2, '0');
+  const mm = String(t.minute).padStart(2, '0');
+  return `วันที่ ${t.day} เวลา ${hh}:${mm}`;
+}
+function dndNormalizeGameTime(day, totalMinutesOfDay) {
+  // totalMinutesOfDay อาจติดลบหรือเกิน 1440 ได้ (เช่นเดินเวลาถอยหลัง หรือบวกหลายชั่วโมงข้ามวัน) — ฟังก์ชันนี้ทบวันให้ถูกต้อง
+  let d = day;
+  let m = totalMinutesOfDay;
+  while (m < 0) { m += 1440; d -= 1; }
+  while (m >= 1440) { m -= 1440; d += 1; }
+  if (d < 1) d = 1;
+  return { day: d, hour: Math.floor(m / 60), minute: m % 60 };
+}
+// DM เดินเวลาไปข้างหน้า (หรือถอยหลังถ้าใส่ค่าติดลบ) เป็นนาที เช่น +30 = เดินไป 30 นาที, +1440 = ข้ามไป 1 วันเต็ม
+function dndFormatMinutesSpan(mins) {
+  const abs = Math.abs(mins);
+  if (abs % 60 === 0) return `${abs / 60} ชม.`;
+  if (abs < 60) return `${abs} นาที`;
+  return `${Math.floor(abs / 60)} ชม. ${abs % 60} นาที`;
+}
+function dndHandleTimeAdvance(ws, minutes) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const delta = Math.max(-100000, Math.min(100000, Math.round(Number(minutes) || 0)));
+  if (!delta) return;
+  const totalNow = dndGameTime.hour * 60 + dndGameTime.minute;
+  dndGameTime = dndNormalizeGameTime(dndGameTime.day, totalNow + delta);
+  const verb = delta > 0 ? 'เดินเวลาไป' : 'ย้อนเวลากลับ';
+  dndAddLog(`⏰ DM ${verb} ${dndFormatMinutesSpan(delta)} — ตอนนี้เป็น${dndFormatGameTime(dndGameTime)}`);
+}
+// DM ข้ามไปวันถัดไปทันที (คงเวลาของวันเดิมไว้ เช่นถ้าตอนนี้ 20:00 ข้ามวันแล้วจะเป็น 20:00 ของวันถัดไป)
+function dndHandleTimeSkipDay(ws) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  dndGameTime = { day: dndGameTime.day + 1, hour: dndGameTime.hour, minute: dndGameTime.minute };
+  dndAddLog(`⏭️ DM ข้ามไปวันถัดไป — ตอนนี้เป็น${dndFormatGameTime(dndGameTime)}`);
+}
+// DM ตั้งวัน/เวลาในเกมเองโดยตรง (เช่นแก้ให้ตรงกับเนื้อเรื่อง)
+function dndHandleTimeSet(ws, payload) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM || !payload || typeof payload !== 'object') return;
+  const day = Math.max(1, Math.min(999999, Math.round(Number(payload.day)) || 1));
+  const hour = Math.max(0, Math.min(23, Math.round(Number(payload.hour)) || 0));
+  const minute = Math.max(0, Math.min(59, Math.round(Number(payload.minute)) || 0));
+  dndGameTime = { day, hour, minute };
+  dndAddLog(`🛠️ DM ตั้งเวลาในเกมเป็น${dndFormatGameTime(dndGameTime)}`);
+}
+// DM เปิด/ปิดโหมดเวลาวิ่งอัตโนมัติ (เดินเองตามความเร็วที่ตั้งไว้ ไม่ต้องกดเดินเวลาเอง)
+function dndHandleTimeAutoToggle(ws, running) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  dndTimeAuto.running = !!running;
+  dndTimeAutoAccumMinutes = 0; // เริ่ม/หยุดใหม่ทุกครั้ง ล้างเศษนาทีสะสมทิ้งกันสะดุด
+  dndAddLog(dndTimeAuto.running ? `▶️ DM เปิดเวลาวิ่งอัตโนมัติ (ความเร็ว x${dndTimeAuto.speed})` : '⏸️ DM หยุดเวลาวิ่งอัตโนมัติ');
+}
+// DM ปรับความเร็วเวลาวิ่งอัตโนมัติ — speed = กี่นาทีในเกม ต่อ 1 นาทีจริง
+function dndHandleTimeAutoSpeedSet(ws, speed) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const s = Math.max(1, Math.min(1440, Math.round(Number(speed)) || 1));
+  dndTimeAuto.speed = s;
+  dndAddLog(`🛠️ DM ตั้งความเร็วเวลาวิ่งอัตโนมัติเป็น x${s} (1 นาทีจริง = ${s} นาทีในเกม)`);
+}
 const DND_VALID_DICE = [4, 6, 8, 10, 12, 20, 100];
 function dndHandleRoll(ws, die, count, modifier, label) {
   const p = dndFindByWs(ws);
@@ -1433,7 +1544,9 @@ function dndGrantRewardsForDefeat(token, killerPlayer) {
   pp.character.gold = Math.max(0, Math.round(Number(pp.character.gold) || 0)) + gold;
   const levelInfo = dndSyncLevelFromExp(pp.character);
   if (levelInfo.newLevel > oldLevel) {
-    dndAddLog(`🎉 ${pp.character.charName || pp.name} เลเวลอัป! Lv.${oldLevel} → Lv.${levelInfo.newLevel}`);
+    const gained = STAT_POINTS_PER_LEVEL * (levelInfo.newLevel - oldLevel);
+    pp.character.statPoints = Math.round(Number(pp.character.statPoints) || 0) + gained;
+    dndAddLog(`🎉 ${pp.character.charName || pp.name} เลเวลอัป! Lv.${oldLevel} → Lv.${levelInfo.newLevel} (ได้แต้มสเตตัส +${gained})`);
     dndAnnounceClassSkillUnlocks(pp, oldLevel, levelInfo.newLevel);
   }
   if (loot.length) {
@@ -2076,6 +2189,17 @@ function dndHandleStatusEdit(ws, payload) {
 function dndSweepExpiredStatuses() {
   const now = Date.now();
   let changed = false;
+  // เวลาวิ่งอัตโนมัติ — ฟังก์ชันนี้ถูกเรียกทุก 1 วิ (ดู setInterval ใน index.js) ใช้ tick เดิมนี้เดินเวลาในเกมไปด้วยเลย
+  if (dndTimeAuto.running) {
+    dndTimeAutoAccumMinutes += dndTimeAuto.speed / 60; // ต่อ 1 วินาทีจริงที่ผ่านไป
+    if (dndTimeAutoAccumMinutes >= 1) {
+      const wholeMinutes = Math.floor(dndTimeAutoAccumMinutes);
+      dndTimeAutoAccumMinutes -= wholeMinutes;
+      const totalNow = dndGameTime.hour * 60 + dndGameTime.minute;
+      dndGameTime = dndNormalizeGameTime(dndGameTime.day, totalNow + wholeMinutes);
+      changed = true;
+    }
+  }
   const processList = (list, label, applyTick, onAfterTick) => {
     for (let i = list.length - 1; i >= 0; i--) {
       const s = list[i];
@@ -2148,6 +2272,9 @@ function dndHandleRestart(ws) {
   dndCustomPassives = [];
   dndNextPassiveId = 1;
   dndScene = { location: '', situation: '' };
+  dndGameTime = { day: 1, hour: 8, minute: 0 };
+  dndTimeAuto = { running: false, speed: 10 };
+  dndTimeAutoAccumMinutes = 0;
   dndMaps = cloneDefaultMaps();
   dndNextMapId = Math.max(0, ...DEFAULT_MAPS.map(m => m.id)) + 1;
   dndCurrentMapId = DEFAULT_MAPS[0] ? DEFAULT_MAPS[0].id : 1;
@@ -2283,6 +2410,7 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndTakeSeat') dndHandleTakeSeat(ws, msg.id);
   else if (msg.type === 'dndLeave') dndHandleLeave(ws);
   else if (msg.type === 'dndCreateCharacter') dndHandleCreateCharacter(ws, msg.character);
+  else if (msg.type === 'dndSpendStatPoint') dndHandleSpendStatPoint(ws, msg.stat);
   else if (msg.type === 'dndDmUpdate') dndHandleDmUpdate(ws, msg.targetId, msg.updates);
   else if (msg.type === 'dndDmKickPlayer') dndHandleDmKickPlayer(ws, msg.targetId);
   else if (msg.type === 'dndRoll') dndHandleRoll(ws, msg.die, msg.count, msg.modifier, msg.label);
@@ -2311,6 +2439,11 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndTradeCancel') dndHandleTradeCancel(ws, msg.tradeId);
   else if (msg.type === 'dndMapBackgroundUpdate') dndHandleMapBackgroundUpdate(ws, msg.image);
   else if (msg.type === 'dndSceneUpdate') dndHandleSceneUpdate(ws, msg.scene);
+  else if (msg.type === 'dndTimeAdvance') dndHandleTimeAdvance(ws, msg.minutes);
+  else if (msg.type === 'dndTimeSkipDay') dndHandleTimeSkipDay(ws);
+  else if (msg.type === 'dndTimeSet') dndHandleTimeSet(ws, msg.time);
+  else if (msg.type === 'dndTimeAutoToggle') dndHandleTimeAutoToggle(ws, msg.running);
+  else if (msg.type === 'dndTimeAutoSpeedSet') dndHandleTimeAutoSpeedSet(ws, msg.speed);
   else if (msg.type === 'dndTokenMove') dndHandleTokenMove(ws, msg.id, msg.x, msg.y);
   else if (msg.type === 'dndTokenCreate') dndHandleTokenCreate(ws, msg.token);
   else if (msg.type === 'dndTokenEdit') dndHandleTokenEdit(ws, msg.id, msg.updates);

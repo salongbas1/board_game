@@ -736,6 +736,9 @@
   .dndSheetStatRow div { background: #0d1117; border-radius: 6px; padding: 5px 2px; }
   .dndSheetStatRow .dndStatKey { font-size: 10px; color: #9aa4b2; }
   .dndSheetStatRow .dndStatVal { font-size: 14px; font-weight: bold; color: #ffd76b; }
+  .dndStatPlusBtn { margin-top: 4px; width: 100%; border: 1px solid #3fbf5f; background: #133a1f; color: #7ee787; border-radius: 5px; font-size: 10px; font-weight: bold; padding: 2px 0; cursor: pointer; }
+  .dndStatPlusBtn:hover:not(:disabled) { background: #1c5230; }
+  .dndStatPlusBtn:disabled { border-color: #3a3f47; background: #16191d; color: #5a616b; cursor: not-allowed; }
   .dndModalOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 200; align-items: center; justify-content: center; padding: 14px; }
   .dndModalBox { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; max-width: 460px; width: 100%; max-height: 86vh; overflow-y: auto; }
   .dndModalBox h3 { color: #ffd76b; margin-top: 0; margin-bottom: 14px; }
@@ -805,6 +808,37 @@
     font-weight: bold; cursor: pointer; font-size: 13px;
   }
   #dndSceneEditBtnRow { display: flex; gap: 8px; }
+  /* ---- นาฬิกาในเกม ---- */
+  #dndTimeBanner {
+    display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; box-sizing: border-box;
+    background: linear-gradient(135deg, #10182a, #161b22); border: 1px solid #2a3550; border-radius: 8px;
+    padding: 8px 14px; margin-bottom: 12px; color: #9fc9ff; font-weight: bold; font-size: 14px;
+  }
+  #dndTimeBannerIcon { font-size: 17px; }
+  #dndTimeBannerAuto { font-size: 12px; color: #7ee87e; animation: dndTimeAutoPulse 1.6s ease-in-out infinite; }
+  @keyframes dndTimeAutoPulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+  #dndTimeAutoRow { display: flex; gap: 8px; margin-bottom: 8px; }
+  #dndTimeAutoToggleBtn {
+    flex: 1; padding: 8px; border: none; border-radius: 6px; background: #7ee87e; color: #0a0a12;
+    font-weight: bold; cursor: pointer; font-size: 13px;
+  }
+  #dndTimeAutoToggleBtn.dndTimeAutoOn { background: #ff8080; }
+  #dndTimeAutoSpeedSelect {
+    padding: 6px 8px; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #eee; font-size: 12px;
+  }
+  #dndTimeEditBox { width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  #dndTimeEditBox h4 { margin: 0 0 8px 0; color: #ffd76b; font-size: 13px; }
+  #dndTimeEditBox .dndFieldRow { margin-bottom: 8px; }
+  #dndTimeQuickBtnRow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .dndTimeAdvBtn, #dndTimeSkipDayBtn {
+    padding: 6px 10px; border: none; border-radius: 6px; background: #2c3341; color: #eee;
+    font-weight: bold; cursor: pointer; font-size: 12px;
+  }
+  #dndTimeSkipDayBtn { background: #6fd3ff; color: #0a0a12; }
+  #dndTimeSetBtn {
+    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #7ee87e; color: #0a0a12;
+    font-weight: bold; cursor: pointer; font-size: 13px;
+  }
   #blackout {
     position: fixed; inset: 0; background: #000; z-index: 9999; display: none;
     align-items: center; justify-content: center; cursor: pointer;

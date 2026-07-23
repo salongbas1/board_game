@@ -90,6 +90,11 @@
     <div id="dndSceneLocation"></div>
     <div id="dndSceneSituation"></div>
   </div>
+  <div id="dndTimeBanner">
+    <span id="dndTimeBannerIcon">🌅</span>
+    <span id="dndTimeBannerText"></span>
+    <span id="dndTimeBannerAuto" style="display:none;">▶️</span>
+  </div>
   <div id="dndLayout">
     <div id="dndLeftCol">
       <div id="dndParty">
@@ -149,6 +154,38 @@
         <div id="dndSceneEditBtnRow">
           <button id="dndSceneAnnounceBtn" type="button">📢 ประกาศ</button>
           <button id="dndSceneClearBtn" type="button">ล้างประกาศ</button>
+        </div>
+      </div>
+
+      <!-- DM เท่านั้นที่เดินเวลา/ข้ามวัน/ตั้งเวลาในเกมเองได้ -->
+      <div id="dndTimeEditBox" style="display:none;">
+        <h4>🕒 เวลาในเกม <span id="dndTimeEditNow" class="dndRangeHint"></span></h4>
+        <div id="dndTimeAutoRow">
+          <button type="button" id="dndTimeAutoToggleBtn">▶️ เดินเวลาอัตโนมัติ</button>
+          <select id="dndTimeAutoSpeedSelect">
+            <option value="1">ความเร็ว x1 (เท่าเวลาจริง)</option>
+            <option value="10" selected>ความเร็ว x10</option>
+            <option value="30">ความเร็ว x30</option>
+            <option value="60">ความเร็ว x60 (1 นาทีจริง = 1 ชม.ในเกม)</option>
+            <option value="120">ความเร็ว x120</option>
+            <option value="360">ความเร็ว x360</option>
+            <option value="1440">ความเร็ว x1440 (1 นาทีจริง = 1 วันในเกม)</option>
+          </select>
+        </div>
+        <div class="dndRangeHint" style="margin-bottom:8px;">เปิดแล้วเวลาในเกมจะเดินเองเรื่อยๆ ตามความเร็วที่ตั้งไว้ ไม่ต้องกดปุ่มเดินเวลาเอง — ยังกดปุ่มด้านล่างหรือแก้เวลาเองระหว่างที่เปิดอยู่ได้ตลอด</div>
+        <div id="dndTimeQuickBtnRow">
+          <button type="button" class="dndTimeAdvBtn" data-min="10">+10 นาที</button>
+          <button type="button" class="dndTimeAdvBtn" data-min="30">+30 นาที</button>
+          <button type="button" class="dndTimeAdvBtn" data-min="60">+1 ชม.</button>
+          <button type="button" class="dndTimeAdvBtn" data-min="360">+6 ชม.</button>
+          <button type="button" class="dndTimeAdvBtn" data-min="-60">-1 ชม.</button>
+          <button type="button" id="dndTimeSkipDayBtn">⏭️ ข้ามวัน</button>
+        </div>
+        <div class="dndFieldRow">
+          <div class="dndField" style="max-width:90px;"><label>วันที่</label><input id="dndTimeSetDay" type="number" min="1"></div>
+          <div class="dndField" style="max-width:90px;"><label>ชั่วโมง</label><input id="dndTimeSetHour" type="number" min="0" max="23"></div>
+          <div class="dndField" style="max-width:90px;"><label>นาที</label><input id="dndTimeSetMinute" type="number" min="0" max="59"></div>
+          <div class="dndField" style="flex:1;"><label>&nbsp;</label><button type="button" id="dndTimeSetBtn">💾 ตั้งเวลานี้</button></div>
         </div>
       </div>
 
@@ -730,6 +767,14 @@
 Goblin Fang x2"></textarea></div></div>
     <div id="dndTokenEditError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
     <button id="dndTokenEditSaveBtn" type="button">บันทึก HP/AC/ชื่อ</button>
+
+    <h4 style="color:#ffd76b; font-size:13px; margin:14px 0 8px 0;">📚 คลังมอนสเตอร์</h4>
+    <div class="dndFieldRow">
+      <div class="dndField" style="max-width:90px;"><label>อีโมจิ</label><input id="dndTokenEditEmoji" maxlength="4" value="👾" style="text-align:center;"></div>
+      <div class="dndField" style="flex:1;"><label>&nbsp;</label><button type="button" id="dndTokenSaveAsPresetBtn">➕ เพิ่มมอนสเตอร์ตัวนี้เข้าคลัง (ใช้สร้างซ้ำได้ในอนาคต)</button></div>
+    </div>
+    <div class="dndRangeHint">บันทึกค่าพลัง/ท่าโจมตี/รางวัลปัจจุบันของ token นี้ไว้ในลิสต์ "คลังมอนสเตอร์สำเร็จรูป" ด้านบน เพื่อกดสร้างซ้ำได้ทันทีครั้งต่อไป (บันทึกไว้ในเบราว์เซอร์เครื่องนี้)</div>
+    <div id="dndTokenSaveAsPresetMsg" style="color:#7ee87e; font-size:12px; min-height:16px;"></div>
 
     <h4 style="color:#ffd76b; font-size:13px; margin:14px 0 8px 0;">🗡️ ท่าโจมตี</h4>
     <div id="dndTokenAttackList"></div>

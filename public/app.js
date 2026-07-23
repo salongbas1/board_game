@@ -509,17 +509,35 @@ let dndClasses = [];
 let dndClassStarterGear = {}; // { classKey: { weapon:{name,atk,def,maxDurability}, armor:{...}, shoes:{...}, accessory:{...} } }
 let dndPassives = {}; // { raceKey: [{key,name,icon,desc,effect}, ...] }
 let dndCustomPassives = []; // [{id,key,raceKey,name,icon,desc,effect}] — created by DM, on top of the built-in ones
-let dndPointBuyTotal = 72;
+let dndPointBuyMin = 8;
+let dndPointBuyBudget = 27;
+let dndPointBuyCost = { 8: 0, 9: 1, 10: 2, 11: 3, 12: 4, 13: 5, 14: 7, 15: 9 };
+let dndPointBuyCostMaxDefined = 15;
+let dndPointBuyCostPerStepAboveMax = 9;
+let dndStatPointsPerLevel = 2;
+// ต้นทุนสะสม (จากฐาน dndPointBuyMin) ของค่าสเตตัสใดๆ — คำนวณเหมือนฝั่งเซิร์ฟเวอร์ทุกประการ (data/point-buy.js)
+function dndPointBuyCostOf(score) {
+  const s = Math.round(score);
+  if (s <= dndPointBuyCostMaxDefined) return dndPointBuyCost[s] !== undefined ? dndPointBuyCost[s] : Infinity;
+  return dndPointBuyCost[dndPointBuyCostMaxDefined] + (s - dndPointBuyCostMaxDefined) * dndPointBuyCostPerStepAboveMax;
+}
+function dndPointBuyStepCost(currentScore) {
+  const s = Math.max(dndPointBuyMin, Math.round(currentScore));
+  return dndPointBuyCostOf(s + 1) - dndPointBuyCostOf(s);
+}
 let dndCurrentDie = 20;
 let dndCreateInitialized = false;
 let dndCreateSelectedRace = null;
 let dndCreateSelectedClass = null;
 let dndCreateSelectedPassive = null;
-let dndCreateAlloc = { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 };
+let dndCreateAlloc = { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 };
 const DND_HAIR_STYLE_INFO = { bald: '👤 ล้าน', short: '💇 สั้น', long: '👱 ยาว', mohawk: '🎸 โมฮอว์ก', ponytail: '🎀 หางม้า' };
 const DND_FACE_STYLE_INFO = { neutral: '😐 ปกติ', smile: '🙂 ยิ้ม', serious: '😠 จริงจัง', surprised: '😲 ตกใจ', wink: '😉 ขยิบตา' };
 const DND_HAIR_COLOR_LIST = ['#2b1b12', '#5b3a1e', '#8a5a2b', '#c9a227', '#e8e2d0', '#7a3b2e', '#3b3b3b', '#c94f4f'];
 let dndCreateAppearance = { hair: 'short', hairColor: DND_HAIR_COLOR_LIST[0], face: 'neutral' };
+// ช่องไหนที่ผู้เล่นเคยพิมพ์เอง (แก้ไขเอง) ระหว่างสร้างตัวละคร — ช่องนั้นจะไม่ถูกทับตอนสลับคลาสอีก
+// ส่วนช่องที่ยังไม่แตะเลย จะถูกแทนที่ด้วยเซตอุปกรณ์เต็มชุดของคลาสใหม่ทุกครั้งที่เปลี่ยนคลาส (กันอาวุธเก่าของคลาสก่อนหน้าค้างอยู่)
+let dndCreateManualEquip = {};
 let dndDmEditTargetId = null;
 let dndTokenEditTargetId = null;
 let dndSkills = [];
@@ -532,10 +550,16 @@ let dndEquipSlotLabels = { weapon: 'อาวุธ', armor: 'เกราะ', 
 const DND_EQUIP_SLOT_ICONS = { weapon: '⚔️', armor: '🛡️', shoes: '👢', accessory: '💍' };
 let dndScene = { location: '', situation: '' };
 let dndSceneEditInitialized = false;
+let dndGameTime = { day: 1, hour: 8, minute: 0 };
+let dndTimeSetInputsInitialized = false;
+let dndTimeAuto = { running: false, speed: 10 };
+let dndTimeAutoSpeedInitialized = false;
 const DND_TOKEN_COLORS = ['#ff6b6b', '#6fd3ff', '#9fdc9f', '#ffd76b', '#c792ea', '#ff9d9d', '#7ee8fa', '#f4a261', '#82c9ff', '#f6a6c1'];
 const DND_MAX_TOKEN_IMAGE_BYTES = 300 * 1024;
 // ---- คลังมอนสเตอร์สำเร็จรูป 10 ตัว (DM กดสร้างได้เลย ไม่ต้องตั้งค่าเอง) — เรียงจากอ่อนไปแก่ ----
-const DND_MONSTER_PRESETS = [
+// เป็น let (ไม่ใช่ const) เพราะ DM สามารถกด "เพิ่มมอนสเตอร์ตัวนี้เข้าคลัง" จากหน้าต่างแก้ไข token
+// เพื่อบันทึกมอนสเตอร์ที่สร้างเองแบบกำหนดค่าเอง (ไม่ได้มาจากพรีเซ็ตในลิสต์นี้) ให้เข้ามาอยู่ในลิสต์นี้ด้วย
+let DND_MONSTER_PRESETS = [
   { key: 'rat', name: 'หนูยักษ์', emoji: '🐀', color: '#c9a876', size: 'normal', maxHp: 7, ac: 10,
     stats: { str: 7, dex: 15, con: 9, int: 2, wis: 10, cha: 3 },
     attacks: [{ name: 'กัด', desc: 'ฟันแหลมคมกัดเข้าเป้าหมาย', stat: 'dex', toHit: 0, dmgDie: 4, dmgCount: 1, dmgMod: 0 }],
@@ -581,9 +605,44 @@ const DND_MONSTER_PRESETS = [
     expReward: 2300, goldReward: 500, loot: [{ name: 'เกล็ดมังกร', qty: 3 }, { name: 'เหรียญทองคำ', qty: 500 }] },
 ];
 function dndMonsterPresetSummary(m) {
-  const atk = m.attacks.map(a => `${a.name} (${DND_STAT_LABELS[a.stat] || '-'} ${a.toHit >= 0 ? '+' : ''}${a.toHit}, ${a.dmgCount}d${a.dmgDie}${a.dmgMod ? (a.dmgMod >= 0 ? '+' : '') + a.dmgMod : ''})`).join(' · ');
-  return `❤️ ${m.maxHp} · 🛡 ${m.ac} — ${atk}`;
+  const atk = (m.attacks || []).map(a => `${a.name} (${DND_STAT_LABELS[a.stat] || '-'} ${a.toHit >= 0 ? '+' : ''}${a.toHit}, ${a.dmgCount}d${a.dmgDie}${a.dmgMod ? (a.dmgMod >= 0 ? '+' : '') + a.dmgMod : ''})`).join(' · ');
+  return `❤️ ${m.maxHp} · 🛡 ${m.ac}${atk ? ' — ' + atk : ''}`;
 }
+// ---- คลังมอนสเตอร์ที่ DM สร้างเองเพิ่มเติม (บันทึกไว้ในเบราว์เซอร์เครื่องนี้ ให้คงอยู่แม้รีเฟรชหน้า) ----
+const DND_CUSTOM_PRESET_STORAGE_KEY = 'dndCustomMonsterPresets';
+function dndLoadCustomPresets() {
+  try {
+    const raw = localStorage.getItem(DND_CUSTOM_PRESET_STORAGE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(list)) {
+      list.forEach(m => {
+        if (m && m.key && !DND_MONSTER_PRESETS.some(p => p.key === m.key)) DND_MONSTER_PRESETS.push(m);
+      });
+    }
+  } catch (e) { /* เบราว์เซอร์อาจปิด localStorage ไว้ — ข้ามไปเงียบๆ */ }
+}
+function dndSaveCustomPresetsToStorage() {
+  try {
+    const builtinKeys = new Set(['rat', 'slime', 'wolf', 'goblin', 'skeleton', 'zombie', 'spider', 'orc', 'troll', 'dragon']);
+    const custom = DND_MONSTER_PRESETS.filter(m => !builtinKeys.has(m.key));
+    localStorage.setItem(DND_CUSTOM_PRESET_STORAGE_KEY, JSON.stringify(custom));
+  } catch (e) { /* เบราว์เซอร์อาจปิด localStorage ไว้ — ข้ามไปเงียบๆ */ }
+}
+function dndSlugifyMonsterName(name) {
+  const base = (name || 'monster').toString().trim().toLowerCase()
+    .replace(/[^a-z0-9ก-๙]+/g, '-').replace(/(^-+|-+$)/g, '');
+  return (base || 'monster') + '-' + Date.now().toString(36) + Math.floor(Math.random() * 1000);
+}
+function dndRefreshMonsterPresetSelect() {
+  const sel = document.getElementById('dndMonsterPresetSelect');
+  if (!sel) return;
+  const prevKey = sel.value;
+  sel.innerHTML = DND_MONSTER_PRESETS
+    .map(m => `<option value="${m.key}">${m.emoji} ${m.name}</option>`).join('');
+  if (prevKey && DND_MONSTER_PRESETS.some(m => m.key === prevKey)) sel.value = prevKey;
+  dndRenderMonsterPresetPreview();
+}
+dndLoadCustomPresets();
 let dndTokens = [];
 let dndShops = [];
 let dndForgeFailPolicyLabels = { safe: 'พลาดแล้วไม่มีอะไรเกิดขึ้น', downgrade: 'พลาดแล้วตกระดับ 1 ขั้น', break: 'พลาดแล้วไอเทมพัง (รีเซตเป็น +0)' };
@@ -652,6 +711,8 @@ document.getElementById('dndLeaveBtn').onclick = (ev) => {
   if (confirm('ออกจากที่นั่ง? ที่นั่งของคุณ (และการ์ดตัวละคร) จะยังอยู่ — กลับเข้ามานั่งที่เดิมได้จากรายชื่อ "ที่นั่งที่เคยออกไป" ตอนเข้าห้องใหม่')) {
     dndCreateInitialized = false;
     dndSceneEditInitialized = false;
+    dndTimeSetInputsInitialized = false;
+    dndTimeAutoSpeedInitialized = false;
     send({ type: 'dndLeave' });
   }
 };
@@ -660,6 +721,8 @@ document.getElementById('dndRestartBtn').onclick = (ev) => {
   if (confirm('รีเซตห้องทั้งหมด? ผู้เล่นทุกคน (รวมคุณ) และตัวละครทั้งหมดจะถูกล้าง แล้วต้องเข้าห้องกันใหม่ทั้งหมด')) {
     dndCreateInitialized = false;
     dndSceneEditInitialized = false;
+    dndTimeSetInputsInitialized = false;
+    dndTimeAutoSpeedInitialized = false;
     send({ type: 'dndRestart' });
   }
 };
@@ -815,6 +878,64 @@ document.getElementById('dndSceneClearBtn').onclick = (ev) => {
   document.getElementById('dndSceneSituationInput').value = '';
   send({ type: 'dndSceneUpdate', scene: { location: '', situation: '' } });
 };
+
+// ---- นาฬิกาในเกม — ทุกคนเห็นป้ายเวลาบนจอ / DM เท่านั้นเดินเวลา ข้ามวัน หรือแก้ไขเวลาเองได้ ----
+function dndTimeIconForHour(hour) {
+  if (hour >= 5 && hour < 8) return '🌅';   // เช้าตรู่
+  if (hour >= 8 && hour < 17) return '🌞';  // กลางวัน
+  if (hour >= 17 && hour < 20) return '🌆'; // เย็น
+  return '🌙';                              // กลางคืน
+}
+function renderDndGameTime(gameTime) {
+  dndGameTime = gameTime || dndGameTime;
+  document.getElementById('dndTimeBannerIcon').textContent = dndTimeIconForHour(dndGameTime.hour);
+  document.getElementById('dndTimeBannerText').textContent =
+    `วันที่ ${dndGameTime.day} — ${String(dndGameTime.hour).padStart(2, '0')}:${String(dndGameTime.minute).padStart(2, '0')} น.`;
+  const nowEl = document.getElementById('dndTimeEditNow');
+  if (nowEl) nowEl.textContent = `(ตอนนี้: วันที่ ${dndGameTime.day} ${String(dndGameTime.hour).padStart(2, '0')}:${String(dndGameTime.minute).padStart(2, '0')})`;
+}
+function renderDndTimeAuto(timeAuto) {
+  dndTimeAuto = timeAuto || dndTimeAuto;
+  document.getElementById('dndTimeBannerAuto').style.display = dndTimeAuto.running ? 'inline' : 'none';
+  const btn = document.getElementById('dndTimeAutoToggleBtn');
+  if (btn) {
+    btn.textContent = dndTimeAuto.running ? '⏸️ หยุดเวลาอัตโนมัติ' : '▶️ เดินเวลาอัตโนมัติ';
+    btn.classList.toggle('dndTimeAutoOn', dndTimeAuto.running);
+  }
+  const speedSel = document.getElementById('dndTimeAutoSpeedSelect');
+  if (speedSel && !dndTimeAutoSpeedInitialized) {
+    speedSel.value = String(dndTimeAuto.speed);
+    dndTimeAutoSpeedInitialized = true;
+  }
+}
+document.querySelectorAll('.dndTimeAdvBtn').forEach(btn => {
+  btn.onclick = (ev) => {
+    flashBtn(ev.currentTarget);
+    send({ type: 'dndTimeAdvance', minutes: Number(btn.dataset.min) });
+  };
+});
+document.getElementById('dndTimeSkipDayBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndTimeSkipDay' });
+};
+document.getElementById('dndTimeSetBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  send({
+    type: 'dndTimeSet',
+    time: {
+      day: document.getElementById('dndTimeSetDay').value,
+      hour: document.getElementById('dndTimeSetHour').value,
+      minute: document.getElementById('dndTimeSetMinute').value,
+    },
+  });
+};
+document.getElementById('dndTimeAutoToggleBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndTimeAutoToggle', running: !dndTimeAuto.running });
+};
+document.getElementById('dndTimeAutoSpeedSelect').addEventListener('change', (ev) => {
+  send({ type: 'dndTimeAutoSpeedSet', speed: Number(ev.target.value) });
+});
 
 document.getElementById('dndDiceGrid').querySelectorAll('.dndDieBtn').forEach(btn => {
   btn.onclick = () => {
@@ -1815,7 +1936,7 @@ function dndCreateFinalStats() {
   for (const k of Object.keys(DND_STAT_LABELS)) {
     const rb = (race && race.bonus[k]) || 0;
     const cb = (cls && cls.bonus[k]) || 0;
-    stats[k] = 1 + dndCreateAlloc[k] + rb + cb;
+    stats[k] = dndCreateAlloc[k] + rb + cb;
   }
   return stats;
 }
@@ -1882,24 +2003,27 @@ function renderStatAllocGrid() {
   const finalStats = dndCreateFinalStats();
   const race = dndCreateSelectedRace ? dndRaceByKey(dndCreateSelectedRace) : null;
   const cls = dndCreateSelectedClass ? dndClassByKey(dndCreateSelectedClass) : null;
-  const spent = Object.values(dndCreateAlloc).reduce((a, b) => a + b, 0);
-  const left = dndPointBuyTotal - spent;
+  const spent = Object.values(dndCreateAlloc).reduce((sum, v) => sum + dndPointBuyCostOf(v), 0);
+  const left = dndPointBuyBudget - spent;
   Object.keys(DND_STAT_LABELS).forEach(k => {
     const row = document.createElement('div');
     row.className = 'dndStatAllocRow';
     const rb = (race && race.bonus[k]) || 0;
     const cb = (cls && cls.bonus[k]) || 0;
+    const nextStepCost = dndPointBuyStepCost(dndCreateAlloc[k]);
     row.innerHTML = `
       <span class="dndStatAllocLabel">${DND_STAT_LABELS[k]}</span>
       <button type="button" data-act="minus">−</button>
       <span class="dndStatAllocVal">${finalStats[k]}</span>
       <button type="button" data-act="plus">+</button>
-      <span class="dndStatAllocBreakdown">1 พื้นฐาน + ${dndCreateAlloc[k]} แต้ม${rb ? ' + ' + rb + ' เผ่า' : ''}${cb ? ' + ' + cb + ' คลาส' : ''}</span>`;
-    row.querySelector('[data-act="minus"]').disabled = dndCreateAlloc[k] <= 0;
-    row.querySelector('[data-act="plus"]').disabled = left <= 0;
-    dndBindHoldRepeat(row.querySelector('[data-act="minus"]'), () => { dndCreateAlloc[k] = Math.max(0, dndCreateAlloc[k] - 1); renderStatAllocGrid(); updateCreateHints(); validateCreateForm(); });
+      <span class="dndStatAllocBreakdown">${dndCreateAlloc[k]} แต้ม (ใช้ ${dndPointBuyCostOf(dndCreateAlloc[k])} พอย)${rb ? ' + ' + rb + ' เผ่า' : ''}${cb ? ' + ' + cb + ' คลาส' : ''}${left >= nextStepCost ? ` · เพิ่มอีก 1 ใช้ ${nextStepCost} พอย` : ''}</span>`;
+    row.querySelector('[data-act="minus"]').disabled = dndCreateAlloc[k] <= dndPointBuyMin;
+    row.querySelector('[data-act="plus"]').disabled = left < nextStepCost;
+    dndBindHoldRepeat(row.querySelector('[data-act="minus"]'), () => { dndCreateAlloc[k] = Math.max(dndPointBuyMin, dndCreateAlloc[k] - 1); renderStatAllocGrid(); updateCreateHints(); validateCreateForm(); });
     dndBindHoldRepeat(row.querySelector('[data-act="plus"]'), () => {
-      if (dndPointBuyTotal - Object.values(dndCreateAlloc).reduce((a, b) => a + b, 0) > 0) dndCreateAlloc[k] += 1;
+      const stepCost = dndPointBuyStepCost(dndCreateAlloc[k]);
+      const curSpent = Object.values(dndCreateAlloc).reduce((sum, v) => sum + dndPointBuyCostOf(v), 0);
+      if (dndPointBuyBudget - curSpent >= stepCost) dndCreateAlloc[k] += 1;
       renderStatAllocGrid(); updateCreateHints(); validateCreateForm();
     });
     el.appendChild(row);
@@ -1916,6 +2040,8 @@ function updateCreateHints() {
   const hpHint = document.getElementById('dndHpRangeHint');
   const rollAcBtn = document.getElementById('dndRollAcBtn');
   const rollHpBtn = document.getElementById('dndRollHpBtn');
+  const acInput = document.getElementById('dndCreateAc');
+  const hpInput = document.getElementById('dndCreateMaxHp');
   if (!cls) {
     acHint.textContent = '(เลือกคลาสก่อน)';
     hpHint.textContent = '(เลือกคลาสก่อน)';
@@ -1931,6 +2057,19 @@ function updateCreateHints() {
   hpHint.textContent = `(ช่วง ${hpR.min}-${hpR.max})`;
   if (rollAcBtn) rollAcBtn.disabled = false;
   if (rollHpBtn) rollHpBtn.disabled = false;
+
+  // ปรับค่า AC/HP ที่กรอกไว้แล้วให้อยู่ในช่วงที่ถูกต้องเสมอเมื่อสเตตัสเปลี่ยน
+  // (กันปัญหาเดิม: กด +/- เปลี่ยน DEX/CON แล้วตัวเลข AC/HP ที่กรอกไว้ไม่ขยับตาม)
+  if (acInput && acInput.value !== '') {
+    const cur = Math.round(Number(acInput.value));
+    const v = Math.max(acR.min, Math.min(acR.max, Number.isFinite(cur) ? cur : acR.min));
+    if (String(v) !== acInput.value) acInput.value = v;
+  }
+  if (hpInput && hpInput.value !== '') {
+    const cur = Math.round(Number(hpInput.value));
+    const v = Math.max(hpR.min, Math.min(hpR.max, Number.isFinite(cur) ? cur : hpR.min));
+    if (String(v) !== hpInput.value) hpInput.value = v;
+  }
 }
 function dndRandInt(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
 document.getElementById('dndRollAcBtn').onclick = (ev) => {
@@ -1969,8 +2108,8 @@ function showDndErrorToast(msg) {
 
 function validateCreateForm() {
   const name = document.getElementById('dndCreateName').value.trim();
-  const spent = Object.values(dndCreateAlloc).reduce((a, b) => a + b, 0);
-  const ok = !!name && !!dndCreateSelectedRace && !!dndCreateSelectedPassive && !!dndCreateSelectedClass && spent === dndPointBuyTotal;
+  const spent = Object.values(dndCreateAlloc).reduce((sum, v) => sum + dndPointBuyCostOf(v), 0);
+  const ok = !!name && !!dndCreateSelectedRace && !!dndCreateSelectedPassive && !!dndCreateSelectedClass && spent === dndPointBuyBudget;
   document.getElementById('dndCreateSaveBtn').disabled = !ok;
   return ok;
 }
@@ -1979,7 +2118,7 @@ function initDndCreateForm() {
   dndCreateSelectedRace = null;
   dndCreateSelectedClass = null;
   dndCreateSelectedPassive = null;
-  dndCreateAlloc = { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 };
+  dndCreateAlloc = { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 };
   dndCreateAppearance = { hair: 'short', hairColor: DND_HAIR_COLOR_LIST[0], face: 'neutral' };
   const me = myDndEntry();
   document.getElementById('dndCreateName').value = (me && me.character && me.character.charName) || '';
@@ -1988,7 +2127,9 @@ function initDndCreateForm() {
   document.getElementById('dndCreateInventory').value = '';
   document.getElementById('dndCreateBackstory').value = (me && me.character && me.character.backstory) || '';
   document.getElementById('dndCreateGold').value = 0;
+  dndCreateManualEquip = {};
   renderEquipGrid('dndCreateEquipGrid', null);
+  attachCreateEquipManualTracking();
   showDndCreateError('');
   renderPickCards('dndRaceCards', dndRaces, dndCreateSelectedRace, dndPickRace);
   renderCreatePassiveCards();
@@ -2040,20 +2181,32 @@ function dndPickClass(key) {
   renderStatAllocGrid(); updateCreateHints(); validateCreateForm(); renderCreateAvatarPreview();
   applyStarterGearPreview(key);
 }
-// เติมพรีวิวไอเทมสวมใส่เริ่มต้นตามคลาสที่เลือกลงในฟอร์มสร้างตัวละคร (สเตตัสต่ำๆ อิงธีม D&D)
-// เติมเฉพาะช่องที่ผู้เล่นยังไม่ได้พิมพ์ชื่อไอเทมเอง กันไม่ให้ไปทับของที่ผู้เล่นกรอกเองไว้แล้ว
+// เติมไอเทมสวมใส่เริ่มต้นตามคลาสที่เลือกลงในฟอร์มสร้างตัวละคร แบบ "ยกเซต" ตามธีม D&D ของคลาสนั้น
+// ช่องไหนที่ผู้เล่นยังไม่เคยพิมพ์เอง (dndCreateManualEquip) จะถูกแทนที่ด้วยไอเทมของคลาสใหม่เสมอเมื่อสลับคลาส
+// (กันปัญหาอาวุธ/เกราะของคลาสเก่าค้างอยู่ไม่ตรงกับคลาสที่เลือกล่าสุด) ส่วนช่องที่ผู้เล่นพิมพ์เองแล้วจะไม่ถูกแตะต้อง
 function applyStarterGearPreview(classKey) {
   const gear = dndClassStarterGear[classKey];
   if (!gear) return;
   const current = readEquipGrid('dndCreateEquipGrid');
   const merged = {};
   dndEquipSlots.forEach(slot => {
-    const existing = current[slot];
-    if (existing && (existing.name || '').toString().trim()) { merged[slot] = existing; return; }
+    if (dndCreateManualEquip[slot]) { merged[slot] = current[slot] || null; return; }
     const g = gear[slot];
-    merged[slot] = g ? { name: g.name, atk: g.atk, def: g.def, durability: g.maxDurability, maxDurability: g.maxDurability, icon: '' } : (existing || null);
+    merged[slot] = g ? { name: g.name, atk: g.atk, def: g.def, durability: g.maxDurability, maxDurability: g.maxDurability, icon: '' } : null;
   });
   renderEquipGrid('dndCreateEquipGrid', merged);
+  attachCreateEquipManualTracking();
+}
+// ผูก listener ไว้กับช่อง "ชื่อไอเทม" ของฟอร์มสร้างตัวละครเท่านั้น — พิมพ์เมื่อไหร่ถือว่าช่องนั้นผู้เล่นตั้งใจแก้เอง
+// (renderEquipGrid วาด innerHTML ใหม่ทุกครั้ง จึงต้องเรียกฟังก์ชันนี้ซ้ำหลังจากวาดกริดใหม่ทุกครั้ง)
+function attachCreateEquipManualTracking() {
+  const grid = document.getElementById('dndCreateEquipGrid');
+  if (!grid) return;
+  grid.querySelectorAll('.dndEquipSlotCard').forEach(card => {
+    const slot = card.dataset.slot;
+    const nameInput = card.querySelector('.dndEquipName');
+    if (nameInput) nameInput.addEventListener('input', () => { dndCreateManualEquip[slot] = true; });
+  });
 }
 
 document.getElementById('dndCreateName').addEventListener('input', validateCreateForm);
@@ -2087,6 +2240,7 @@ function renderMySheetView() {
   const raceInfo = dndRaceByKey(c.raceKey);
   const clsInfo = dndClassByKey(c.classKey);
   const passiveInfo = dndPassiveByKey(c.raceKey, c.passiveKey);
+  const statPoints = Math.round(Number(c.statPoints) || 0);
   const rows = [
     ['ชื่อตัวละคร', c.charName || '-'],
     ['เผ่าพันธุ์ / คลาส', `${(raceInfo ? raceInfo.icon + ' ' : '') + (c.race || '-')} · ${(clsInfo ? clsInfo.icon + ' ' : '') + (c.cls || '-')}`],
@@ -2096,10 +2250,20 @@ function renderMySheetView() {
     ['HP', `${c.hp} / ${c.maxHp}`],
     ['EXP', c.exp || 0],
     ['ทอง', c.gold || 0],
+    ['แต้มสเตตัส (จากเลเวลอัพ)', statPoints],
   ];
   box.innerHTML = `<div class="dndAvatarWrap">${dndBuildAvatarSVG(c, 120, 160)}</div>`
     + rows.map(([k, v]) => `<div class="dndSheetViewRow"><span>${escapeHtml(k)}</span><span>${escapeHtml(String(v))}</span></div>`).join('')
-    + `<div class="dndSheetStatRow">${Object.keys(DND_STAT_LABELS).map(k => `<div class="dndStatTip" ${dndStatTipHtml(k)}><div class="dndStatKey">${DND_STAT_LABELS[k]}</div><div class="dndStatVal">${c[k]}</div></div>`).join('')}</div>`
+    + `<div class="dndSheetStatRow">${Object.keys(DND_STAT_LABELS).map(k => {
+      // สำคัญ: ต้องคิดต้นทุนจากค่า point-buy ดิบ (c.pointBuy[k]) ไม่ใช่ค่าสเตตัสสุดท้าย c[k]
+      // เพราะ c[k] อาจถูกบวกโบนัสเผ่าพันธุ์/คลาสไปแล้ว ถ้าเอามาคิดต้นทุนราคาจะผิดเพี้ยนได้
+      const rawScore = (c.pointBuy && c.pointBuy[k] != null) ? c.pointBuy[k] : c[k];
+      const stepCost = dndPointBuyStepCost(rawScore);
+      const btn = statPoints > 0
+        ? `<button type="button" class="dndStatPlusBtn" ${statPoints >= stepCost ? '' : 'disabled'} title="เพิ่มอีก 1 ใช้แต้มสเตตัส ${stepCost} แต้ม" onclick="dndSpendStatPointClick('${k}')">+${stepCost}</button>`
+        : '';
+      return `<div class="dndStatTip" ${dndStatTipHtml(k)}><div class="dndStatKey">${DND_STAT_LABELS[k]}</div><div class="dndStatVal">${c[k]}</div>${btn}</div>`;
+    }).join('')}</div>`
     + ((c.statuses && c.statuses.length) ? `<div class="dndPCardSkills">${c.statuses.map(s => dndStatusChipHtml(s)).join('')}</div>` : '')
     + `<div class="dndSheetViewRow" style="border-bottom:none; flex-direction:column; align-items:flex-start; gap:4px;"><span>ประวัติที่มา</span><span style="text-align:left; white-space:pre-wrap;">${escapeHtml(c.backstory || '-')}</span></div>`
     + `<div class="dndSheetViewRow" style="border-bottom:none; flex-direction:column; align-items:flex-start; gap:4px;"><span>ไอเทม / กระเป๋า</span><span style="text-align:left; white-space:pre-wrap;">${escapeHtml(c.inventory || '-')}</span></div>`;
@@ -2114,6 +2278,9 @@ function renderMySheetView() {
     send({ type: 'dndAppearanceUpdate', appearance: Object.assign({}, myAppearance, { [field]: value }) });
   });
   renderDndNormalAttackInfo();
+}
+function dndSpendStatPointClick(stat) {
+  send({ type: 'dndSpendStatPoint', stat });
 }
 
 // ---- DM: หน้าต่างแก้ไขข้อมูลผู้เล่นคนไหนก็ได้ ทุกช่อง ----
@@ -2377,7 +2544,12 @@ function renderDndState(state) {
   dndPassives = state.passives || dndPassives;
   dndCustomPassives = state.customPassives || dndCustomPassives;
   dndSkills = state.skills || dndSkills;
-  dndPointBuyTotal = state.pointBuyTotal || dndPointBuyTotal;
+  dndPointBuyMin = state.pointBuyMin || dndPointBuyMin;
+  dndPointBuyBudget = state.pointBuyBudget || dndPointBuyBudget;
+  dndPointBuyCost = state.pointBuyCost || dndPointBuyCost;
+  dndPointBuyCostMaxDefined = state.pointBuyCostMaxDefined || dndPointBuyCostMaxDefined;
+  dndPointBuyCostPerStepAboveMax = state.pointBuyCostPerStepAboveMax || dndPointBuyCostPerStepAboveMax;
+  dndStatPointsPerLevel = state.statPointsPerLevel || dndStatPointsPerLevel;
   dndEquipSlots = state.equipSlots || dndEquipSlots;
   dndEquipSlotLabels = state.equipSlotLabels || dndEquipSlotLabels;
   dndTokens = state.tokens || dndTokens;
@@ -2393,6 +2565,8 @@ function renderDndState(state) {
   dndCurrentTurnPlayerId = state.currentTurnPlayerId != null ? state.currentTurnPlayerId : null;
   if (Array.isArray(state.levelExpTable) && state.levelExpTable.length) window.DND_LEVEL_EXP_CLIENT = state.levelExpTable;
   renderDndScene(state.scene);
+  renderDndGameTime(state.gameTime);
+  renderDndTimeAuto(state.timeAuto);
 
   document.getElementById('mainMenuScreen').style.display = 'none';
   document.getElementById('joinScreen').style.display = 'none';
@@ -2413,6 +2587,7 @@ function renderDndState(state) {
   document.getElementById('dndDmStatusBox').style.display = isDM ? 'block' : 'none';
   document.getElementById('dndTurnBox').style.display = isDM ? 'block' : 'none';
   document.getElementById('dndSceneEditBox').style.display = isDM ? 'block' : 'none';
+  document.getElementById('dndTimeEditBox').style.display = isDM ? 'block' : 'none';
   if (isDM) {
     document.getElementById('dndCreateBox').style.display = 'none';
     document.getElementById('dndMySheetBox').style.display = 'none';
@@ -2421,6 +2596,12 @@ function renderDndState(state) {
       document.getElementById('dndSceneLocationInput').value = (state.scene && state.scene.location) || '';
       document.getElementById('dndSceneSituationInput').value = (state.scene && state.scene.situation) || '';
       dndSceneEditInitialized = true;
+    }
+    if (!dndTimeSetInputsInitialized && state.gameTime) {
+      document.getElementById('dndTimeSetDay').value = state.gameTime.day;
+      document.getElementById('dndTimeSetHour').value = state.gameTime.hour;
+      document.getElementById('dndTimeSetMinute').value = state.gameTime.minute;
+      dndTimeSetInputsInitialized = true;
     }
     renderDndStatusBox();
     renderDndTurnBox();
@@ -3328,15 +3509,13 @@ document.getElementById('dndNpcImgInput').addEventListener('change', (ev) => {
     dndNpcFormImage = dataUrl || null;
   });
 });
-document.getElementById('dndMonsterPresetSelect').innerHTML = DND_MONSTER_PRESETS
-  .map(m => `<option value="${m.key}">${m.emoji} ${m.name}</option>`).join('');
 function dndRenderMonsterPresetPreview() {
   const key = document.getElementById('dndMonsterPresetSelect').value;
   const m = DND_MONSTER_PRESETS.find(mm => mm.key === key);
   document.getElementById('dndMonsterPresetPreview').textContent = m ? dndMonsterPresetSummary(m) : '';
 }
 document.getElementById('dndMonsterPresetSelect').addEventListener('change', dndRenderMonsterPresetPreview);
-dndRenderMonsterPresetPreview();
+dndRefreshMonsterPresetSelect();
 document.getElementById('dndMonsterPresetAddBtn').onclick = (ev) => {
   const key = document.getElementById('dndMonsterPresetSelect').value;
   const m = DND_MONSTER_PRESETS.find(mm => mm.key === key);
@@ -3477,6 +3656,43 @@ document.getElementById('dndTokenEditSaveBtn').onclick = (ev) => {
   });
 };
 document.getElementById('dndTokenEditCloseBtn').onclick = () => closeDndModals();
+// DM: บันทึกมอนสเตอร์ (ที่สร้างเองแบบกำหนดค่าเอง ไม่ได้มาจากพรีเซ็ต) เข้าคลัง DND_MONSTER_PRESETS
+// เพื่อให้เลือกกดสร้างซ้ำได้จากลิสต์ "คลังมอนสเตอร์สำเร็จรูป" ในครั้งต่อไป
+document.getElementById('dndTokenSaveAsPresetBtn').onclick = (ev) => {
+  if (dndTokenEditTargetId == null) return;
+  const t = dndTokens.find(tt => tt.id === dndTokenEditTargetId && tt.kind === 'npc');
+  const msgEl = document.getElementById('dndTokenSaveAsPresetMsg');
+  const name = document.getElementById('dndTokenEditName').value.trim();
+  if (!name) { msgEl.style.color = '#ff8080'; msgEl.textContent = 'กรุณาตั้งชื่อก่อนบันทึกเข้าคลัง'; return; }
+  flashBtn(ev.currentTarget);
+  const emoji = (document.getElementById('dndTokenEditEmoji').value || '👾').trim().slice(0, 4) || '👾';
+  const stats = {};
+  Object.keys(DND_STAT_LABELS).forEach(k => { stats[k] = Number(document.getElementById('dndTokenStat-' + k).value) || 10; });
+  const loot = document.getElementById('dndTokenEditLoot').value.split('\n').map(line => {
+    const m = line.trim().match(/^(.*?)(?:\s+x(\d+))?$/i);
+    return m && m[1] ? { name: m[1].trim(), qty: Number(m[2] || 1) } : null;
+  }).filter(Boolean);
+  const preset = {
+    key: dndSlugifyMonsterName(name), name, emoji,
+    color: (t && t.color) || dndNpcFormColor, size: document.getElementById('dndTokenEditSize').value,
+    maxHp: Number(document.getElementById('dndTokenEditMaxHp').value) || 1,
+    ac: Number(document.getElementById('dndTokenEditAc').value) || 0,
+    stats,
+    attacks: (t && t.attacks ? t.attacks : []).map(a => ({
+      name: a.name, desc: a.desc, stat: a.stat, toHit: a.toHit, dmgDie: a.dmgDie, dmgCount: a.dmgCount, dmgMod: a.dmgMod, aoeRadius: a.aoeRadius || 0,
+    })),
+    expReward: Number(document.getElementById('dndTokenEditExp').value) || 0,
+    goldReward: Number(document.getElementById('dndTokenEditGold').value) || 0,
+    loot,
+  };
+  DND_MONSTER_PRESETS.push(preset);
+  dndSaveCustomPresetsToStorage();
+  dndRefreshMonsterPresetSelect();
+  document.getElementById('dndMonsterPresetSelect').value = preset.key;
+  dndRenderMonsterPresetPreview();
+  msgEl.style.color = '#7ee87e';
+  msgEl.textContent = `✅ เพิ่ม "${emoji} ${name}" เข้าคลังมอนสเตอร์แล้ว — เลือกจากลิสต์ด้านบนเพื่อกดสร้างซ้ำได้เลยครั้งหน้า`;
+};
 document.getElementById('dndAtkAddBtn').onclick = (ev) => {
   if (dndTokenEditTargetId == null) return;
   const name = document.getElementById('dndAtkNameInput').value.trim();
