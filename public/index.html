@@ -620,12 +620,12 @@
       <div class="dndField"><label>HP สูงสุด</label><input id="dndEditMaxHp" type="number" min="1"></div>
     </div>
     <div class="dndStatGrid">
-      <div class="dndField"><label class="dndStatTip" data-tip="💪 พละกำลัง — เพิ่มพลังโจมตีและดาเมจระยะประชิด">STR</label><input id="dndEditStr" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="🏃 ความคล่องตัว — เพิ่มความแม่นยำและการหลบหลีก">DEX</label><input id="dndEditDex" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="❤️ ความแข็งแกร่ง — เพิ่มความทนทานและ HP">CON</label><input id="dndEditCon" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="🧠 สติปัญญา — ช่วยด้านเวทมนตร์และความรู้">INT</label><input id="dndEditInt" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="👁️ ปัญญา — ช่วยด้านการรับรู้และสัญชาตญาณ">WIS</label><input id="dndEditWis" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="🗣️ เสน่ห์ — ช่วยด้านการพูดคุยและโน้มน้าว">CHA</label><input id="dndEditCha" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="💪 พละกำลัง (STR) — เพิ่มพลังโจมตีและดาเมจระยะประชิด ค่าเฉลี่ยคนทั่วไป ~10">STR <span id="dndEditStrMod" class="dndStatModBadge"></span></label><input id="dndEditStr" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="🏃 ความคล่องตัว (DEX) — เพิ่มความแม่นยำและการหลบหลีก ค่าเฉลี่ยคนทั่วไป ~10">DEX <span id="dndEditDexMod" class="dndStatModBadge"></span></label><input id="dndEditDex" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="❤️ ความแข็งแกร่ง/ความอึด (CON) — ผูกกับ HP สูงสุดโดยตรง แก้ค่านี้แล้ว HP จะคำนวณใหม่อัตโนมัติตามกลไก D&D">CON <span id="dndEditConMod" class="dndStatModBadge"></span></label><input id="dndEditCon" type="number" min="1" max="30"><small id="dndEditConHpHint" class="dndRangeHint"></small></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="🧠 สติปัญญา (INT) — ช่วยด้านเวทมนตร์และความรู้ ค่าเฉลี่ยคนทั่วไป ~10">INT <span id="dndEditIntMod" class="dndStatModBadge"></span></label><input id="dndEditInt" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="👁️ ปัญญา/การรับรู้ (WIS) — ช่วยด้านการรับรู้และสัญชาตญาณ ค่าเฉลี่ยคนทั่วไป ~10">WIS <span id="dndEditWisMod" class="dndStatModBadge"></span></label><input id="dndEditWis" type="number" min="1" max="30"></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="🗣️ เสน่ห์ (CHA) — ช่วยด้านการพูดคุยและโน้มน้าว ค่าเฉลี่ยคนทั่วไป ~10">CHA <span id="dndEditChaMod" class="dndStatModBadge"></span></label><input id="dndEditCha" type="number" min="1" max="30"></div>
     </div>
     <div class="dndFieldRow"><div class="dndField"><label>ประวัติที่มาของตัวละคร</label><textarea id="dndEditBackstory" rows="3" maxlength="800"></textarea></div></div>
     <div class="dndFieldRow"><div class="dndField"><label>ไอเทม / กระเป๋า</label><textarea id="dndEditInventory" rows="3" maxlength="500"></textarea></div></div>

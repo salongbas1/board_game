@@ -929,10 +929,25 @@ function dndHandleSpendStatPoint(ws, stat) {
   const cls = dndClassByKey(c.classKey);
   const raceBonus = (race && race.bonus && race.bonus[key]) || 0;
   const clsBonus = (cls && cls.bonus && cls.bonus[key]) || 0;
+  // อิงกลไก D&D: ถ้าสเตตัสที่เพิ่มคือ CON ตัวปรับ (modifier) ของ CON อาจขยับขึ้น ซึ่งใน D&D ค่า HP สูงสุดผูกกับ CON โดยตรง
+  // ต้องจับค่า modifier "ก่อน" เพิ่มสเตตัสไว้ก่อน แล้วเทียบกับ modifier "หลัง" เพิ่ม เพื่อคำนวณ HP ที่ควรได้เพิ่มมาด้วย (มาตรฐาน D&D: HP เปลี่ยนตาม conMod คูณเลเวล)
+  const oldConMod = key === 'con' ? dndAbilityMod(Number(c.con) || 10) : 0;
   c.pointBuy[key] = currentRaw + 1;
   c[key] = c.pointBuy[key] + raceBonus + clsBonus;
   c.statPoints = available - cost;
-  dndAddLog(`📈 ${c.charName || p.name} เพิ่ม ${key.toUpperCase()} เป็น ${c[key]} (ใช้แต้มสเตตัส ${cost} แต้ม เหลือ ${c.statPoints} แต้ม)`);
+  let hpNote = '';
+  if (key === 'con') {
+    const newConMod = dndAbilityMod(Number(c.con) || 10);
+    const conModDelta = newConMod - oldConMod;
+    if (conModDelta !== 0) {
+      const level = Math.max(1, Math.round(Number(c.level) || 1));
+      const hpDelta = conModDelta * level;
+      c.maxHp = Math.max(1, Math.round((Number(c.maxHp) || 1) + hpDelta));
+      c.hp = Math.max(0, Math.min(c.maxHp, Math.round((Number(c.hp) || 0) + hpDelta)));
+      hpNote = ` (ตัวปรับ CON เปลี่ยน ${conModDelta > 0 ? '+' : ''}${conModDelta} → HP สูงสุด ${hpDelta > 0 ? '+' : ''}${hpDelta} เป็น ${c.maxHp})`;
+    }
+  }
+  dndAddLog(`📈 ${c.charName || p.name} เพิ่ม ${key.toUpperCase()} เป็น ${c[key]} (ใช้แต้มสเตตัส ${cost} แต้ม เหลือ ${c.statPoints} แต้ม)${hpNote}`);
   dndBroadcastState();
 }
 
@@ -968,6 +983,10 @@ function dndHandleDmUpdate(ws, targetId, updates) {
   }
   // ต้องจับเลเวลเดิมไว้ "ก่อน" ที่ค่า exp จะถูกเขียนทับด้านล่าง ไม่งั้นจะเทียบเลเวลเดิมกับเลเวลใหม่ไม่ได้เลย (เดิมเป็นบั๊ก)
   const previousLevel = dndLevelFromExp(c.exp);
+  // อิงกลไก D&D: HP สูงสุดผูกกับตัวปรับ (modifier) ของ CON โดยตรง — ต้องจับ modifier ของ CON "ก่อน" แก้ไข
+  // ไว้ก่อน เพื่อเทียบกับ modifier "หลัง" แก้ไข แล้วปรับ HP สูงสุด/HP ปัจจุบันตามส่วนต่างที่เปลี่ยนไปคูณเลเวล
+  // (ถ้าไม่ทำแบบนี้ ตอน DM แก้ CON ในฟอร์ม ค่า HP จะไม่ขยับตามเลย เพราะช่อง HP ในฟอร์มยังเป็นค่าเดิมที่ยังไม่ได้คำนวณใหม่)
+  const oldConMod = dndAbilityMod(Number(c.con) || 10);
   for (const f of DND_DM_NUM_FIELDS) {
     if (f === 'level') continue; // Level คำนวณจาก EXP อัตโนมัติ
     if (updates[f] !== undefined) {
@@ -981,12 +1000,29 @@ function dndHandleDmUpdate(ws, targetId, updates) {
     dndAddLog(`🎉 ${c.charName || target.name} เลเวลอัป! Lv.${previousLevel} → Lv.${c.level} (ได้แต้มสเตตัส +${STAT_POINTS_PER_LEVEL * (c.level - previousLevel)})`);
     dndAnnounceClassSkillUnlocks(target, previousLevel, c.level);
   }
+  // ส่วนต่างของ HP ที่ต้องปรับตามตัวปรับ CON ที่เปลี่ยนไป (มาตรฐาน D&D: HP เปลี่ยน = ส่วนต่าง conMod x เลเวลปัจจุบัน)
+  let conHpDelta = 0;
+  if (updates.con !== undefined) {
+    const newConMod = dndAbilityMod(Number(c.con) || 10);
+    const conModDelta = newConMod - oldConMod;
+    if (conModDelta !== 0) {
+      const level = Math.max(1, Math.round(Number(c.level) || 1));
+      conHpDelta = conModDelta * level;
+      c.maxHp = Math.max(1, Math.min(9999, Math.round((Number(c.maxHp) || 1) + conHpDelta)));
+      dndAddLog(`❤️ ${c.charName || target.name} ตัวปรับ CON เปลี่ยน ${conModDelta > 0 ? '+' : ''}${conModDelta} → HP สูงสุด ${conHpDelta > 0 ? '+' : ''}${conHpDelta} เป็น ${c.maxHp} (อิงกลไก D&D)`);
+    }
+  }
   let revived = false;
   if (updates.hp !== undefined) {
-    const n = Number(updates.hp);
+    let n = Number(updates.hp);
+    // ถ้า CON เปลี่ยนในการแก้ไขครั้งนี้ด้วย ให้บวกส่วนต่าง HP เข้าไปกับค่าที่ DM ส่งมา (เผื่อช่อง HP ในฟอร์มยังเป็นค่าเดิมที่ยังไม่ได้คิด CON ใหม่)
+    if (Number.isFinite(n) && conHpDelta) n += conHpDelta;
     const wasDead = dndIsCharDead(c);
     if (Number.isFinite(n)) c.hp = Math.max(0, Math.min(c.maxHp || 9999, Math.round(n)));
     revived = wasDead && !dndIsCharDead(c);
+  } else if (conHpDelta) {
+    // DM ไม่ได้ส่งค่า HP มาด้วย แต่ CON เปลี่ยน — ปรับ HP ปัจจุบันตามส่วนต่างเช่นกัน
+    c.hp = Math.max(0, Math.min(c.maxHp || 9999, Math.round((Number(c.hp) || 0) + conHpDelta)));
   }
   if (updates.locked !== undefined) c.locked = !!updates.locked;
   if (updates.equipment !== undefined) {

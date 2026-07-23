@@ -556,8 +556,21 @@ let dndTokenEditTargetId = null;
 let dndSkills = [];
 let dndActiveTool = 'dice';
 const DND_STAT_LABELS = { str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA' };
-const DND_STAT_TIPS = { str: '💪 พละกำลัง — เพิ่มพลังโจมตีและดาเมจระยะประชิด รวมถึงการทดสอบที่ใช้กำลัง', dex: '🏃 ความคล่องตัว — เพิ่มความแม่นยำ ความเร็ว การหลบหลีก และการโจมตีที่ใช้ความคล่องตัว', con: '❤️ ความแข็งแกร่งของร่างกาย — เพิ่มความทนทานและช่วยให้รับความเสียหายได้มากขึ้น', int: '🧠 สติปัญญา — ช่วยด้านเวทมนตร์ ความรู้ และการวิเคราะห์', wis: '👁️ ปัญญา/การรับรู้ — ช่วยด้านการรับรู้ สัญชาตญาณ และเวทบางประเภท', cha: '🗣️ เสน่ห์ — ช่วยด้านการพูดคุย โน้มน้าว และปฏิสัมพันธ์' };
+// ค่าเฉลี่ยคนทั่วไป ~10 — ตัวปรับ (modifier) คำนวณจาก floor((ค่าสเตตัส-10)/2) ยิ่งค่าสูงยิ่งได้ตัวปรับบวกมาก ยิ่งค่าต่ำยิ่งโดนหักลบตอนทอยเต๋า
+const DND_STAT_TIPS = {
+  str: '💪 พละกำลัง (STR) — พลังกายภาพและระยะประชิด เพิ่มพลังโจมตีและดาเมจระยะประชิด ค่าเฉลี่ยคนทั่วไป ~10',
+  dex: '🏃 ความคล่องตัว (DEX) — ความเร็วและการหลบหลีก เพิ่มความแม่นยำ ความเร็ว และ AC ค่าเฉลี่ยคนทั่วไป ~10',
+  con: '❤️ ความอึด/ความทนทาน (CON) — พลังชีวิต ผูกกับ HP สูงสุดโดยตรง (แก้ CON แล้ว HP จะขยับตามอัตโนมัติ) ค่าเฉลี่ยคนทั่วไป ~10',
+  int: '🧠 สติปัญญา (INT) — ความฉลาด ไหวพริบ และความรู้ ช่วยด้านเวทมนตร์และการวิเคราะห์ ค่าเฉลี่ยคนทั่วไป ~10',
+  wis: '👁️ สติปัญญา/การรับรู้ (WIS) — การรับรู้และสัญชาตญาณ ช่วยด้านการสังเกตและเวทบางประเภท ค่าเฉลี่ยคนทั่วไป ~10',
+  cha: '🗣️ เสน่ห์ (CHA) — การพูดคุยและการโน้มน้าวใจ ช่วยด้านปฏิสัมพันธ์ทางสังคม ค่าเฉลี่ยคนทั่วไป ~10',
+};
 function dndStatTipHtml(k) { return `data-tip="${escapeHtml(DND_STAT_TIPS[k] || '')}"`; }
+// ตัวปรับ (modifier) จากค่าสเตตัสดิบ — มาตรฐาน D&D: floor((score-10)/2) เช่น 8→-1, 10→+0, 16→+3
+function dndAbilityModText(score) {
+  const mod = Math.floor(((Number(score) || 10) - 10) / 2);
+  return mod > 0 ? `+${mod}` : `${mod}`;
+}
 let dndEquipSlots = ['weapon', 'armor', 'shoes', 'accessory'];
 let dndEquipSlotLabels = { weapon: 'อาวุธ', armor: 'เกราะ', shoes: 'รองเท้า', accessory: 'เครื่องประดับ' };
 const DND_EQUIP_SLOT_ICONS = { weapon: '⚔️', armor: '🛡️', shoes: '👢', accessory: '💍' };
@@ -2322,7 +2335,7 @@ function renderMySheetView() {
       const btn = statPoints > 0
         ? `<button type="button" class="dndStatPlusBtn" ${statPoints >= stepCost ? '' : 'disabled'} title="เพิ่มอีก 1 ใช้แต้มสเตตัส ${stepCost} แต้ม" onclick="dndSpendStatPointClick('${k}')">+${stepCost}</button>`
         : '';
-      return `<div class="dndStatTip" ${dndStatTipHtml(k)}><div class="dndStatKey">${DND_STAT_LABELS[k]}</div><div class="dndStatVal">${c[k]}</div>${btn}</div>`;
+      return `<div class="dndStatTip" ${dndStatTipHtml(k)}><div class="dndStatKey">${DND_STAT_LABELS[k]}</div><div class="dndStatVal">${c[k]} <span class="dndStatModBadge">(${dndAbilityModText(c[k])})</span></div>${btn}</div>`;
     }).join('')}</div>`
     + ((c.statuses && c.statuses.length) ? `<div class="dndPCardSkills">${c.statuses.map(s => dndStatusChipHtml(s)).join('')}</div>` : '')
     + `<div class="dndSheetViewRow" style="border-bottom:none; flex-direction:column; align-items:flex-start; gap:4px;"><span>ประวัติที่มา</span><span style="text-align:left; white-space:pre-wrap;">${escapeHtml(c.backstory || '-')}</span></div>`
@@ -2354,6 +2367,35 @@ function fillPassiveSelectOptions(raceKey, selectedPassiveKey) {
   el.innerHTML = list.map(it => `<option value="${it.key}">${it.icon || '✨'} ${escapeHtml(it.name)}</option>`).join('');
   el.value = selectedPassiveKey || (list[0] && list[0].key) || '';
 }
+// ค่าอ้างอิงตอนเปิดหน้าต่างแก้ไข — ใช้เทียบตัวปรับ CON เดิม/ใหม่ เพื่อพรีวิว HP ที่จะเปลี่ยนก่อน DM กดบันทึกจริง (เซิร์ฟเวอร์คำนวณจริงอีกที ค่านี้แค่โชว์พรีวิว)
+let dndDmEditBaseline = { con: 10, maxHp: 20, hp: 20 };
+function dndUpdateEditStatMods() {
+  document.getElementById('dndEditStrMod').textContent = `(${dndAbilityModText(document.getElementById('dndEditStr').value)})`;
+  document.getElementById('dndEditDexMod').textContent = `(${dndAbilityModText(document.getElementById('dndEditDex').value)})`;
+  document.getElementById('dndEditConMod').textContent = `(${dndAbilityModText(document.getElementById('dndEditCon').value)})`;
+  document.getElementById('dndEditIntMod').textContent = `(${dndAbilityModText(document.getElementById('dndEditInt').value)})`;
+  document.getElementById('dndEditWisMod').textContent = `(${dndAbilityModText(document.getElementById('dndEditWis').value)})`;
+  document.getElementById('dndEditChaMod').textContent = `(${dndAbilityModText(document.getElementById('dndEditCha').value)})`;
+  const hint = document.getElementById('dndEditConHpHint');
+  const newConMod = Math.floor(((Number(document.getElementById('dndEditCon').value) || 10) - 10) / 2);
+  const oldConMod = Math.floor(((dndDmEditBaseline.con || 10) - 10) / 2);
+  const delta = newConMod - oldConMod;
+  if (delta !== 0) {
+    const level = Math.max(1, Number(document.getElementById('dndEditLevel').value) || 1);
+    const hpDelta = delta * level;
+    hint.textContent = `⚙️ ตัวปรับ CON เปลี่ยน → บันทึกแล้ว HP สูงสุดจะ${hpDelta > 0 ? '+' : ''}${hpDelta} (อิงกลไก D&D)`;
+  } else {
+    hint.textContent = '';
+  }
+}
+let dndEditStatModListenersBound = false;
+function bindEditStatModListenersOnce() {
+  if (dndEditStatModListenersBound) return;
+  dndEditStatModListenersBound = true;
+  ['dndEditStr', 'dndEditDex', 'dndEditCon', 'dndEditInt', 'dndEditWis', 'dndEditCha'].forEach(id => {
+    document.getElementById(id).addEventListener('input', dndUpdateEditStatMods);
+  });
+}
 function openDmEdit(targetId) {
   const p = dndPlayersList.find(pp => pp.id === targetId);
   if (!p) return;
@@ -2384,6 +2426,9 @@ function openDmEdit(targetId) {
   document.getElementById('dndEditLocked').checked = !!c.locked;
   renderDndStatusChips('dndEditStatusList', c.statuses || [], 'player', targetId);
   renderDmEditSkills(p);
+  dndDmEditBaseline = { con: Number(c.con) || 10, maxHp: Number(c.maxHp) || 20, hp: Number(c.hp) || 20 };
+  bindEditStatModListenersOnce();
+  dndUpdateEditStatMods();
   document.getElementById('dndDmEditOverlay').style.display = 'flex';
 }
 // แสดงสกิลทั้งหมดของผู้เล่นคนนี้ในหน้าต่างแก้ไข DM — ทั้งสกิลประจำคลาส (รวมที่ยังไม่ปลดล็อก) และสกิลที่ DM มอบให้เฉพาะคน
