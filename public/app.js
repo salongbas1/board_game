@@ -598,10 +598,32 @@ let DND_MONSTER_PRESETS = [
     stats: { str: 12, dex: 15, con: 12, int: 3, wis: 12, cha: 6 },
     attacks: [{ name: 'กัด', desc: 'กระโจนกัดด้วยเขี้ยวคม', stat: 'str', toHit: 2, dmgDie: 6, dmgCount: 1, dmgMod: 1 }],
     expReward: 10, goldReward: 2, loot: [{ name: 'หนังหมาป่า', qty: 1 }] },
-  { key: 'goblin', name: 'โกเบลิน', emoji: '👺', color: '#7ee87e', size: 'normal', maxHp: 10, ac: 13,
+  {
+    key: 'goblin', name: 'ก็อบลิน', emoji: '👺', color: '#7ba05b', size: 'small', maxHp: 7, ac: 15,
     stats: { str: 8, dex: 14, con: 10, int: 10, wis: 8, cha: 8 },
-    attacks: [{ name: 'ดาบสั้น', desc: 'ฟันด้วยดาบสั้นเก่าคร่ำคร่า', stat: 'dex', toHit: 2, dmgDie: 6, dmgCount: 1, dmgMod: 2 }],
-    expReward: 15, goldReward: 5, loot: [{ name: 'ดาบสั้นเก่า', qty: 1 }, { name: 'เหรียญทองแดง', qty: 3 }] },
+    attacks: [
+      { name: 'ดาบสั้น', desc: 'ฟันดาบสั้นเข้าใส่เป้าหมายอย่างรวดเร็ว', stat: 'dex', toHit: 4, dmgDie: 6, dmgCount: 1, dmgMod: 2 },
+      { name: 'ธนูสั้น', desc: 'ยิงธนูจากระยะไกล', stat: 'dex', toHit: 4, dmgDie: 6, dmgCount: 1, dmgMod: 2 },
+    ],
+    expReward: 50, goldReward: 15, loot: [{ name: 'ดาบสั้นเก่า', qty: 1 }, { name: 'เหรียญทองแดง', qty: 15 }]
+  },
+  {
+    key: 'bugbear', name: 'บักแบร์', emoji: '👹', color: '#5b4a3a', size: 'medium', maxHp: 27, ac: 16,
+    stats: { str: 15, dex: 14, con: 13, int: 8, wis: 11, cha: 9 },
+    attacks: [
+      { name: 'มอร์นิ่งสตาร์', desc: 'ตีอาวุธหนามแหลมด้วยแรงมหาศาล', stat: 'str', toHit: 4, dmgDie: 8, dmgCount: 1, dmgMod: 2 },
+      { name: 'หอกซัด', desc: 'ขว้างหอกใส่เป้าหมายระยะไกล', stat: 'str', toHit: 4, dmgDie: 6, dmgCount: 1, dmgMod: 2 },
+    ],
+    expReward: 200, goldReward: 40, loot: [{ name: 'มอร์นิ่งสตาร์', qty: 1 }, { name: 'เหรียญทองคำ', qty: 40 }]
+  },
+  {
+    key: 'hobgoblin', name: 'ฮอบก็อบลิน', emoji: '👺', color: '#8a9a5a', size: 'medium', maxHp: 11, ac: 18,
+    stats: { str: 13, dex: 12, con: 12, int: 10, wis: 10, cha: 9 },
+    attacks: [
+      { name: 'ดาบยาว', desc: 'ฟันดาบยาวอย่างมีวินัยแบบทหาร', stat: 'str', toHit: 3, dmgDie: 8, dmgCount: 1, dmgMod: 1 },
+    ],
+    expReward: 100, goldReward: 25, loot: [{ name: 'ดาบยาว', qty: 1 }, { name: 'เหรียญเงิน', qty: 25 }]
+  },
   { key: 'skeleton', name: 'โครงกระดูก', emoji: '💀', color: '#e8e6da', size: 'normal', maxHp: 13, ac: 13,
     stats: { str: 10, dex: 14, con: 15, int: 6, wis: 8, cha: 5 },
     attacks: [{ name: 'ดาบโบราณ', desc: 'ฟาดด้วยดาบผุพังจากยุคก่อน', stat: 'dex', toHit: 2, dmgDie: 6, dmgCount: 1, dmgMod: 0 }],
