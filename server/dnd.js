@@ -200,12 +200,19 @@ function dndClassSkillsForPlayer(p) {
   if (!p || p.isDM || !p.character || !p.character.classKey) return [];
   const templates = DND_CLASS_SKILLS[p.character.classKey] || [];
   const level = Math.max(1, Math.floor(Number(p.character.level) || 1));
-  return templates.map((t, idx) => Object.assign({}, t, {
-    id: dndClassSkillId(p.character.classKey, idx),
-    assignedIds: [p.id],
-    classSkill: true,
-    locked: t.level > level,
-  }));
+  const overrides = p.character.skillOverrides || {};
+  return templates.map((t, idx) => {
+    const id = dndClassSkillId(p.character.classKey, idx);
+    const ov = overrides[id];
+    const merged = ov ? Object.assign({}, t, ov) : t;
+    return Object.assign({}, merged, {
+      id,
+      assignedIds: [p.id],
+      classSkill: true,
+      locked: t.level > level, // ปลดล็อกตามเลเวลเดิมของคลาสเสมอ ไม่ให้ override เปลี่ยนเงื่อนไขปลดล็อกได้
+      overridden: !!ov,
+    });
+  });
 }
 // เรียกตอนเลเวลอัป (ไม่ว่าจะจากฆ่ามอนสเตอร์ได้ EXP หรือ DM แก้ไขเลเวลตรง ๆ) เพื่อประกาศสกิลใหม่ที่เพิ่งปลดล็อก
 function dndAnnounceClassSkillUnlocks(target, oldLevel, newLevel) {
@@ -214,6 +221,68 @@ function dndAnnounceClassSkillUnlocks(target, oldLevel, newLevel) {
   const unlocked = templates.filter(t => t.level > oldLevel && t.level <= newLevel);
   for (const t of unlocked) {
     dndAddLog(`🔓 ${target.character.charName || target.name} ปลดล็อกสกิลประจำคลาสใหม่: "${t.name}" (เลเวล ${t.level})`);
+  }
+}
+
+// DM แก้ไขสกิลประจำคลาส (🎓) เฉพาะผู้เล่นคนเดียว โดยไม่กระทบผู้เล่นคนอื่นในคลาสเดียวกัน —
+// เก็บเป็น override แยกต่อตัวละคร (skillOverrides[skillId]) ทับค่าเริ่มต้นของคลาสตอนแสดงผล/ใช้งานสกิลเท่านั้น
+function dndHandleClassSkillOverrideSave(ws, targetId, skillId, payload) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const target = dndPlayers.find(pp => pp.id === Number(targetId) && !pp.isDM);
+  if (!target || !target.character.classKey) { dndSendError(ws, 'ไม่พบผู้เล่นเป้าหมาย'); return; }
+  const sid = Number(skillId);
+  const exists = dndClassSkillsForPlayer(target).some(s => s.id === sid);
+  if (!exists) { dndSendError(ws, 'ไม่พบสกิลประจำคลาสนี้'); return; }
+  if (!payload || typeof payload !== 'object') return;
+
+  const name = (payload.name || '').toString().trim().slice(0, 40);
+  if (!name) { dndSendError(ws, 'กรุณาตั้งชื่อสกิล'); return; }
+  const statRaw = (payload.stat || '').toString();
+  const stat = DND_SKILL_STATS.includes(statRaw) ? statRaw : '';
+  const desc = (payload.desc || '').toString().trim().slice(0, 200);
+
+  const dmg = (payload.damage && typeof payload.damage === 'object') ? payload.damage : {};
+  const dmgDie = DND_VALID_DICE.includes(Number(dmg.die)) ? Number(dmg.die) : 0;
+  const dmgCount = Math.max(1, Math.min(20, Math.round(Number(dmg.count) || 1)));
+  const dmgMod = Math.max(-100, Math.min(100, Math.round(Number(dmg.mod) || 0)));
+  const cooldownSec = Math.max(0, Math.min(3600, Math.round(Number(payload.cooldownSec) || 0)));
+  const maxUses = Math.max(0, Math.min(99, Math.round(Number(payload.maxUses) || 0)));
+
+  const heal = (payload.heal && typeof payload.heal === 'object') ? payload.heal : {};
+  const healDie = DND_VALID_DICE.includes(Number(heal.die)) ? Number(heal.die) : 0;
+  const healCount = Math.max(1, Math.min(20, Math.round(Number(heal.count) || 1)));
+  const healMod = Math.max(-100, Math.min(100, Math.round(Number(heal.mod) || 0)));
+
+  // สถานะ/ดีบัฟที่ผูกกับสกิล (ไม่บังคับ) — เหมือนตอนสร้าง/แก้ไขสกิลที่ DM สร้างเอง
+  const status = dndSanitizeSkillStatus(payload.status);
+
+  // รัศมี AOE (0 = เป้าเดี่ยวปกติ)
+  const aoeRaw = (payload.aoe && typeof payload.aoe === 'object') ? payload.aoe : {};
+  const aoeRadius = Math.max(0, Math.min(100, Math.round(Number(aoeRaw.radius) || 0)));
+
+  // สกิลลบล้างสถานะ (cleanse)
+  const cleanseRaw = (payload.cleanse && typeof payload.cleanse === 'object') ? payload.cleanse : {};
+  const cleanseEnabled = !!cleanseRaw.enabled;
+  const cleanseName = cleanseEnabled ? (cleanseRaw.name || '').toString().trim().slice(0, 24) : '';
+
+  target.character.skillOverrides = target.character.skillOverrides || {};
+  target.character.skillOverrides[sid] = {
+    name, stat, desc, dmgDie, dmgCount, dmgMod, cooldownSec, maxUses,
+    healDie, healCount, healMod, statusName: status.name, statusNote: status.note,
+    aoeRadius, cleanseEnabled, cleanseName,
+  };
+  dndAddLog(`✏️ DM ปรับสกิลประจำคลาส "${name}" ของ ${target.character.charName || target.name} (เฉพาะคนนี้คนเดียว คนอื่นในคลาสเดียวกันไม่กระทบ)`);
+}
+function dndHandleClassSkillOverrideReset(ws, targetId, skillId) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const target = dndPlayers.find(pp => pp.id === Number(targetId) && !pp.isDM);
+  if (!target) { dndSendError(ws, 'ไม่พบผู้เล่นเป้าหมาย'); return; }
+  const sid = Number(skillId);
+  if (target.character.skillOverrides && target.character.skillOverrides[sid]) {
+    delete target.character.skillOverrides[sid];
+    dndAddLog(`♻️ DM รีเซ็ตสกิลประจำคลาสของ ${target.character.charName || target.name} กลับเป็นค่าเริ่มต้นของคลาสแล้ว`);
   }
 }
 
@@ -568,13 +637,20 @@ function newDndCharacter(displayName) {
     inventory: '', backstory: '', locked: false, pointBuy: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
     equipment: dndSanitizeEquipment(null), statuses: [], exp: 0, gold: 0, statPoints: 0,
     appearance: dndSanitizeAppearance(null), bag: [],
+    skillOverrides: {}, // DM ปรับสกิลประจำคลาสเฉพาะผู้เล่นคนนี้คนเดียว — คีย์ = id สกิลคลาส, ค่า = ฟิลด์ที่ทับค่าเริ่มต้นของคลาส
   };
 }
 function dndPublicPlayer(p) {
   // สกิลที่ DM มอบให้ผู้เล่นคนนี้โดยเฉพาะ — ส่งให้ทุกคนเห็นบนการ์ดตัวละครของเขาในปาร์ตี้
   const assignedSkills = dndSkills.filter(s => s.assignedIds && s.assignedIds.includes(p.id)).map(s => ({ id: s.id, name: s.name }));
   // สกิลประจำคลาสของผู้เล่นคนนี้ทั้งหมด (รวมที่ยังไม่ปลดล็อก) — ให้ DM เห็นครบตอนเปิดหน้าต่างแก้ไขผู้เล่นคนนี้
-  const classSkills = dndClassSkillsForPlayer(p).map(s => ({ id: s.id, name: s.name, desc: s.desc, level: s.level, locked: s.locked }));
+  const classSkills = dndClassSkillsForPlayer(p).map(s => ({
+    id: s.id, name: s.name, desc: s.desc, level: s.level, locked: s.locked, overridden: s.overridden,
+    stat: s.stat, dmgDie: s.dmgDie, dmgCount: s.dmgCount, dmgMod: s.dmgMod, cooldownSec: s.cooldownSec, maxUses: s.maxUses,
+    healDie: s.healDie || 0, healCount: s.healCount || 1, healMod: s.healMod || 0,
+    statusName: s.statusName || '', statusNote: s.statusNote || '',
+    aoeRadius: s.aoeRadius || 0, cleanseEnabled: !!s.cleanseEnabled, cleanseName: s.cleanseName || '',
+  }));
   return { id: p.id, isDM: p.isDM, connected: p.connected, character: p.character, assignedSkills, classSkills };
 }
 // คืนรายการสกิลที่ผู้เล่นคนนี้มองเห็น พร้อมสถานะคูลดาวน์/จำนวนครั้งที่ใช้ไปแล้ว "เฉพาะของเขาเอง"
@@ -2291,6 +2367,124 @@ function dndHandleRestart(ws) {
     if (pp.ws && pp.ws.readyState === WebSocket.OPEN) pp.ws.send(payload);
   }
 }
+// ============================================================
+// บันทึกเกม / โหลดเกม: DM กดบันทึกสถานะห้องทั้งหมด (ผู้เล่น/การ์ดตัวละคร/แผนที่/token/ร้านค้า/เวลาในเกม ฯลฯ)
+// ออกมาเป็นไฟล์ .json เก็บไว้ในเครื่อง แล้วเอาไฟล์นั้นกลับมาโหลดทีหลังเพื่อเล่นต่อจากจุดเดิมได้
+// (เช่น ปิดเซิร์ฟเวอร์ไปแล้วเปิดใหม่ หรือย้ายไปรันที่เครื่องอื่น) — ทำได้เฉพาะ DM เท่านั้น
+// ============================================================
+// รวมสถานะทั้งหมดของห้องเป็นก้อนข้อมูลเดียวที่ JSON.stringify ได้ตรงๆ (ตัด ws ออกเพราะ serialize ไม่ได้)
+function dndSerializeState() {
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    players: dndPlayers.map(p => ({
+      id: p.id, name: p.name, isDM: p.isDM, character: p.character,
+    })),
+    nextId: dndNextId,
+    log: dndLog,
+    skills: dndSkills,
+    nextSkillId: dndNextSkillId,
+    customPassives: dndCustomPassives,
+    nextPassiveId: dndNextPassiveId,
+    scene: dndScene,
+    gameTime: dndGameTime,
+    timeAuto: dndTimeAuto,
+    timeAutoAccumMinutes: dndTimeAutoAccumMinutes,
+    maps: dndMaps,
+    nextMapId: dndNextMapId,
+    currentMapId: dndCurrentMapId,
+    tokens: dndTokens,
+    nextTokenId: dndNextTokenId,
+    nextAttackId: dndNextAttackId,
+    nextStatusId: dndNextStatusId,
+    nextLootId: dndNextLootId,
+    turnOrder: dndTurnOrder,
+    turnIndex: dndTurnIndex,
+    shops: dndShops,
+    nextShopId: dndNextShopId,
+    nextShopItemId: dndNextShopItemId,
+    trades: dndTrades,
+    nextTradeId: dndNextTradeId,
+    itemEffects: dndItemEffects,
+    nextItemEffectId: dndNextItemEffectId,
+  };
+}
+// DM กดปุ่ม "บันทึกเกมเป็นไฟล์" — ส่งก้อนข้อมูลสถานะทั้งหมดกลับไปให้เบราว์เซอร์ของ DM คนที่ขอเท่านั้น
+// (ฝั่ง client จะเป็นคนสร้างไฟล์ .json ให้ดาวน์โหลดจากข้อมูลนี้)
+function dndHandleExportState(ws) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) { dndSendError(ws, 'เฉพาะ DM เท่านั้นที่บันทึกเกมเป็นไฟล์ได้'); return; }
+  const snapshot = dndSerializeState();
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'dndExportState', data: snapshot }));
+  dndAddLog(`💾 ${p.character.charName || p.name} (DM) บันทึกสถานะห้องทั้งหมดเป็นไฟล์`);
+}
+// DM เลือกไฟล์เซฟที่เคยบันทึกไว้ (จากปุ่ม "โหลดเกมจากไฟล์") มาแทนที่สถานะห้องทั้งหมดตอนนี้
+// ผู้เล่นทุกคน (รวม DM ที่กดโหลด) จะหลุดกลับไปหน้าหลักเหมือนตอนกด "รีเซตห้องทั้งหมด" แล้วต้องกลับเข้ามา
+// "นั่งที่เดิม" ผ่านรายชื่อที่นั่งกันใหม่ทุกคน — เพราะที่นั่งในไฟล์เซฟถูก mark เป็น "ยังไม่ได้เชื่อมต่อ" เสมอ
+function dndHandleImportState(ws, data) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) { dndSendError(ws, 'เฉพาะ DM เท่านั้นที่โหลดไฟล์เซฟได้'); return; }
+  if (!data || typeof data !== 'object') { dndSendError(ws, 'ไฟล์เซฟไม่ถูกต้องหรือเสียหาย อ่านข้อมูลไม่ได้'); return; }
+
+  const rawPlayers = Array.isArray(data.players) ? data.players : [];
+  const newPlayers = rawPlayers
+    .filter(pl => pl && typeof pl === 'object' && Number.isFinite(Number(pl.id)))
+    .map(pl => ({
+      id: Number(pl.id),
+      ws: null,
+      name: (pl.name || 'ผู้เล่น').toString().slice(0, 16),
+      isDM: !!pl.isDM,
+      connected: false,
+      character: (pl.character && typeof pl.character === 'object') ? pl.character : newDndCharacter(pl.name || 'ผู้เล่น'),
+    }));
+  if (!newPlayers.length) { dndSendError(ws, 'ไฟล์เซฟนี้ไม่มีข้อมูลผู้เล่นเลย โหลดไม่ได้'); return; }
+  // ต้องมี DM อย่างน้อย 1 คนเสมอ ไม่งั้นห้องจะไม่มีใครคุมได้ — ถ้าไฟล์เพี้ยนไม่มี DM เลย ให้คนแรกในลิสต์เป็น DM แทน
+  if (!newPlayers.some(pp => pp.isDM)) newPlayers[0].isDM = true;
+
+  const everyone = dndPlayers.slice(); // เก็บรายชื่อคนที่ต่ออยู่ตอนนี้ไว้ก่อน เพื่อเด้งทุกคนกลับหน้าหลัก
+
+  dndPlayers = newPlayers;
+  dndNextId = Number.isFinite(Number(data.nextId)) ? Number(data.nextId) : (Math.max(0, ...dndPlayers.map(pp => pp.id)) + 1);
+  dndLog = Array.isArray(data.log) ? data.log.slice(-500) : [];
+  dndSkills = Array.isArray(data.skills) ? data.skills : [];
+  dndNextSkillId = Number.isFinite(Number(data.nextSkillId)) ? Number(data.nextSkillId) : 1;
+  dndCustomPassives = Array.isArray(data.customPassives) ? data.customPassives : [];
+  dndNextPassiveId = Number.isFinite(Number(data.nextPassiveId)) ? Number(data.nextPassiveId) : 1;
+  dndScene = (data.scene && typeof data.scene === 'object')
+    ? { location: (data.scene.location || '').toString(), situation: (data.scene.situation || '').toString() }
+    : { location: '', situation: '' };
+  dndGameTime = (data.gameTime && typeof data.gameTime === 'object')
+    ? { day: Number(data.gameTime.day) || 1, hour: Number(data.gameTime.hour) || 8, minute: Number(data.gameTime.minute) || 0 }
+    : { day: 1, hour: 8, minute: 0 };
+  dndTimeAuto = (data.timeAuto && typeof data.timeAuto === 'object')
+    ? { running: !!data.timeAuto.running, speed: Number(data.timeAuto.speed) || 10 }
+    : { running: false, speed: 10 };
+  dndTimeAutoAccumMinutes = Number(data.timeAutoAccumMinutes) || 0;
+  dndMaps = (Array.isArray(data.maps) && data.maps.length) ? data.maps : cloneDefaultMaps();
+  dndNextMapId = Number.isFinite(Number(data.nextMapId)) ? Number(data.nextMapId) : (Math.max(0, ...dndMaps.map(m => m.id)) + 1);
+  dndCurrentMapId = (Number.isFinite(Number(data.currentMapId)) && dndMaps.some(m => m.id === Number(data.currentMapId)))
+    ? Number(data.currentMapId)
+    : (dndMaps[0] ? dndMaps[0].id : 1);
+  dndTokens = Array.isArray(data.tokens) ? data.tokens : [];
+  dndNextTokenId = Number.isFinite(Number(data.nextTokenId)) ? Number(data.nextTokenId) : 1;
+  dndNextAttackId = Number.isFinite(Number(data.nextAttackId)) ? Number(data.nextAttackId) : 1;
+  dndNextStatusId = Number.isFinite(Number(data.nextStatusId)) ? Number(data.nextStatusId) : 1;
+  dndNextLootId = Number.isFinite(Number(data.nextLootId)) ? Number(data.nextLootId) : 1;
+  dndTurnOrder = Array.isArray(data.turnOrder) ? data.turnOrder : [];
+  dndTurnIndex = Number.isFinite(Number(data.turnIndex)) ? Number(data.turnIndex) : -1;
+  dndShops = Array.isArray(data.shops) ? data.shops : [];
+  dndNextShopId = Number.isFinite(Number(data.nextShopId)) ? Number(data.nextShopId) : 1;
+  dndNextShopItemId = Number.isFinite(Number(data.nextShopItemId)) ? Number(data.nextShopItemId) : 1;
+  dndTrades = Array.isArray(data.trades) ? data.trades : [];
+  dndNextTradeId = Number.isFinite(Number(data.nextTradeId)) ? Number(data.nextTradeId) : 1;
+  dndItemEffects = (Array.isArray(data.itemEffects) && data.itemEffects.length) ? data.itemEffects : dndDefaultItemEffectsInit();
+  dndNextItemEffectId = Number.isFinite(Number(data.nextItemEffectId)) ? Number(data.nextItemEffectId) : 1;
+
+  const payload = JSON.stringify({ type: 'dndLeft' });
+  for (const pp of everyone) {
+    if (pp.ws && pp.ws.readyState === WebSocket.OPEN) pp.ws.send(payload);
+  }
+}
 function dndHandleLeave(ws) {
   const p = dndPlayers.find(pp => pp.ws === ws);
   if (!p) return;
@@ -2418,6 +2612,8 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndSkillCreate') dndHandleSkillCreate(ws, msg.skill);
   else if (msg.type === 'dndSkillEdit') dndHandleSkillEdit(ws, msg.skillId, msg.skill);
   else if (msg.type === 'dndSkillDelete') dndHandleSkillDelete(ws, msg.skillId);
+  else if (msg.type === 'dndClassSkillOverrideSave') dndHandleClassSkillOverrideSave(ws, msg.targetId, msg.skillId, msg.skill);
+  else if (msg.type === 'dndClassSkillOverrideReset') dndHandleClassSkillOverrideReset(ws, msg.targetId, msg.skillId);
   else if (msg.type === 'dndPassiveCreate') dndHandlePassiveCreate(ws, msg.passive);
   else if (msg.type === 'dndPassiveEdit') dndHandlePassiveEdit(ws, msg.passiveId, msg.passive);
   else if (msg.type === 'dndPassiveDelete') dndHandlePassiveDelete(ws, msg.passiveId);
@@ -2461,6 +2657,8 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndStatusRemove') dndHandleStatusRemove(ws, msg.status);
   else if (msg.type === 'dndStatusEdit') dndHandleStatusEdit(ws, msg.status);
   else if (msg.type === 'dndRestart') dndHandleRestart(ws);
+  else if (msg.type === 'dndExportState') dndHandleExportState(ws);
+  else if (msg.type === 'dndImportState') dndHandleImportState(ws, msg.data);
   else if (msg.type === 'dndRepairArmor') dndHandleRepairArmor(ws);
   else if (msg.type === 'dndGiveItem') dndHandleGiveItem(ws, msg.targetId, msg.name, msg.qty);
   else if (msg.type === 'dndTakeItem') dndHandleTakeItem(ws, msg.targetId, msg.name, msg.qty);

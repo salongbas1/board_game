@@ -45,6 +45,7 @@ function connect() {
     else if (msg.type === 'dndChat') appendDndChat(msg.name, msg.text);
     else if (msg.type === 'dndError') { showDndCreateError(msg.msg); showDndErrorToast(msg.msg); }
     else if (msg.type === 'dndAttackAnim') { playDndAttackAnim(msg); playDndMapAttackAnim(msg); }
+    else if (msg.type === 'dndExportState') downloadDndSave(msg.data);
   };
 }
 connect();
@@ -516,10 +517,22 @@ let dndPointBuyCostMaxDefined = 15;
 let dndPointBuyCostPerStepAboveMax = 9;
 let dndStatPointsPerLevel = 2;
 // ต้นทุนสะสม (จากฐาน dndPointBuyMin) ของค่าสเตตัสใดๆ — คำนวณเหมือนฝั่งเซิร์ฟเวอร์ทุกประการ (data/point-buy.js)
+// ค่าในตาราง dndPointBuyCost คือ "ต้นทุนต่อ 1 แต้ม" ของขั้นนั้นๆ ต้องบวกสะสมทีละขั้นจาก min+1 ถึง s
+// เช่น 8->15 ต้องรวม 9+10+11+12+13+14+15 = 1+2+3+4+5+7+9 = 31 แต้ม (ห้าม lookup ค่าที่ตำแหน่ง s ตรงๆ)
 function dndPointBuyCostOf(score) {
   const s = Math.round(score);
-  if (s <= dndPointBuyCostMaxDefined) return dndPointBuyCost[s] !== undefined ? dndPointBuyCost[s] : Infinity;
-  return dndPointBuyCost[dndPointBuyCostMaxDefined] + (s - dndPointBuyCostMaxDefined) * dndPointBuyCostPerStepAboveMax;
+  if (!Number.isFinite(s) || s < dndPointBuyMin) return Infinity;
+  if (s === dndPointBuyMin) return 0;
+  let total = 0;
+  const upper = Math.min(s, dndPointBuyCostMaxDefined);
+  for (let i = dndPointBuyMin + 1; i <= upper; i++) {
+    if (dndPointBuyCost[i] === undefined) return Infinity;
+    total += dndPointBuyCost[i];
+  }
+  if (s > dndPointBuyCostMaxDefined) {
+    total += (s - dndPointBuyCostMaxDefined) * dndPointBuyCostPerStepAboveMax;
+  }
+  return total;
 }
 function dndPointBuyStepCost(currentScore) {
   const s = Math.max(dndPointBuyMin, Math.round(currentScore));
@@ -726,6 +739,53 @@ document.getElementById('dndRestartBtn').onclick = (ev) => {
     send({ type: 'dndRestart' });
   }
 };
+
+// ---- บันทึกเกม / โหลดเกม (เฉพาะ DM): เซฟสถานะห้องทั้งหมดเป็นไฟล์ .json แล้วเอากลับมาโหลดเล่นต่อได้ ----
+document.getElementById('dndSaveGameBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndExportState' });
+};
+document.getElementById('dndLoadGameBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  if (confirm('โหลดเกมจากไฟล์? สถานะห้องปัจจุบันทั้งหมดจะถูกแทนที่ด้วยข้อมูลในไฟล์ที่เลือก และผู้เล่นทุกคน (รวมคุณ) จะต้องกลับเข้ามานั่งที่เดิมกันใหม่')) {
+    document.getElementById('dndLoadGameFileInput').click();
+  }
+};
+document.getElementById('dndLoadGameFileInput').onchange = (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = ''; // เคลียร์ค่าไว้ เผื่อผู้ใช้เลือกไฟล์เดิมซ้ำอีกครั้งในอนาคต
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let data;
+    try {
+      data = JSON.parse(reader.result);
+    } catch (e) {
+      alert('ไฟล์นี้ไม่ใช่ไฟล์เซฟที่ถูกต้อง (อ่านเป็น JSON ไม่ได้)');
+      return;
+    }
+    dndCreateInitialized = false;
+    dndSceneEditInitialized = false;
+    dndTimeSetInputsInitialized = false;
+    dndTimeAutoSpeedInitialized = false;
+    send({ type: 'dndImportState', data });
+  };
+  reader.onerror = () => alert('อ่านไฟล์นี้ไม่สำเร็จ ลองใหม่อีกครั้ง');
+  reader.readAsText(file);
+};
+// เซิร์ฟเวอร์ส่งสถานะห้องทั้งหมดกลับมาให้ (ตอบรับปุ่ม "บันทึกเกมเป็นไฟล์") — สร้างไฟล์ .json ให้เบราว์เซอร์ดาวน์โหลดทันที
+function downloadDndSave(data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `hearts8-dnd-save-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 // ---- อุปกรณ์สวมใส่: อาวุธ / เกราะ / รองเท้า / เครื่องประดับ — ค่าป้องกัน + ความคงทน ต่อชิ้น ----
 function renderEquipGrid(containerId, equipment, readOnly = false) {
@@ -2332,16 +2392,106 @@ function renderDmEditSkills(p) {
   const box = document.getElementById('dndEditSkillsBox');
   if (!box) return;
   const classChips = (p.classSkills || []).map(s =>
-    `<span class="dndSkillChip" title="${escapeHtml(s.desc || '')}">🎓 ${escapeHtml(s.name)}${s.locked ? ` (ปลดล็อก Lv.${s.level})` : ''}</span>`
+    `<span class="dndSkillChip dndEditableSkillChip" data-class-skill-id="${s.id}" title="${escapeHtml(s.desc || '')}\nคลิกเพื่อแก้ไขสกิลนี้ (เฉพาะผู้เล่นคนนี้คนเดียว)">🎓 ${escapeHtml(s.name)}${s.locked ? ` (ปลดล็อก Lv.${s.level})` : ''}${s.overridden ? ' ✏️' : ''}</span>`
   ).join('');
   const customChips = (p.assignedSkills || []).map(s =>
     `<span class="dndSkillChip dndEditableSkillChip" data-skill-id="${s.id}" title="คลิกเพื่อแก้ไขสกิลนี้">✨ ${escapeHtml(s.name)} ✏️</span>`
   ).join('');
   box.innerHTML = (classChips + customChips) || '<div class="dndRangeHint">ยังไม่มีสกิล</div>';
   box.querySelectorAll('[data-skill-id]').forEach(chip => {
-    chip.onclick = () => { closeDndModals(); openDndSkillEdit(Number(chip.dataset.skillId)); };
+    chip.onclick = () => { openDndSkillEdit(Number(chip.dataset.skillId)); };
+  });
+  box.querySelectorAll('[data-class-skill-id]').forEach(chip => {
+    chip.onclick = () => { openDndClassSkillEdit(p.id, Number(chip.dataset.classSkillId)); };
   });
 }
+// ---- DM: แก้ไขสกิลประจำคลาส (🎓) เฉพาะผู้เล่นคนเดียว — ไม่กระทบคนอื่นในคลาสเดียวกัน ----
+let dndClassSkillEditTarget = { playerId: null, skillId: null };
+fillSkillStatSelect('dndClassSkillEditStat');
+fillSkillDmgDieSelect('dndClassSkillEditDmgDie');
+fillSkillHealDieSelect('dndClassSkillEditHealDie');
+function openDndClassSkillEdit(playerId, skillId) {
+  const p = dndPlayersList.find(pp => pp.id === playerId);
+  if (!p) return;
+  const skill = (p.classSkills || []).find(s => s.id === skillId);
+  if (!skill) return;
+  dndClassSkillEditTarget = { playerId, skillId };
+  document.getElementById('dndClassSkillEditTitle').textContent = `แก้ไขสกิลประจำคลาส (DM) — ${skill.name} · เฉพาะ ${p.character.charName || p.name}`;
+  document.getElementById('dndClassSkillEditName').value = skill.name || '';
+  document.getElementById('dndClassSkillEditStat').value = skill.stat || '';
+  document.getElementById('dndClassSkillEditDesc').value = skill.desc || '';
+  document.getElementById('dndClassSkillEditDmgDie').value = String(skill.dmgDie || 0);
+  document.getElementById('dndClassSkillEditDmgCount').value = skill.dmgCount || 1;
+  document.getElementById('dndClassSkillEditDmgMod').value = skill.dmgMod || 0;
+  document.getElementById('dndClassSkillEditHealDie').value = String(skill.healDie || 0);
+  document.getElementById('dndClassSkillEditHealCount').value = skill.healCount || 1;
+  document.getElementById('dndClassSkillEditHealMod').value = skill.healMod || 0;
+  document.getElementById('dndClassSkillEditStatusName').value = skill.statusName || '';
+  document.getElementById('dndClassSkillEditStatusNote').value = skill.statusNote || '';
+  document.getElementById('dndClassSkillEditAoeRadius').value = skill.aoeRadius || 0;
+  document.getElementById('dndClassSkillEditCleanseEnabled').checked = !!skill.cleanseEnabled;
+  document.getElementById('dndClassSkillEditCleanseName').value = skill.cleanseName || '';
+  document.getElementById('dndClassSkillEditCooldown').value = skill.cooldownSec || 0;
+  document.getElementById('dndClassSkillEditMaxUses').value = skill.maxUses || 0;
+  document.getElementById('dndClassSkillEditError').textContent = '';
+  document.getElementById('dndClassSkillEditResetBtn').style.display = skill.overridden ? 'inline-block' : 'none';
+  document.getElementById('dndClassSkillEditOverlay').style.display = 'flex';
+}
+document.getElementById('dndClassSkillEditCancelBtn').onclick = () => {
+  document.getElementById('dndClassSkillEditOverlay').style.display = 'none';
+  dndClassSkillEditTarget = { playerId: null, skillId: null };
+};
+document.getElementById('dndClassSkillEditSaveBtn').onclick = (ev) => {
+  const { playerId, skillId } = dndClassSkillEditTarget;
+  if (playerId == null || skillId == null) return;
+  const name = document.getElementById('dndClassSkillEditName').value.trim();
+  if (!name) { document.getElementById('dndClassSkillEditError').textContent = 'กรุณาตั้งชื่อสกิล'; return; }
+  flashBtn(ev.currentTarget);
+  send({
+    type: 'dndClassSkillOverrideSave',
+    targetId: playerId,
+    skillId,
+    skill: {
+      name,
+      stat: document.getElementById('dndClassSkillEditStat').value,
+      desc: document.getElementById('dndClassSkillEditDesc').value,
+      damage: {
+        die: document.getElementById('dndClassSkillEditDmgDie').value,
+        count: document.getElementById('dndClassSkillEditDmgCount').value,
+        mod: document.getElementById('dndClassSkillEditDmgMod').value,
+      },
+      heal: {
+        die: document.getElementById('dndClassSkillEditHealDie').value,
+        count: document.getElementById('dndClassSkillEditHealCount').value,
+        mod: document.getElementById('dndClassSkillEditHealMod').value,
+      },
+      status: {
+        name: document.getElementById('dndClassSkillEditStatusName').value,
+        note: document.getElementById('dndClassSkillEditStatusNote').value,
+      },
+      aoe: {
+        radius: document.getElementById('dndClassSkillEditAoeRadius').value,
+      },
+      cleanse: {
+        enabled: document.getElementById('dndClassSkillEditCleanseEnabled').checked,
+        name: document.getElementById('dndClassSkillEditCleanseName').value,
+      },
+      cooldownSec: document.getElementById('dndClassSkillEditCooldown').value,
+      maxUses: document.getElementById('dndClassSkillEditMaxUses').value,
+    },
+  });
+  document.getElementById('dndClassSkillEditOverlay').style.display = 'none';
+  dndClassSkillEditTarget = { playerId: null, skillId: null };
+};
+document.getElementById('dndClassSkillEditResetBtn').onclick = (ev) => {
+  const { playerId, skillId } = dndClassSkillEditTarget;
+  if (playerId == null || skillId == null) return;
+  if (!confirm('รีเซ็ตสกิลนี้ของผู้เล่นคนนี้กลับเป็นค่าเริ่มต้นของคลาส?')) return;
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndClassSkillOverrideReset', targetId: playerId, skillId });
+  document.getElementById('dndClassSkillEditOverlay').style.display = 'none';
+  dndClassSkillEditTarget = { playerId: null, skillId: null };
+};
 // ---- แสดง chip สถานะ/ดีบัฟ พร้อมปุ่มถอน (ใช้ร่วมกันทั้งหน้าต่างแก้ไขผู้เล่นและ NPC) ----
 function renderDndStatusChips(elId, statuses, targetType, targetId) {
   const el = document.getElementById(elId);
@@ -2409,12 +2559,14 @@ document.getElementById('dndEditStatusAddBtn').onclick = (ev) => {
 };
 function closeDndModals() {
   document.getElementById('dndDmEditOverlay').style.display = 'none';
+  document.getElementById('dndClassSkillEditOverlay').style.display = 'none';
   document.getElementById('dndSkillEditOverlay').style.display = 'none';
   document.getElementById('dndPassiveEditOverlay').style.display = 'none';
   document.getElementById('dndTokenEditOverlay').style.display = 'none';
   document.getElementById('dndHowToOverlay').style.display = 'none';
   document.getElementById('dndPatchNotesOverlay').style.display = 'none';
   dndDmEditTargetId = null;
+  dndClassSkillEditTarget = { playerId: null, skillId: null };
   dndSkillEditTargetId = null;
   dndPassiveEditTargetId = null;
   dndTokenEditTargetId = null;
@@ -2534,6 +2686,40 @@ function renderDndLog(log) {
   el.innerHTML = (log || []).map(line => `<div>${escapeHtml(line)}</div>`).join('');
   el.scrollTop = el.scrollHeight;
 }
+// แผงสรุปสกิลผู้เล่นทุกคนสำหรับ DM (สกิลประจำคลาสที่ปลดล็อกแล้ว/ยังไม่ปลดล็อก + สกิลที่ DM มอบให้เฉพาะคน)
+// อยู่ทางขวาคู่กับแชท ให้ DM เห็นภาพรวมสกิลทุกคนได้เร็ว โดยไม่ต้องเปิดหน้าต่างแก้ไขทีละคน
+// คลิกที่ชื่อผู้เล่นเพื่อเปิดหน้าต่างแก้ไขตัวละครคนนั้นไปที่ส่วนสกิลได้ทันที
+function renderDmSkillsOverview() {
+  const box = document.getElementById('dndDmSkillsOverviewList');
+  if (!box) return;
+  const players = dndPlayersList.filter(p => !p.isDM);
+  if (!players.length) { box.innerHTML = '<div class="dndRangeHint">ยังไม่มีผู้เล่น</div>'; return; }
+  box.innerHTML = players.map(p => {
+    const c = p.character || {};
+    const raceInfo = dndRaceByKey(c.raceKey);
+    const clsInfo = dndClassByKey(c.classKey);
+    const metaText = c.locked
+      ? `${(raceInfo ? raceInfo.icon + ' ' : '')}${escapeHtml(c.race || '-')} · ${(clsInfo ? clsInfo.icon + ' ' : '')}${escapeHtml(c.cls || '-')} · Lv.${c.level || 1}`
+      : 'ยังไม่ได้สร้างตัวละคร';
+    const classChips = (p.classSkills || []).map(s =>
+      `<span class="dndSkillChip${s.locked ? ' dndSkillChipLocked' : ''}" title="${escapeHtml(s.desc || '')}">🎓 ${escapeHtml(s.name)}${s.locked ? ` (ปลดล็อก Lv.${s.level})` : ''}</span>`
+    ).join('');
+    const customChips = (p.assignedSkills || []).map(s =>
+      `<span class="dndSkillChip" title="${escapeHtml(s.desc || '')}">✨ ${escapeHtml(s.name)}</span>`
+    ).join('');
+    const skillsHtml = (classChips + customChips) || '<span class="dndRangeHint">ยังไม่มีสกิล</span>';
+    return `
+      <div class="dndDmSkillsPlayerRow" data-pid="${p.id}">
+        <div class="dndDmSkillsPlayerName">${escapeHtml(c.charName || p.name)} <span class="dndRangeHint">${metaText}</span></div>
+        <div class="dndDmSkillsChips">${skillsHtml}</div>
+      </div>`;
+  }).join('');
+  box.querySelectorAll('.dndDmSkillsPlayerRow').forEach(row => {
+    row.style.cursor = 'pointer';
+    row.title = 'คลิกเพื่อแก้ไขตัวละครคนนี้';
+    row.onclick = () => openDmEdit(Number(row.dataset.pid));
+  });
+}
 
 function renderDndState(state) {
   dndYou = state.you;
@@ -2582,9 +2768,12 @@ function renderDndState(state) {
   const isDM = !!(dndYou && dndYou.isDM);
   document.getElementById('dndYouAreDm').style.display = isDM ? 'inline' : 'none';
   document.getElementById('dndRestartBtn').style.display = isDM ? 'inline' : 'none';
+  document.getElementById('dndSaveGameBtn').style.display = isDM ? 'inline' : 'none';
+  document.getElementById('dndLoadGameBtn').style.display = isDM ? 'inline' : 'none';
 
   // DM ไม่ต้องสร้างการ์ดตัวละครของตัวเอง (บทบาทคุมเกม ไม่ใช่ตัวละครในปาร์ตี้) — โชว์แผงสถานะห้องแทน
   document.getElementById('dndDmStatusBox').style.display = isDM ? 'block' : 'none';
+  document.getElementById('dndDmSkillsOverviewBox').style.display = isDM ? 'block' : 'none';
   document.getElementById('dndTurnBox').style.display = isDM ? 'block' : 'none';
   document.getElementById('dndSceneEditBox').style.display = isDM ? 'block' : 'none';
   document.getElementById('dndTimeEditBox').style.display = isDM ? 'block' : 'none';
@@ -2618,6 +2807,7 @@ function renderDndState(state) {
   }
 
   renderDndParty();
+  renderDmSkillsOverview();
   renderDndLog(state.log);
   renderDndSkillList();
   renderDndPassiveManageList();
@@ -3406,7 +3596,10 @@ function renderDndMap() {
 function refreshOpenDndModals() {
   if (dndDmEditTargetId != null) {
     const p = dndPlayersList.find(pp => pp.id === dndDmEditTargetId);
-    if (p) renderDndStatusChips('dndEditStatusList', p.character.statuses || [], 'player', dndDmEditTargetId);
+    if (p) {
+      renderDndStatusChips('dndEditStatusList', p.character.statuses || [], 'player', dndDmEditTargetId);
+      renderDmEditSkills(p);
+    }
   }
   if (dndTokenEditTargetId != null) {
     const t = dndTokens.find(tt => tt.id === dndTokenEditTargetId && tt.kind === 'npc');

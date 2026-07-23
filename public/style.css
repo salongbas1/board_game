@@ -452,11 +452,16 @@
   .dndEditableSkillChip { cursor: pointer; }
   .dndEditableSkillChip:hover { border-color: #ffd76b; }
   .dndSkillCardRules { color: #6fd3ff; font-size: 11px; margin: 0 0 8px 0; }
-  #dndSheetBox, #dndDiceBox, #dndLogBox, #dndSkillBox, #dndAttackBox {
+  #dndSheetBox, #dndDiceBox, #dndLogBox, #dndSkillBox, #dndAttackBox, #dndDmSkillsOverviewBox {
     width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px;
     padding: 12px; margin-bottom: 12px;
   }
-  #dndSheetBox h3, #dndDiceBox h3, #dndLogBox h3, #dndSkillBox h3, #dndAttackBox h3, #dndParty h3 { margin: 0 0 8px 0; color: #ffd76b; font-size: 14px; }
+  #dndSheetBox h3, #dndDiceBox h3, #dndLogBox h3, #dndSkillBox h3, #dndAttackBox h3, #dndParty h3, #dndDmSkillsOverviewBox h3 { margin: 0 0 8px 0; color: #ffd76b; font-size: 14px; }
+  .dndDmSkillsPlayerRow { padding: 8px 0; border-top: 1px solid #23283033; }
+  .dndDmSkillsPlayerRow:first-child { border-top: none; padding-top: 0; }
+  .dndDmSkillsPlayerName { font-size: 12px; font-weight: bold; color: #eee; margin-bottom: 5px; }
+  .dndDmSkillsChips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .dndSkillChipLocked { opacity: 0.45; }
   #dndToolTabs { display: flex; gap: 6px; margin-bottom: 10px; }
   .dndToolTabBtn {
     flex: 1; padding: 8px; border: 1px solid #3a4150; border-radius: 6px; background: #0d1117; color: #9aa4b2;
