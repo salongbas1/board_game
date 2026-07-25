@@ -31,6 +31,43 @@ let dndMaps = [];
 let dndCurrentMapId = 1;
 let dndTokenEditTargetId = null;
 
+// ---- ขนาดกรอบแมพที่ผู้ใช้ปรับเองได้ (บันทึกไว้ในเบราว์เซอร์เครื่องนี้ ไม่ sync กับใคร — ผู้เล่น/DM แต่ละคนตั้งขนาดของตัวเองได้อิสระ) ----
+const DND_MAP_SIZE_STORAGE_KEY = 'dndMapFrameSizePx';
+const DND_MAP_SIZE_DEFAULT = 1100;
+function dndApplyMapSizePx(px) {
+  document.documentElement.style.setProperty('--dndMapSizePx', px + 'px');
+  const valueEl = document.getElementById('dndMapSizeValue');
+  if (valueEl) valueEl.textContent = px + 'px';
+}
+function dndLoadMapSize() {
+  let px = DND_MAP_SIZE_DEFAULT;
+  try {
+    const raw = localStorage.getItem(DND_MAP_SIZE_STORAGE_KEY);
+    const parsed = raw ? parseInt(raw, 10) : NaN;
+    if (Number.isFinite(parsed) && parsed >= 500 && parsed <= 1600) px = parsed;
+  } catch (e) { /* เบราว์เซอร์อาจปิด localStorage ไว้ — ข้ามไปเงียบๆ ใช้ค่า default แทน */ }
+  const slider = document.getElementById('dndMapSizeSlider');
+  if (slider) slider.value = px;
+  dndApplyMapSizePx(px);
+}
+function dndSaveMapSize(px) {
+  try { localStorage.setItem(DND_MAP_SIZE_STORAGE_KEY, String(px)); } catch (e) { /* ข้ามไปเงียบๆ */ }
+}
+document.getElementById('dndMapSizeSlider').addEventListener('input', (ev) => {
+  const px = parseInt(ev.target.value, 10);
+  dndApplyMapSizePx(px);
+});
+document.getElementById('dndMapSizeSlider').addEventListener('change', (ev) => {
+  dndSaveMapSize(parseInt(ev.target.value, 10));
+});
+document.getElementById('dndMapSizeResetBtn').addEventListener('click', () => {
+  const slider = document.getElementById('dndMapSizeSlider');
+  if (slider) slider.value = DND_MAP_SIZE_DEFAULT;
+  dndApplyMapSizePx(DND_MAP_SIZE_DEFAULT);
+  dndSaveMapSize(DND_MAP_SIZE_DEFAULT);
+});
+dndLoadMapSize();
+
 // ---- input รูปพื้นหลังแมพ (DM อัปโหลด/ล้างพื้นหลัง) ----
 document.getElementById('dndMapBgInput').addEventListener('change', ev => {
   readDndImageFile(ev.target.files[0], image => { if (image) send({ type: 'dndMapBackgroundUpdate', image }); ev.target.value = ''; });

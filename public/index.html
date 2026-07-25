@@ -413,6 +413,12 @@
           <div id="dndMapPlayersAssignBox" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;"></div>
         </div>
         <div id="dndMapHint">ลาก token เพื่อจัดตำแหน่ง — ผู้เล่นลากได้เฉพาะ token ตัวเอง, DM ลากได้ทุก token</div>
+        <div id="dndMapSizeRow">
+          <label for="dndMapSizeSlider">🔍 ขนาดกรอบแมพ (เฉพาะเครื่องนี้):</label>
+          <input type="range" id="dndMapSizeSlider" min="500" max="1600" step="20" value="1100">
+          <span id="dndMapSizeValue">1100px</span>
+          <button type="button" id="dndMapSizeResetBtn" class="linkBtn">รีเซ็ต</button>
+        </div>
         <div id="dndMapCanvasWrap">
           <div id="dndMapCanvas"></div>
           <div id="dndFogOverlay" style="display:none;"></div>
