@@ -1,0 +1,24 @@
+<svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="unoBg" cx="50%" cy="50%" r="75%">
+      <stop offset="0%" stop-color="#241a3a"/>
+      <stop offset="100%" stop-color="#100a1e"/>
+    </radialGradient>
+  </defs>
+  <rect width="400" height="300" fill="url(#unoBg)"/>
+  <g transform="translate(200,150)">
+    <path d="M0 0 L0 -110 A110 110 0 0 1 95 -55 Z" fill="#ff5b5b"/>
+    <path d="M0 0 L95 -55 A110 110 0 0 1 95 55 Z" fill="#ffd23f"/>
+    <path d="M0 0 L95 55 A110 110 0 0 1 0 110 Z" fill="#3ec46d"/>
+    <path d="M0 0 L0 110 A110 110 0 0 1 -95 55 Z" fill="#4fa3ff"/>
+    <path d="M0 0 L-95 55 A110 110 0 0 1 -95 -55 Z" fill="#ff8a3f"/>
+    <path d="M0 0 L-95 -55 A110 110 0 0 1 0 -110 Z" fill="#c46bff"/>
+  </g>
+  <circle cx="200" cy="150" r="58" fill="#151022" stroke="#ffffff" stroke-width="4"/>
+  <g transform="translate(200,150)" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round">
+    <path d="M-30 -22 A38 38 0 1 1 -30 22"/>
+    <path d="M-38 -30 L -30 -22 L -20 -32" fill="none"/>
+    <path d="M30 22 A38 38 0 1 1 30 -22"/>
+    <path d="M38 30 L 30 22 L 20 32" fill="none"/>
+  </g>
+</svg>

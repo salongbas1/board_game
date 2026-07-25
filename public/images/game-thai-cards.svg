@@ -1,0 +1,35 @@
+<svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="thaiBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3a1409"/>
+      <stop offset="55%" stop-color="#8a3a12"/>
+      <stop offset="100%" stop-color="#d98a2e"/>
+    </linearGradient>
+    <linearGradient id="thaiCard1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff6e6"/>
+      <stop offset="100%" stop-color="#ffe0ac"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="300" fill="url(#thaiBg)"/>
+  <g stroke="#ffd76b" stroke-width="1.4" opacity="0.28" fill="none">
+    <path d="M20 40 C 60 10 100 10 140 40 C 100 70 60 70 20 40 Z"/>
+    <path d="M260 250 C 300 220 340 220 380 250 C 340 280 300 280 260 250 Z"/>
+    <path d="M300 20 C 330 40 330 60 300 70"/>
+    <path d="M60 260 C 30 240 30 220 60 210"/>
+  </g>
+  <g transform="translate(160,175) rotate(-16)">
+    <rect x="-45" y="-64" width="90" height="128" rx="10" fill="url(#thaiCard1)" stroke="#7a3a10" stroke-width="2"/>
+    <text x="-30" y="-38" font-size="22" font-family="Georgia, serif" fill="#b8321f">9</text>
+    <text x="0" y="12" text-anchor="middle" font-size="34" font-family="Georgia, serif" fill="#b8321f">♦</text>
+  </g>
+  <g transform="translate(200,168)">
+    <rect x="-45" y="-64" width="90" height="128" rx="10" fill="url(#thaiCard1)" stroke="#7a3a10" stroke-width="2"/>
+    <text x="-30" y="-38" font-size="22" font-family="Georgia, serif" fill="#1f1f1f">K</text>
+    <text x="0" y="14" text-anchor="middle" font-size="36" font-family="Georgia, serif" fill="#1f1f1f">♠</text>
+  </g>
+  <g transform="translate(240,175) rotate(16)">
+    <rect x="-45" y="-64" width="90" height="128" rx="10" fill="url(#thaiCard1)" stroke="#7a3a10" stroke-width="2"/>
+    <text x="-30" y="-38" font-size="22" font-family="Georgia, serif" fill="#b8321f">10</text>
+    <text x="0" y="12" text-anchor="middle" font-size="34" font-family="Georgia, serif" fill="#b8321f">♥</text>
+  </g>
+</svg>

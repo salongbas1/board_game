@@ -546,7 +546,7 @@ function dndHandleJoin(ws, name) {
   const isDM = dndPlayers.length === 0; // คนแรกที่เข้าห้องเป็น DM เสมอ และจะยังคงเป็น DM แม้หลุดการเชื่อมต่อ (ไม่มีใครมาแทนที่)
   const id = dndNextId++;
   dndPlayers.push({ id, ws, name: cleanName, isDM, connected: true, character: newDndCharacter(cleanName) });
-  dndAddLog(isDM ? `${cleanName} เข้าห้องในฐานะ Dungeon Master` : `${cleanName} เข้าร่วมปาร์ตี้`);
+  dndAddLog(isDM ? `${cleanName} เข้าห้องในฐานะ DM` : `${cleanName} เข้าร่วมปาร์ตี้`);
 }
 function dndVacantSeats() {
   return dndPlayers.filter(p => !p.connected).map(p => ({
@@ -794,7 +794,7 @@ function dndHandleDmUpdate(ws, targetId, updates) {
       const level = Math.max(1, Math.round(Number(c.level) || 1));
       conHpDelta = conModDelta * level;
       c.maxHp = Math.max(1, Math.min(9999, Math.round((Number(c.maxHp) || 1) + conHpDelta)));
-      dndAddLog(`❤️ ${c.charName || target.name} ตัวปรับ CON เปลี่ยน ${conModDelta > 0 ? '+' : ''}${conModDelta} → HP สูงสุด ${conHpDelta > 0 ? '+' : ''}${conHpDelta} เป็น ${c.maxHp} (อิงกลไก D&D)`);
+      dndAddLog(`❤️ ${c.charName || target.name} ตัวปรับ CON เปลี่ยน ${conModDelta > 0 ? '+' : ''}${conModDelta} → HP สูงสุด ${conHpDelta > 0 ? '+' : ''}${conHpDelta} เป็น ${c.maxHp} (อิงกลไกเกม)`);
     }
   }
   let revived = false;
@@ -2230,7 +2230,7 @@ function dndHandleDmKickPlayer(ws, targetId) {
   const idx = dndPlayers.findIndex(pp => pp.id === Number(targetId));
   if (idx === -1) return;
   const target = dndPlayers[idx];
-  if (target.isDM) { dndSendError(ws, 'ไม่สามารถลบ Dungeon Master ได้'); return; }
+  if (target.isDM) { dndSendError(ws, 'ไม่สามารถลบ DM ได้'); return; }
   const name = target.character.charName || target.name;
   if (target.ws && target.ws.readyState === WebSocket.OPEN) {
     target.ws.send(JSON.stringify({ type: 'dndKicked' }));

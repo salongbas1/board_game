@@ -14,40 +14,40 @@
   <h2 style="color:#ffd76b; margin-top:0;">เลือกเกม</h2>
   <div id="gameMenuList">
     <div class="gameCard" id="gameCardHearts">
-      <div class="gameCardIcon">♥</div>
-      <div class="gameCardInfo">
+      <div class="gameCardImgWrap"><img class="gameCardImg" src="images/game-hearts.svg" alt=""></div>
+      <div class="gameCardBody">
         <div class="gameCardName">Hearts</div>
         <div class="gameCardDesc">เกมไพ่คลาสสิก เล่นได้ 4 หรือ 8 คนผ่าน LAN</div>
       </div>
       <div class="gameCardBtn">เล่นเลย</div>
     </div>
     <div class="gameCard" id="gameCardDnd">
-      <div class="gameCardIcon">🐉</div>
-      <div class="gameCardInfo">
-        <div class="gameCardName">Dungeons &amp; Dragons</div>
+      <div class="gameCardImgWrap"><img class="gameCardImg" src="images/game-fantasy.jpg" alt=""></div>
+      <div class="gameCardBody">
+        <div class="gameCardName">ตำนานผู้กล้า</div>
         <div class="gameCardDesc">เครื่องมือช่วยเล่น: ทอยลูกเต๋า, การ์ดตัวละคร, DM คุม HP ปาร์ตี้</div>
       </div>
       <div class="gameCardBtn">เล่นเลย</div>
     </div>
     <div class="gameCard locked">
-      <div class="gameCardIcon">🃏</div>
-      <div class="gameCardInfo">
+      <div class="gameCardImgWrap"><img class="gameCardImg" src="images/game-thai-cards.svg" alt=""></div>
+      <div class="gameCardBody">
         <div class="gameCardName">ไพ่แคง</div>
         <div class="gameCardDesc">เกมไพ่ยอดนิยม</div>
       </div>
       <div class="gameCardBadge">เร็วๆ นี้</div>
     </div>
     <div class="gameCard locked">
-      <div class="gameCardIcon">🎴</div>
-      <div class="gameCardInfo">
+      <div class="gameCardImgWrap"><img class="gameCardImg" src="images/game-uno.svg" alt=""></div>
+      <div class="gameCardBody">
         <div class="gameCardName">Uno</div>
         <div class="gameCardDesc">เกมไพ่สนุกสำหรับทุกวัย</div>
       </div>
       <div class="gameCardBadge">เร็วๆ นี้</div>
     </div>
     <div class="gameCard locked">
-      <div class="gameCardIcon">♠</div>
-      <div class="gameCardInfo">
+      <div class="gameCardImgWrap"><img class="gameCardImg" src="images/game-poker.svg" alt=""></div>
+      <div class="gameCardBody">
         <div class="gameCardName">โปเกอร์</div>
         <div class="gameCardDesc">Texas Hold'em ผ่าน LAN</div>
       </div>
@@ -67,7 +67,7 @@
 <div id="dndJoinScreen">
   <div>ตั้งชื่อผู้เล่นก่อนเข้าห้อง D&amp;D</div>
   <input id="dndNameInput" maxlength="16" placeholder="ชื่อผู้เล่น">
-  <div id="dndJoinHint" style="font-size:12px; color:#9aa4b2; margin-top:6px;">คนแรกที่เข้าห้องจะเป็น Dungeon Master (DM) โดยอัตโนมัติ ปรับ HP ผู้เล่นคนอื่นได้</div>
+  <div id="dndJoinHint" style="font-size:12px; color:#9aa4b2; margin-top:6px;">คนแรกที่เข้าห้องจะเป็น DM โดยอัตโนมัติ ปรับ HP ผู้เล่นคนอื่นได้</div>
   <div><button id="dndJoinBtn">เข้าห้อง (ตัวละครใหม่)</button></div>
   <div id="dndSeatListBox" style="display:none; margin-top:14px; text-align:left;">
     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -703,7 +703,7 @@
     <div class="dndStatGrid">
       <div class="dndField"><label class="dndStatTip" data-tip="💪 พละกำลัง (STR) — เพิ่มพลังโจมตีและดาเมจระยะประชิด ค่าเฉลี่ยคนทั่วไป ~10">STR <span id="dndEditStrMod" class="dndStatModBadge"></span></label><input id="dndEditStr" type="number" min="1" max="30"></div>
       <div class="dndField"><label class="dndStatTip" data-tip="🏃 ความคล่องตัว (DEX) — เพิ่มความแม่นยำและการหลบหลีก ค่าเฉลี่ยคนทั่วไป ~10">DEX <span id="dndEditDexMod" class="dndStatModBadge"></span></label><input id="dndEditDex" type="number" min="1" max="30"></div>
-      <div class="dndField"><label class="dndStatTip" data-tip="❤️ ความแข็งแกร่ง/ความอึด (CON) — ผูกกับ HP สูงสุดโดยตรง แก้ค่านี้แล้ว HP จะคำนวณใหม่อัตโนมัติตามกลไก D&D">CON <span id="dndEditConMod" class="dndStatModBadge"></span></label><input id="dndEditCon" type="number" min="1" max="30"><small id="dndEditConHpHint" class="dndRangeHint"></small></div>
+      <div class="dndField"><label class="dndStatTip" data-tip="❤️ ความแข็งแกร่ง/ความอึด (CON) — ผูกกับ HP สูงสุดโดยตรง แก้ค่านี้แล้ว HP จะคำนวณใหม่อัตโนมัติตามกลไกเกม">CON <span id="dndEditConMod" class="dndStatModBadge"></span></label><input id="dndEditCon" type="number" min="1" max="30"><small id="dndEditConHpHint" class="dndRangeHint"></small></div>
       <div class="dndField"><label class="dndStatTip" data-tip="🧠 สติปัญญา (INT) — ช่วยด้านเวทมนตร์และความรู้ ค่าเฉลี่ยคนทั่วไป ~10">INT <span id="dndEditIntMod" class="dndStatModBadge"></span></label><input id="dndEditInt" type="number" min="1" max="30"></div>
       <div class="dndField"><label class="dndStatTip" data-tip="👁️ ปัญญา/การรับรู้ (WIS) — ช่วยด้านการรับรู้และสัญชาตญาณ ค่าเฉลี่ยคนทั่วไป ~10">WIS <span id="dndEditWisMod" class="dndStatModBadge"></span></label><input id="dndEditWis" type="number" min="1" max="30"></div>
       <div class="dndField"><label class="dndStatTip" data-tip="🗣️ เสน่ห์ (CHA) — ช่วยด้านการพูดคุยและโน้มน้าว ค่าเฉลี่ยคนทั่วไป ~10">CHA <span id="dndEditChaMod" class="dndStatModBadge"></span></label><input id="dndEditCha" type="number" min="1" max="30"></div>
@@ -1062,7 +1062,7 @@ Goblin Fang x2"></textarea></div></div>
       <li>AC และ HP สูงสุด กรอกเองได้ในช่วงที่ระบบคำนวณให้อัตโนมัติ (จาก DEX/CON และคลาสที่เลือก)</li>
       <li>เมื่อกดบันทึก การ์ดจะ <b>ล็อกถาวร</b> แก้ไขเองไม่ได้อีก ต้องให้ DM เป็นผู้ปรับให้เท่านั้น</li>
     </ul>
-    <p><b>🛡️ บทบาท DM (Dungeon Master)</b><br>
+    <p><b>🛡️ บทบาท DM</b><br>
     คนแรกที่เข้าห้องจะเป็น DM โดยอัตโนมัติ DM สามารถแก้ไขข้อมูลของผู้เล่น <b>ทุกคน ทุกช่อง ได้ตลอดเวลา</b> ไม่มีการล็อก — ใช้ตอนเลเวลอัพ โดนตี ใช้ไอเทม เปลี่ยนอาวุธ หรือแก้ไขความผิดพลาด กดปุ่ม "แก้ไข" ที่การ์ดของผู้เล่นแต่ละคนในรายชื่อปาร์ตี้เพื่อเปิดหน้าต่างแก้ไข</p>
     <p><b>🎒 อุปกรณ์สวมใส่</b><br>
     ทุกคนมีช่องสวมใส่ 4 ช่อง: <b>อาวุธ / เกราะ / รองเท้า / เครื่องประดับ</b> แต่ละชิ้นตั้งชื่อ ใส่ค่าป้องกัน และความคงทน (ปัจจุบัน/สูงสุด) ได้เอง แก้ไขได้ตลอดเวลาไม่ต้องรอ DM ปลดล็อก — กดปุ่ม "บันทึกอุปกรณ์" ใต้การ์ดตัวละครของตัวเอง ค่าป้องกันรวมของแต่ละคนจะโชว์บนการ์ดในปาร์ตี้ให้ทุกคนเห็น</p>

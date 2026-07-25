@@ -18,17 +18,28 @@ const dnd = require('./dnd');
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.json': 'application/json; charset=utf-8',
+};
+
 const server = http.createServer((req, res) => {
   let urlPath = req.url === '/' ? '/index.html' : req.url;
   const filePath = path.join(PUBLIC_DIR, urlPath);
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
-    const ext = path.extname(filePath);
-    const type = ext === '.html' ? 'text/html; charset=utf-8'
-      : ext === '.js' ? 'text/javascript'
-      : ext === '.css' ? 'text/css'
-      : 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': type });
+    const ext = path.extname(filePath).toLowerCase();
+    const type = MIME_TYPES[ext] || 'application/octet-stream';
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
     res.end(data);
   });
 });
