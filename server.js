@@ -1,23 +1,626 @@
-// ============================================================
-// D&D Party Room — เครื่องมือคุมเกม D&D สำหรับ DM และปาร์ตี้
-// แยกออกมาจาก server.js เดิม (เป็นระบบอิสระ ไม่เกี่ยวกับ Hearts)
-// ============================================================
+// Hearts x8 - LAN multiplayer server
+// รันด้วย: npm install && npm start
+// แล้วเปิด http://<lan-ip>:8080 จากเครื่องอื่นในวงแลนเดียวกัน
 
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const WebSocket = require('ws');
 
-const { DND_RACES, DND_CLASSES, DND_CLASS_STARTER_GEAR, DND_HAIR_STYLES, DND_HAIR_COLORS, DND_FACE_STYLES, DND_LEVEL_EXP, DND_STARTING_GOLD_MAX, DND_STARTING_SP } = require('./data/characters');
-const { POINT_BUY_MIN, POINT_BUY_BUDGET, STAT_POINTS_PER_LEVEL, POINT_BUY_COST, POINT_BUY_COST_MAX_DEFINED, POINT_BUY_COST_PER_STEP_ABOVE_MAX, pointBuyCostOf, pointBuyStepCost, pointBuyCostForRaw } = require('./data/point-buy');
-const { DND_RACE_PASSIVES, DND_PASSIVE_EFFECT_KEYS, DND_CLASS_SKILLS, DND_CLASS_SKILL_ID_BASE } = require('./data/skills');
-const { DND_EQUIP_SLOTS, DND_EQUIP_SLOT_LABELS, DND_EQUIP_ICON_MAX_LEN, DND_SHOP_TYPES, DND_FORGE_FAIL_POLICIES, DND_FORGE_FAIL_POLICY_LABELS, DND_ITEM_EFFECT_TYPES, DND_BAG_CAPACITY } = require('./data/equipment');
-const { DND_TOKEN_COLORS, DND_MAX_TOKEN_IMAGE_CHARS, DND_TOKEN_SIZES, DND_MAX_MAP_BG_CHARS } = require('./data/tokens-map');
-const { DEFAULT_MAPS, cloneDefaultMaps } = require('./data/maps');
+const PORT = process.env.PORT || 3300;
 
-// ---- วิสัยทัศน์ผู้เล่น (Fog of War): DM เปิด/ปิดระบบได้ทั้งห้อง + กำหนดชนิด/รัศมีให้ผู้เล่นแต่ละคนแยกกันได้ ----
-// 2 ชนิด ตามธีม D&D — 'normal' มองเห็นระยะปกติ, 'dark' (Darkvision) มองเห็นในที่มืดได้ไกลกว่า
-// หน่วยรัศมีเป็น % ของแผนที่เหมือนกับ AOE (0-100 = กว้าง/ยาวเต็มแผนที่) เพื่อให้เทียบมาตราส่วนเดียวกันได้
-const DND_VISION_TYPES = ['normal', 'dark'];
-const DND_VISION_TYPE_LABELS = { normal: 'ปกติ', dark: 'มองในที่มืด (Darkvision)' };
-const DND_VISION_DEFAULT_RADIUS = { normal: 24, dark: 42 };
+// ---------------- Mode config (เลือกได้ในห้องรอ) ----------------
+const MODES = {
+  4: { numPlayers: 4, decks: 1, scoreLimit: 100 },
+  8: { numPlayers: 8, decks: 2, scoreLimit: 150 },
+};
+let gameMode = 8;        // 4 หรือ 8 — เลือกโดยโฮสต์ในห้องรอ
+let botLevel = 'normal'; // 'easy' | 'normal' | 'hard' — เลือกโดยโฮสต์ในห้องรอ
+
+let NUM_PLAYERS = MODES[gameMode].numPlayers;
+let DECK_COUNT = MODES[gameMode].decks;
+let SCORE_LIMIT = MODES[gameMode].scoreLimit;
+
+const BOT_NAMES = ['บอท1', 'บอท2', 'บอท3', 'บอท4', 'บอท5', 'บอท6', 'บอท7'];
+
+// ---------------- Card helpers (ported from original single-player logic) ----------------
+const SUITS = ['♣', '♦', '♠', '♥'];
+const RANKS = [
+  { r: '2', v: 2 }, { r: '3', v: 3 }, { r: '4', v: 4 }, { r: '5', v: 5 }, { r: '6', v: 6 }, { r: '7', v: 7 },
+  { r: '8', v: 8 }, { r: '9', v: 9 }, { r: '10', v: 10 }, { r: 'J', v: 11 }, { r: 'Q', v: 12 }, { r: 'K', v: 13 }, { r: 'A', v: 14 },
+];
+
+function pointValue(card) {
+  // ใช้สำหรับกติกา "ห้ามทิ้งไพ่แต้มในกองแรกถ้ายังมีดอกอื่นให้เดิน" — ไม่รวม J♦ เพราะ J♦ เป็นไพ่ที่อยากได้ (ลบแต้ม)
+  if (card.suit === '♥') return 1;
+  if (card.suit === '♠' && card.rank === 'Q') return 13;
+  return 0;
+}
+function moonPointValue(card) {
+  // ใช้เช็คการกินหมดกระดาน (Shoot the Moon) — เฉพาะโพแดงกับ Q♠ เท่านั้น รวมได้ 52 แต้มเสมอ
+  if (card.suit === '♥') return 1;
+  if (card.suit === '♠' && card.rank === 'Q') return 13;
+  return 0;
+}
+function jackBonusValue(card) {
+  // J♦ = -10 แต้ม (มี 2 ใบเพราะ 2 สำรับ) ไม่เกี่ยวกับการกินหมดกระดาน คิดแยกต่างหากเสมอ
+  return (card.suit === '♦' && card.rank === 'J') ? -10 : 0;
+}
+function createDeck(numDecks) {
+  const deck = [];
+  for (let d = 0; d < numDecks; d++) {
+    for (const suit of SUITS) {
+      for (const rk of RANKS) {
+        deck.push({ suit, rank: rk.r, value: rk.v, deckId: d, uid: suit + rk.r + '_' + d });
+      }
+    }
+  }
+  return deck;
+}
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+function sortHand(hand) {
+  const order = { '♣': 0, '♦': 1, '♠': 2, '♥': 3 };
+  return hand.slice().sort((a, b) => order[a.suit] - order[b.suit] || a.value - b.value);
+}
+function cardPublic(c) { return { suit: c.suit, rank: c.rank, value: c.value, uid: c.uid }; }
+function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+// ---------------- Server-side game state ----------------
+let lobbySeats = [];  // [{ws, seat, name}] before game starts
+let players = [];     // [{seat,name,isBot,ws,hand,collected,score}] once started
+let started = false;
+let phase = 'lobby';  // lobby | passing | playing | handSummary | gameOver
+let handNumber = 0;
+let heartsBroken = false;
+let currentTrick = [];
+let leaderSeat = 0;
+let firstTrick = true;
+let tricksPlayed = 0;
+let gameOver = false;
+let lastHandSummary = null;
+let finalScoresCache = null;
+let passingState = null;      // { direction, chosen: {seat: [cards]} }
+let pendingResolvers = {};    // seat -> resolve(card)
+let alarmActive = false;      // สัญญาณเตือน (blackout) เปิด/ปิดอยู่ตอนนี้หรือไม่
+let watchers = [];            // [{ws, name}] คนที่เชื่อมต่ออยู่ระหว่างเกมแต่ยังไม่มีที่นั่ง (ออกจากโต๊ะแล้ว หรือเพิ่งเข้ามาดู)
+
+function broadcastAlarm() {
+  const payload = JSON.stringify({ type: 'alarm', active: alarmActive });
+  const targets = started ? players.filter(p => !p.isBot) : lobbySeats;
+  for (const t of targets) {
+    if (t.ws && t.ws.readyState === WebSocket.OPEN) t.ws.send(payload);
+  }
+}
+
+function addLog(msg) {
+  for (const p of players) {
+    if (!p.isBot && p.ws && p.ws.readyState === WebSocket.OPEN) {
+      p.ws.send(JSON.stringify({ type: 'log', msg }));
+    }
+  }
+}
+
+function seatPickerPayload() {
+  return JSON.stringify({
+    type: 'seatPicker',
+    seats: players.map(p => ({ seat: p.seat, name: p.name, isBot: p.isBot })),
+  });
+}
+function broadcastSeatPicker() {
+  const payload = seatPickerPayload();
+  for (const w of watchers) {
+    if (w.ws.readyState === WebSocket.OPEN) w.ws.send(payload);
+  }
+}
+
+// ---------------- Lobby ----------------
+function assignSeatsCompact() {
+  lobbySeats.forEach((c, i) => { c.seat = i; });
+}
+function broadcastLobby() {
+  for (const c of lobbySeats) {
+    if (c.ws.readyState !== WebSocket.OPEN) continue;
+    c.ws.send(JSON.stringify({
+      type: 'lobby',
+      seats: lobbySeats.map(s => ({ seat: s.seat, name: s.name })),
+      yourSeat: c.seat,
+      maxSeats: MODES[gameMode].numPlayers,
+      gameMode,
+      botLevel,
+    }));
+  }
+}
+
+function beginGame() {
+  started = true;
+  gameOver = false;
+  handNumber = 0;
+  NUM_PLAYERS = MODES[gameMode].numPlayers;
+  DECK_COUNT = MODES[gameMode].decks;
+  SCORE_LIMIT = MODES[gameMode].scoreLimit;
+  const humanCount = lobbySeats.length;
+  players = [];
+  for (let i = 0; i < NUM_PLAYERS; i++) {
+    if (i < humanCount) {
+      const c = lobbySeats[i];
+      players.push({ seat: i, name: c.name, isBot: false, ws: c.ws, hand: [], collected: [], score: 0 });
+    } else {
+      players.push({ seat: i, name: BOT_NAMES[i - humanCount] || ('บอท' + (i - humanCount + 1)), isBot: true, ws: null, hand: [], collected: [], score: 0 });
+    }
+  }
+  lobbySeats = [];
+  runGame();
+}
+
+// ---------------- Game rules (ported) ----------------
+function getPassDirection(hIdx) {
+  const cycle = ['left', 'right', 'across', 'none'];
+  return cycle[hIdx % 4];
+}
+function passTargetSeat(seat, direction) {
+  if (direction === 'left') return (seat + 1) % NUM_PLAYERS;
+  if (direction === 'right') return (seat - 1 + NUM_PLAYERS) % NUM_PLAYERS;
+  if (direction === 'across') return (seat + Math.floor(NUM_PLAYERS / 2)) % NUM_PLAYERS;
+  return seat;
+}
+function botChoosePassCards(seat) {
+  if (botLevel === 'easy') return botChoosePassEasy(seat);
+  if (botLevel === 'hard') return botChoosePassHard(seat);
+  return botChoosePassNormal(seat);
+}
+function botChoosePassEasy(seat) {
+  // สุ่มทิ้งไพ่ 3 ใบแบบไม่มีกลยุทธ์
+  const hand = players[seat].hand;
+  return shuffle(hand.slice()).slice(0, 3);
+}
+function botChoosePassNormal(seat) {
+  const hand = players[seat].hand;
+  const danger = c => (c.suit === '♠' && c.rank === 'Q' ? 100 : 0) + (c.suit === '♥' ? c.value : 0) + (c.suit === '♠' && c.value >= 13 ? 40 : 0);
+  return hand.slice().sort((a, b) => danger(b) - danger(a)).slice(0, 3);
+}
+function botChoosePassHard(seat) {
+  const hand = players[seat].hand;
+  const suitCount = {};
+  hand.forEach(c => { suitCount[c.suit] = (suitCount[c.suit] || 0) + 1; });
+  const danger = c => {
+    if (c.suit === '♦' && c.rank === 'J') return -100; // J♦ อยากเก็บไว้เอง (-10 แต้ม)
+    let d = 0;
+    if (c.suit === '♠' && c.rank === 'Q') d += 100;
+    if (c.suit === '♠' && c.value >= 13 && suitCount['♠'] <= 3) d += 55; // A/K โพดำ อันตรายถ้าโพดำสั้น
+    if (c.suit === '♥') d += c.value + 5;
+    // โบนัสเล็กน้อยให้ทิ้งจากดอกที่สั้นที่สุด เพื่อสร้างดอกว่างเร็วขึ้น
+    if (suitCount[c.suit] <= 2) d += (3 - suitCount[c.suit]) * 3;
+    return d;
+  };
+  return hand.slice().sort((a, b) => danger(b) - danger(a)).slice(0, 3);
+}
+function determineFirstLeader() {
+  for (const p of players) {
+    if (p.hand.some(c => c.suit === '♣' && c.rank === '2')) return p.seat;
+  }
+  return 0;
+}
+function seatsOrderForTrick() {
+  const order = [];
+  for (let i = 0; i < NUM_PLAYERS; i++) order.push((leaderSeat + i) % NUM_PLAYERS);
+  return order;
+}
+function isValidPlay(seat, card) {
+  const p = players[seat];
+  if (currentTrick.length === 0) {
+    if (firstTrick) return card.suit === '♣' && card.rank === '2';
+    if (card.suit === '♥' && !heartsBroken) {
+      const hasNonHeart = p.hand.some(c => c.suit !== '♥');
+      return !hasNonHeart;
+    }
+    return true;
+  } else {
+    const ledSuit = currentTrick[0].card.suit;
+    const hasLedSuit = p.hand.some(c => c.suit === ledSuit);
+    if (hasLedSuit) return card.suit === ledSuit;
+    if (firstTrick) {
+      const isPoint = pointValue(card) > 0;
+      if (isPoint) {
+        const hasNonPoint = p.hand.some(c => pointValue(c) === 0);
+        return !hasNonPoint;
+      }
+    }
+    return true;
+  }
+}
+function botChooseCard(seat) {
+  if (botLevel === 'easy') return botChooseCardEasy(seat);
+  if (botLevel === 'hard') return botChooseCardHard(seat);
+  return botChooseCardNormal(seat);
+}
+function botChooseCardEasy(seat) {
+  // เลือกไพ่ที่เล่นได้แบบสุ่ม ไม่มีกลยุทธ์
+  const hand = players[seat].hand;
+  const legal = hand.filter(c => isValidPlay(seat, c));
+  const pool = legal.length > 0 ? legal : hand;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+function botChooseCardNormal(seat) {
+  const hand = players[seat].hand;
+  const legal = hand.filter(c => isValidPlay(seat, c));
+  if (currentTrick.length === 0) {
+    const nonHeart = legal.filter(c => c.suit !== '♥');
+    const pool = nonHeart.length > 0 ? nonHeart : legal;
+    const bySuitCount = {};
+    pool.forEach(c => { bySuitCount[c.suit] = (bySuitCount[c.suit] || 0) + hand.filter(h => h.suit === c.suit).length; });
+    pool.sort((a, b) => (bySuitCount[a.suit] - bySuitCount[b.suit]) || (a.value - b.value));
+    return pool[0];
+  } else {
+    const ledSuit = currentTrick[0].card.suit;
+    const sameSuit = legal.filter(c => c.suit === ledSuit);
+    if (sameSuit.length > 0) {
+      const currentBest = Math.max(...currentTrick.filter(e => e.card.suit === ledSuit).map(e => e.card.value));
+      const cannotWin = sameSuit.filter(c => c.value <= currentBest);
+      if (cannotWin.length > 0) {
+        cannotWin.sort((a, b) => b.value - a.value);
+        return cannotWin[0];
+      }
+      const canWin = sameSuit.slice().sort((a, b) => a.value - b.value);
+      return canWin[0];
+    } else {
+      const qs = legal.find(c => c.suit === '♠' && c.rank === 'Q');
+      if (qs) return qs;
+      const hearts = legal.filter(c => c.suit === '♥').sort((a, b) => b.value - a.value);
+      if (hearts.length > 0) return hearts[0];
+      const spadesHigh = legal.filter(c => c.suit === '♠').sort((a, b) => b.value - a.value);
+      if (spadesHigh.length > 0 && spadesHigh[0].value >= 12) return spadesHigh[0];
+      const rest = legal.slice().sort((a, b) => b.value - a.value);
+      return rest[0];
+    }
+  }
+}
+function botChooseCardHard(seat) {
+  const hand = players[seat].hand;
+  const legal = hand.filter(c => isValidPlay(seat, c));
+  const jd = c => c.suit === '♦' && c.rank === 'J';
+  const qs = c => c.suit === '♠' && c.rank === 'Q';
+
+  if (currentTrick.length === 0) {
+    // เป็นผู้นำ: หลีกเลี่ยงการนำโพดำถ้ายังถือ Q♠ อยู่ (เว้นแต่จำเป็น), เลือกดอกที่สั้นที่สุดก่อนเพื่อสร้างดอกว่างเร็ว
+    const holdsQS = hand.some(qs);
+    const nonHeart = legal.filter(c => c.suit !== '♥');
+    let pool = nonHeart.length > 0 ? nonHeart : legal;
+    const spadeSafe = pool.filter(c => !(c.suit === '♠' && holdsQS));
+    if (spadeSafe.length > 0) pool = spadeSafe;
+    const bySuitCount = {};
+    pool.forEach(c => { bySuitCount[c.suit] = (bySuitCount[c.suit] || 0) + hand.filter(h => h.suit === c.suit).length; });
+    pool = pool.slice().sort((a, b) => (bySuitCount[a.suit] - bySuitCount[b.suit]) || (a.value - b.value));
+    return pool[0];
+  } else {
+    const ledSuit = currentTrick[0].card.suit;
+    const sameSuit = legal.filter(c => c.suit === ledSuit);
+    if (sameSuit.length > 0) {
+      const currentBest = Math.max(...currentTrick.filter(e => e.card.suit === ledSuit).map(e => e.card.value));
+      const cannotWin = sameSuit.filter(c => c.value <= currentBest);
+      if (cannotWin.length > 0) {
+        // ดันไพ่ใบสูงสุดที่ยังแพ้อยู่ออกไปก่อน แต่เก็บ J♦ ไว้ถ้าไม่จำเป็นต้องทิ้ง
+        cannotWin.sort((a, b) => b.value - a.value);
+        const notJd = cannotWin.filter(c => !jd(c));
+        return notJd.length > 0 ? notJd[0] : cannotWin[0];
+      }
+      const canWin = sameSuit.slice().sort((a, b) => a.value - b.value);
+      return canWin[0];
+    } else {
+      // ไม่มีดอกตาม: ทิ้ง Q♠ ก่อนถ้ามี จากนั้นโพแดงใบสูงสุด แต่เก็บ J♦ ไว้เอง (คุ้ม -10 แต้ม)
+      const q = legal.find(qs);
+      if (q) return q;
+      const hearts = legal.filter(c => c.suit === '♥').sort((a, b) => b.value - a.value);
+      if (hearts.length > 0) return hearts[0];
+      const spadesHigh = legal.filter(c => c.suit === '♠').sort((a, b) => b.value - a.value);
+      if (spadesHigh.length > 0 && spadesHigh[0].value >= 12) return spadesHigh[0];
+      const rest = legal.filter(c => !jd(c)).sort((a, b) => b.value - a.value);
+      if (rest.length > 0) return rest[0];
+      return legal.slice().sort((a, b) => b.value - a.value)[0];
+    }
+  }
+}
+function resolveTrick() {
+  const ledSuit = currentTrick[0].card.suit;
+  const contenders = currentTrick.filter(e => e.card.suit === ledSuit);
+  const maxVal = Math.max(...contenders.map(e => e.card.value));
+  const winnerEntry = contenders.find(e => e.card.value === maxVal);
+  const winnerSeat = winnerEntry.seat;
+  if (currentTrick.some(e => e.card.suit === '♥')) heartsBroken = true;
+  const wonCards = currentTrick.map(e => e.card);
+  players[winnerSeat].collected.push(...wonCards);
+  addLog(`${players[winnerSeat].name} ชนะกองนี้ (${wonCards.map(c => c.rank + c.suit).join(' ')})`);
+  leaderSeat = winnerSeat;
+  currentTrick = [];
+}
+function scoreHand() {
+  const moonPoints = players.map(p => p.collected.reduce((s, c) => s + moonPointValue(c), 0));
+  const jackPoints = players.map(p => p.collected.reduce((s, c) => s + jackBonusValue(c), 0));
+  const totalPool = 26 * DECK_COUNT; // โพแดง 13pt + Q♠ 13pt ต่อสำรับ
+  const moonSeat = moonPoints.findIndex(v => v === totalPool);
+  let summary = [];
+  if (moonSeat >= 0) {
+    players.forEach((p, i) => {
+      const moonAdd = (i === moonSeat) ? 0 : totalPool;
+      const add = moonAdd + jackPoints[i];
+      p.score += add;
+      summary.push({ name: p.name, add });
+    });
+    addLog(`🌙 ${players[moonSeat].name} กินหมดกระดาน (Shoot the Moon)! ตัวเองได้ 0 คนอื่นโดนคนละ ${totalPool} แต้ม (ยังบวก/ลบ J♦ ตามจริงแยกต่างหาก)`);
+  } else {
+    players.forEach((p, i) => {
+      const add = moonPoints[i] + jackPoints[i];
+      p.score += add;
+      summary.push({ name: p.name, add });
+    });
+  }
+  return summary;
+}
+function livePoints(p) {
+  return p.collected.reduce((s, c) => s + moonPointValue(c) + jackBonusValue(c), 0);
+}
+function checkGameOver() { return players.some(p => p.score >= SCORE_LIMIT); }
+
+// ---------------- Passing phase ----------------
+function runPassingPhase(direction) {
+  return new Promise(resolve => {
+    passingState = { direction, chosen: {}, _resolve: resolve };
+    players.forEach(p => {
+      if (p.isBot) passingState.chosen[p.seat] = botChoosePassCards(p.seat);
+    });
+    broadcastState();
+    checkPassingComplete();
+  });
+}
+function checkPassingComplete() {
+  if (!passingState) return;
+  const allDone = players.every(p => passingState.chosen[p.seat]);
+  if (!allDone) return;
+  const outgoing = passingState.chosen;
+  const direction = passingState.direction;
+  for (const p of players) {
+    p.hand = p.hand.filter(c => !outgoing[p.seat].includes(c));
+  }
+  for (const p of players) {
+    const target = passTargetSeat(p.seat, direction);
+    players[target].hand.push(...outgoing[p.seat]);
+  }
+  addLog(`ส่งไพ่เสร็จแล้ว (ทิศทาง: ${direction})`);
+  const resolve = passingState._resolve;
+  passingState = null;
+  resolve();
+}
+
+// ---------------- Human input plumbing ----------------
+function askPlayerToPlay(seat) {
+  return new Promise(resolve => { pendingResolvers[seat] = resolve; });
+}
+function handlePlayCard(seat, uid) {
+  if (!pendingResolvers[seat]) return;
+  const p = players[seat];
+  const card = p.hand.find(c => c.uid === uid);
+  if (!card || !isValidPlay(seat, card)) return;
+  const resolve = pendingResolvers[seat];
+  delete pendingResolvers[seat];
+  resolve(card);
+}
+function handleSubmitPass(seat, uids) {
+  if (!passingState || passingState.chosen[seat]) return;
+  const p = players[seat];
+  if (!Array.isArray(uids) || uids.length !== 3) return;
+  const cards = uids.map(u => p.hand.find(c => c.uid === u)).filter(Boolean);
+  if (cards.length !== 3) return;
+  passingState.chosen[seat] = cards;
+  broadcastState();
+  checkPassingComplete();
+}
+
+// ---------------- Main game loop ----------------
+async function runGame() {
+  while (!gameOver) {
+    const deck = shuffle(createDeck(DECK_COUNT));
+    players.forEach(p => { p.hand = []; p.collected = []; });
+    for (let i = 0; i < deck.length; i++) players[i % NUM_PLAYERS].hand.push(deck[i]);
+    heartsBroken = false;
+    tricksPlayed = 0;
+    phase = 'playing';
+    broadcastState();
+
+    const direction = getPassDirection(handNumber);
+    addLog(`--- เริ่มมือที่ ${handNumber + 1} (ทิศทางส่งไพ่: ${direction}) ---`);
+    if (direction !== 'none') {
+      phase = 'passing';
+      broadcastState();
+      await runPassingPhase(direction);
+    }
+
+    leaderSeat = determineFirstLeader();
+    firstTrick = true;
+    phase = 'playing';
+
+    for (tricksPlayed = 0; tricksPlayed < 13; tricksPlayed++) {
+      currentTrick = [];
+      const order = seatsOrderForTrick();
+      for (const seat of order) {
+        let card;
+        if (players[seat].isBot) {
+          broadcastState(seat);
+          await sleep(450);
+          card = botChooseCard(seat);
+        } else {
+          const playPromise = askPlayerToPlay(seat); // registers pendingResolvers[seat] synchronously
+          broadcastState(seat); // now yourTurn will correctly be true for this seat
+          card = await playPromise;
+        }
+        players[seat].hand = players[seat].hand.filter(c => c.uid !== card.uid);
+        currentTrick.push({ seat, card });
+        broadcastState();
+        await sleep(280);
+      }
+      resolveTrick();
+      broadcastState();
+      await sleep(900);
+      firstTrick = false;
+    }
+
+    const summary = scoreHand();
+    phase = 'handSummary';
+    lastHandSummary = summary;
+    broadcastState();
+    await sleep(4500);
+
+    if (checkGameOver()) {
+      gameOver = true;
+      phase = 'gameOver';
+      finalScoresCache = players.map(p => ({ name: p.name, score: p.score })).sort((a, b) => a.score - b.score);
+      broadcastState();
+    } else {
+      handNumber++;
+    }
+  }
+}
+
+// ---------------- State broadcast ----------------
+function publicPlayersInfo() {
+  return players.map(p => ({
+    seat: p.seat, name: p.name, isBot: p.isBot,
+    score: p.score, handCount: p.hand.length, points: livePoints(p),
+  }));
+}
+function broadcastState(activeSeat) {
+  for (const p of players) {
+    if (p.isBot || !p.ws || p.ws.readyState !== WebSocket.OPEN) continue;
+    const yourTurn = pendingResolvers[p.seat] !== undefined;
+    const payload = {
+      type: 'state',
+      phase,
+      numPlayers: NUM_PLAYERS,
+      deckCount: DECK_COUNT,
+      scoreLimit: SCORE_LIMIT,
+      botLevel,
+      players: publicPlayersInfo(),
+      yourSeat: p.seat,
+      yourHand: sortHand(p.hand).map(cardPublic),
+      currentTrick: currentTrick.map(e => ({ seat: e.seat, card: cardPublic(e.card) })),
+      leaderSeat, heartsBroken, tricksPlayed, handNumber,
+      activeSeat: activeSeat != null ? activeSeat : null,
+      yourTurn,
+      validUids: yourTurn ? p.hand.filter(c => isValidPlay(p.seat, c)).map(c => c.uid) : [],
+      passing: phase === 'passing' ? {
+        direction: passingState ? passingState.direction : null,
+        submitted: passingState ? !!passingState.chosen[p.seat] : false,
+      } : null,
+      handSummary: phase === 'handSummary' ? lastHandSummary : null,
+      finalScores: phase === 'gameOver' ? finalScoresCache : null,
+    };
+    p.ws.send(JSON.stringify(payload));
+  }
+}
+
+function handleLeaveSeat(ws) {
+  const p = players.find(pp => pp.ws === ws);
+  if (!p || p.isBot) return;
+  const name = p.name;
+  p.isBot = true;
+  p.ws = null;
+  addLog(`${name} ออกจากโต๊ะ ระบบจะเล่นแทนอัตโนมัติ (บอท)`);
+  if (pendingResolvers[p.seat]) {
+    const resolve = pendingResolvers[p.seat];
+    delete pendingResolvers[p.seat];
+    resolve(botChooseCard(p.seat));
+  }
+  if (passingState && !passingState.chosen[p.seat]) {
+    passingState.chosen[p.seat] = botChoosePassCards(p.seat);
+    checkPassingComplete();
+  }
+  broadcastState();
+  // ให้ ws เดิมกลายเป็นผู้ชม ที่สามารถเลือกนั่งที่นั่งไหนก็ได้ต่อ (รวมถึงที่นั่งเดิม)
+  watchers.push({ ws, name });
+  ws.send(seatPickerPayload());
+  broadcastSeatPicker();
+}
+function handleTakeSeat(ws, seatNum) {
+  const wIdx = watchers.findIndex(w => w.ws === ws);
+  if (wIdx === -1) return; // ต้อง join ก่อนถึงจะนั่งได้
+  const seat = Number(seatNum);
+  const target = players[seat];
+  if (!target || !target.isBot) {
+    ws.send(seatPickerPayload());
+    return;
+  }
+  const watcher = watchers[wIdx];
+  watchers.splice(wIdx, 1);
+  target.isBot = false;
+  target.ws = ws;
+  target.name = watcher.name;
+  addLog(`${watcher.name} เข้ามานั่งแทนที่นั่ง ${seat + 1} (แทนบอท)`);
+  broadcastState();
+  broadcastSeatPicker();
+}
+
+// ---------------- Disconnect / restart handling ----------------
+function handleDisconnect(ws) {
+  watchers = watchers.filter(w => w.ws !== ws);
+  if (!started) {
+    lobbySeats = lobbySeats.filter(c => c.ws !== ws);
+    assignSeatsCompact();
+    broadcastLobby();
+    return;
+  }
+  const p = players.find(pp => pp.ws === ws);
+  if (p && !p.isBot) {
+    p.isBot = true;
+    p.ws = null;
+    addLog(`${p.name} หลุดการเชื่อมต่อ ระบบจะเล่นแทนอัตโนมัติ (บอท)`);
+    if (pendingResolvers[p.seat]) {
+      const resolve = pendingResolvers[p.seat];
+      delete pendingResolvers[p.seat];
+      resolve(botChooseCard(p.seat));
+    }
+    if (passingState && !passingState.chosen[p.seat]) {
+      passingState.chosen[p.seat] = botChoosePassCards(p.seat);
+      checkPassingComplete();
+    }
+    broadcastState();
+    broadcastSeatPicker();
+  }
+}
+function leaveLobby(ws) {
+  const c = lobbySeats.find(c => c.ws === ws);
+  if (!c) return;
+  lobbySeats = lobbySeats.filter(cc => cc.ws !== ws);
+  assignSeatsCompact();
+  broadcastLobby();
+  ws.send(JSON.stringify({ type: 'leftLobby' }));
+}
+function restartToLobby(ws) {
+  if (!started) return;
+  const p = players.find(pp => pp.ws === ws);
+  if (!p || p.isBot || phase !== 'gameOver') return;
+  const seated = players.filter(pp => !pp.isBot && pp.ws).map(pp => ({ ws: pp.ws, name: pp.name }));
+  const stillConnectedWatchers = watchers.filter(w => w.ws.readyState === WebSocket.OPEN);
+  lobbySeats = [...seated, ...stillConnectedWatchers].map((c, i) => ({ ws: c.ws, seat: i, name: c.name }));
+  started = false;
+  phase = 'lobby';
+  players = [];
+  pendingResolvers = {};
+  passingState = null;
+  alarmActive = false;
+  watchers = [];
+  assignSeatsCompact();
+  broadcastLobby();
+}
+
+// ---------------- WebSocket wiring ----------------
+function findSeatByWs(ws) {
+  const p = players.find(pp => pp.ws === ws);
+  return p ? p.seat : null;
+}
 
 // ---------------- D&D helper room (separate mini-app, independent of Hearts state) ----------------
 let dndPlayers = []; // [{id, ws, name, isDM, connected, character}]
@@ -28,27 +631,16 @@ let dndNextSkillId = 1;
 let dndCustomPassives = []; // [{id, key, raceKey ('any' or a race key), name, icon, desc, effect}] — passive skills the DM designs, on top of the built-in ones
 let dndNextPassiveId = 1;
 let dndScene = { location: '', situation: '' }; // ป้ายประกาศสถานที่/สถานการณ์บนจอทุกคน — DM เท่านั้นที่กำหนดได้
-let dndGameTime = { day: 1, hour: 8, minute: 0 }; // นาฬิกาในเกม — DM เดินเวลา/ข้ามวัน/แก้ไขเวลาได้เท่านั้น เริ่มที่วันที่ 1 เวลา 08:00
-// เวลาวิ่งอัตโนมัติ — DM กดเปิด/ปิดได้ + ปรับความเร็ว (กี่นาทีในเกม ต่อ 1 นาทีจริง) ประมวลผลจาก tick ทุก 1 วิ ใน dndSweepExpiredStatuses
-let dndTimeAuto = { running: false, speed: 10 };
-let dndTimeAutoAccumMinutes = 0; // สะสมเศษนาทีในเกมที่ยังไม่ครบ 1 นาที (เพราะ speed อาจทำให้นาทีในเกมต่อ tick เป็นเศษส่วน)
 // ---- ลำดับเทิร์นผู้เล่น: DM จัดลำดับเอง (ไม่ทอย initiative) แล้วกดเลื่อนตาไปเรื่อยๆ วนลูป ----
-let dndTurnOrder = []; // array of entries { kind: 'pc'|'npc', id } ตามลำดับที่ DM ตั้งไว้ (ผู้เล่น หรือมอนสเตอร์บนแผนที่)
+let dndTurnOrder = []; // array of player ids (non-DM) ตามลำดับที่ DM ตั้งไว้
 let dndTurnIndex = -1; // index ใน dndTurnOrder ของตาปัจจุบัน, -1 = ยังไม่ได้เริ่ม/หยุดแล้ว
 // ---- แผนที่ (รองรับหลายแผนที่): DM ออกแบบ/สร้าง/สลับได้หลายแผนที่ — มอนสเตอร์ (npc token) ผูกกับแผนที่ที่สร้างตอนนั้น ----
-// ชุดแผนที่เริ่มต้นตั้งค่าไว้ที่ data/maps.js — แก้ไฟล์นั้นเพื่อเพิ่ม/แก้แผนที่ตั้งต้นของห้อง
-let dndMaps = cloneDefaultMaps();
-let dndNextMapId = Math.max(0, ...DEFAULT_MAPS.map(m => m.id)) + 1;
-let dndCurrentMapId = DEFAULT_MAPS[0] ? DEFAULT_MAPS[0].id : 1; // แผนที่ที่กำลังแสดงอยู่ตอนนี้ (ทุกคนเห็นแผนที่เดียวกันเสมอ)
+let dndMaps = [{ id: 1, name: 'แผนที่ 1', background: null }];
+let dndNextMapId = 2;
+let dndCurrentMapId = 1; // แผนที่ที่กำลังแสดงอยู่ตอนนี้ (ทุกคนเห็นแผนที่เดียวกันเสมอ)
 function dndCurrentMap() { return dndMaps.find(m => m.id === dndCurrentMapId) || dndMaps[0]; }
-// เปิด/ปิดระบบวิสัยทัศน์ (fog of war) ทั้งห้อง — DM คุมได้เท่านั้น ปิดไว้เป็นค่าเริ่มต้น (ไม่บังคับใช้ทุกฉาก)
-let dndVisionEnabled = false;
 let dndTokens = [];      // [{id, kind:'pc'|'npc', ownerId, name, color, image, x, y, hp, maxHp, ac, attacks, statuses, mapId}] — npc มี hp/ac/attacks/mapId ของตัวเอง (pc ใช้ค่าจากการ์ดตัวละคร และมีตำแหน่งแยกต่อแผนที่ผ่าน positions)
 let dndNextTokenId = 1;
-// ---- กำแพง: DM วาดเส้นกำแพงลงบนแผนที่ได้ (กันสายตา/แสดงผังห้อง) — ผูกกับแผนที่ที่วาดตอนนั้นเหมือน npc token ----
-// พิกัดเป็น % ของแผนที่เหมือน token/AOE (0-100 ทั้งสองแกน) เพื่อให้ยืดหด/สเกลตามขนาดจอได้เหมือนกันทุกจุด
-let dndWalls = [];       // [{id, mapId, x1, y1, x2, y2}]
-let dndNextWallId = 1;
 let dndNextAttackId = 1;
 let dndNextStatusId = 1;
 let dndNextLootId = 1;
@@ -62,13 +654,47 @@ let dndNextTradeId = 1;
 // ---- ไอเทมใช้งานได้: DM กำหนดชื่อไอเทม + ผลของมัน (ฟื้นฟู HP / ให้ทอง) — ถ้าชื่อในกระเป๋าผู้เล่นตรงกับรายการนี้ จะมีปุ่ม "ใช้" ให้กด ----
 let dndNextItemEffectId = 1;
 let dndItemEffects = dndDefaultItemEffectsInit(); // [{id, name, effectType:'heal'|'gold', value, desc}]
+const DND_TOKEN_COLORS = ['#ff6b6b', '#6fd3ff', '#9fdc9f', '#ffd76b', '#c792ea', '#ff9d9d', '#7ee8fa', '#f4a261', '#82c9ff', '#f6a6c1'];
+const DND_MAX_TOKEN_IMAGE_CHARS = 420000;
+const DND_TOKEN_SIZES = ['normal', 'large', 'huge']; // ขนาดวง token บนแผนที่ — large/huge เอาไว้ใช้กับมอนสเตอร์บอสให้เด่นบนแผนที่
+const DND_MAX_MAP_BG_CHARS = 420000; // ไฟล์จริง ~300KB (base64 ใหญ่กว่าไฟล์จริงประมาณ 4/3 เท่า)
 
 // ---- Race / Class card data (also drives the automatic AC/HP ranges & stat bonuses) ----
+const DND_RACES = [
+  { key: 'human',      name: 'มนุษย์',        icon: '🧑', desc: 'ปรับตัวเก่ง เรียนรู้ไว เป็นได้ทุกอย่าง',       bonus: { str: 1, dex: 1, con: 1 } },
+  { key: 'elf',        name: 'เอลฟ์',         icon: '🧝', desc: 'ปราดเปรียว สายตาดี ผูกพันกับเวทมนตร์',        bonus: { dex: 2, int: 1 } },
+  { key: 'dwarf',      name: 'ดวาร์ฟ',        icon: '🧔', desc: 'แข็งแกร่ง ทนทาน ช่างฝีมือใต้ภูเขา',           bonus: { con: 2, str: 1 } },
+  { key: 'halfling',   name: 'ฮาล์ฟลิง',      icon: '🍀', desc: 'ตัวเล็ก ปราดเปรียว โชคดีเป็นพิเศษ',           bonus: { dex: 2, cha: 1 } },
+  { key: 'orc',        name: 'ออร์ค',         icon: '💪', desc: 'พละกำลังมหาศาล ดุดันในสนามรบ',               bonus: { str: 2, con: 1 } },
+  { key: 'tiefling',   name: 'ทิฟลิง',        icon: '😈', desc: 'สายเลือดปีศาจ เสน่ห์ล้ำลึก',                  bonus: { cha: 2, int: 1 } },
+  { key: 'gnome',      name: 'โนม',           icon: '🎩', desc: 'ฉลาดหลักแหลม ช่างประดิษฐ์',                   bonus: { int: 2, dex: 1 } },
+  { key: 'dragonborn', name: 'ดราก้อนบอร์น', icon: '🐉', desc: 'สายเลือดมังกร พลังและศักดิ์ศรี',              bonus: { str: 2, cha: 1 } },
+];
+const DND_CLASSES = [
+  { key: 'fighter',    name: 'นักรบ',       icon: '⚔️', desc: 'ผู้เชี่ยวชาญการต่อสู้ระยะประชิด',       bonus: { str: 2, con: 1 }, hitDie: 10, armor: 'heavy' },
+  { key: 'wizard',     name: 'นักเวท',      icon: '🔮', desc: 'ควบคุมเวทมนตร์อันทรงพลัง',              bonus: { int: 2, wis: 1 }, hitDie: 6,  armor: 'light' },
+  { key: 'cleric',     name: 'นักบวช',      icon: '✨', desc: 'ผู้รับใช้เทพเจ้า รักษาและปกป้องปาร์ตี้',  bonus: { wis: 2, con: 1 }, hitDie: 8,  armor: 'medium' },
+  { key: 'rogue',      name: 'โจร',         icon: '🗡️', desc: 'คล่องแคล่ว หลบหลีก จู่โจมจุดอ่อน',      bonus: { dex: 2, cha: 1 }, hitDie: 8,  armor: 'light' },
+  { key: 'ranger',     name: 'เรนเจอร์',    icon: '🏹', desc: 'นักล่าแห่งป่าเถื่อน แม่นธนู',            bonus: { dex: 2, wis: 1 }, hitDie: 10, armor: 'medium' },
+  { key: 'barbarian',  name: 'บาร์บาเรียน', icon: '🪓', desc: 'พลังดิบ ความดุร้ายที่ไม่มีใครหยุดได้',    bonus: { str: 2, con: 1 }, hitDie: 12, armor: 'medium' },
+  { key: 'paladin',    name: 'พาลาดิน',     icon: '🛡️', desc: 'นักรบศักดิ์สิทธิ์ผู้ปกป้องความยุติธรรม',  bonus: { cha: 2, str: 1 }, hitDie: 10, armor: 'heavy' },
+  { key: 'bard',       name: 'บาร์ด',       icon: '🎵', desc: 'เสน่ห์และดนตรี สร้างแรงบันดาลใจให้ปาร์ตี้', bonus: { cha: 2, dex: 1 }, hitDie: 8,  armor: 'light' },
+];
 function dndRaceByKey(k) { return DND_RACES.find(r => r.key === k); }
 function dndClassByKey(k) { return DND_CLASSES.find(c => c.key === k); }
 
 // ---- ไอเทมสวมใส่เริ่มต้นตามคลาส: อิงธีมอุปกรณ์เริ่มต้นแบบ D&D ของแต่ละคลาส แต่ปรับเลขให้ต่ำ (ค่าเริ่มต้นระดับ 1) ----
 // ใช้เติมให้อัตโนมัติตอนสร้างตัวละคร เฉพาะช่องที่ผู้เล่นไม่ได้กรอกไอเทมเอง (เว้นว่างไว้) — ผู้เล่นแก้ไข/ถอดออกทีหลังได้เสมอเหมือนไอเทมอื่นๆ
+const DND_CLASS_STARTER_GEAR = {
+  fighter:   { weapon: { name: 'ดาบยาว',        atk: 2, def: 0, maxDurability: 10 }, armor: { name: 'เกราะโซ่',         atk: 0, def: 2, maxDurability: 10 }, shoes: { name: 'รองเท้าบูทเกราะ',  atk: 0, def: 1, maxDurability: 8 }, accessory: { name: 'โล่ไม้',           atk: 0, def: 1, maxDurability: 6 } },
+  wizard:    { weapon: { name: 'ไม้เท้าเวทย์',   atk: 1, def: 0, maxDurability: 6  }, armor: { name: 'เสื้อคลุมนักเวท',  atk: 0, def: 1, maxDurability: 6  }, shoes: { name: 'รองเท้าผ้า',        atk: 0, def: 0, maxDurability: 4 }, accessory: { name: 'ตำราคาถา',        atk: 1, def: 0, maxDurability: 6 } },
+  cleric:    { weapon: { name: 'ตะบองศักดิ์สิทธิ์', atk: 1, def: 0, maxDurability: 8 }, armor: { name: 'เกราะโซ่นักบวช',  atk: 0, def: 2, maxDurability: 8  }, shoes: { name: 'รองเท้าหนัง',        atk: 0, def: 1, maxDurability: 6 }, accessory: { name: 'สัญลักษณ์ศักดิ์สิทธิ์', atk: 0, def: 1, maxDurability: 6 } },
+  rogue:     { weapon: { name: 'กริชคู่',        atk: 2, def: 0, maxDurability: 8  }, armor: { name: 'เสื้อหนังนุ่ม',    atk: 0, def: 1, maxDurability: 6  }, shoes: { name: 'รองเท้าย่องเบา',     atk: 0, def: 1, maxDurability: 6 }, accessory: { name: 'ชุดเครื่องมือโจร', atk: 1, def: 0, maxDurability: 6 } },
+  ranger:    { weapon: { name: 'ธนูสั้น',        atk: 2, def: 0, maxDurability: 8  }, armor: { name: 'เกราะหนัง',        atk: 0, def: 2, maxDurability: 8  }, shoes: { name: 'รองเท้าเดินป่า',     atk: 0, def: 1, maxDurability: 6 }, accessory: { name: 'แล่งธนู',          atk: 1, def: 0, maxDurability: 6 } },
+  barbarian: { weapon: { name: 'ขวานใหญ่',       atk: 3, def: 0, maxDurability: 10 }, armor: { name: 'ชุดหนังสัตว์',     atk: 0, def: 1, maxDurability: 8  }, shoes: { name: 'รองเท้าหนังหยาบ',    atk: 0, def: 1, maxDurability: 6 }, accessory: { name: 'สร้อยเขี้ยวสัตว์', atk: 1, def: 0, maxDurability: 4 } },
+  paladin:   { weapon: { name: 'ดาบยาว',        atk: 2, def: 0, maxDurability: 10 }, armor: { name: 'เกราะแผ่นเหล็ก',   atk: 0, def: 3, maxDurability: 10 }, shoes: { name: 'รองเท้าบูทเหล็ก',    atk: 0, def: 1, maxDurability: 8 }, accessory: { name: 'โล่ประจำตระกูล',   atk: 0, def: 1, maxDurability: 6 } },
+  bard:      { weapon: { name: 'กระบี่สั้น',     atk: 1, def: 0, maxDurability: 6  }, armor: { name: 'เสื้อคลุมนักแสดง', atk: 0, def: 1, maxDurability: 6  }, shoes: { name: 'รองเท้าผ้านิ่ม',     atk: 0, def: 0, maxDurability: 4 }, accessory: { name: 'พิณคู่ใจ',         atk: 1, def: 0, maxDurability: 6 } },
+};
 function dndStarterGearForClass(classKey) {
   return DND_CLASS_STARTER_GEAR[classKey] || null;
 }
@@ -109,6 +735,40 @@ function dndFillStarterGear(equipment, classKey) {
 // ---- สกิลติดตัว (Passive) ประจำเผ่าพันธุ์: อิงจากคุณสมบัติเผ่าพันธุ์ใน D&D 5e แต่ปรับให้เป็นเลขกลไกง่ายๆ ----
 // แต่ละเผ่ามีให้เลือก 2 แบบ — เลือกได้ตอนสร้างตัวละครครั้งเดียว (ล็อกไปพร้อมการ์ดตัวละคร)
 // effect ที่รองรับ: atk (โบนัสทอยโจมตี), dmg (โบนัสดาเมจ), ac (โบนัสป้องกัน), hp (โบนัส HP สูงสุด), critRange (ขยายช่วงคริติคอล เช่น 1 = โดนคริตที่ 19-20), gold (ทองเริ่มต้นเพิ่ม)
+const DND_RACE_PASSIVES = {
+  human: [
+    { key: 'skilled',     name: 'ผู้ชำนาญรอบด้าน', icon: '🎯', desc: 'ปรับตัวเก่ง เรียนรู้ไว จับจังหวะโจมตีแม่นกว่าเผ่าอื่น (โจมตี +1)', effect: { atk: 1 } },
+    { key: 'resourceful', name: 'มีไหวพริบ',       icon: '💰', desc: 'รู้จักตุนเสบียงและเงินทองมาตั้งแต่ออกเดินทาง (ทองเริ่มต้น +15)', effect: { gold: 15 } },
+  ],
+  elf: [
+    { key: 'feyAncestry', name: 'สายเลือดภูตพราย', icon: '🌙', desc: 'ประสาทสัมผัสไวจนยากจะจู่โจมแบบไม่ทันตั้งตัว (ช่วงคริติคอลกว้างขึ้น 19-20)', effect: { critRange: 1 } },
+    { key: 'keenSenses',  name: 'สัมผัสคมกริบ',    icon: '👁️', desc: 'สายตาและปฏิกิริยาไวกว่าเผ่าพันธุ์อื่น (โจมตี +1)', effect: { atk: 1 } },
+  ],
+  dwarf: [
+    { key: 'resilience',   name: 'ความทรหดแห่งดวาร์ฟ', icon: '❤️', desc: 'ร่างกายแข็งแกร่งทนทานผิดมนุษย์ (HP สูงสุด +5)', effect: { hp: 5 } },
+    { key: 'stonecunning', name: 'ปราดเปรื่องเรื่องหิน', icon: '🛡️', desc: 'สัญชาตญาณป้องกันตัวเยี่ยมจากการใช้ชีวิตใต้ภูเขา (ป้องกัน +1)', effect: { ac: 1 } },
+  ],
+  halfling: [
+    { key: 'lucky', name: 'โชคดีที่สุด', icon: '🍀', desc: 'ดวงดีเป็นพิเศษ มักเจอจังหวะติดพันสำคัญ ๆ (ช่วงคริติคอลกว้างขึ้น 19-20)', effect: { critRange: 1 } },
+    { key: 'brave', name: 'กล้าหาญ',   icon: '💪', desc: 'ใจสู้ไม่หวั่นแม้ตัวเล็ก ทนทานกว่าที่คิด (HP สูงสุด +3)', effect: { hp: 3 } },
+  ],
+  orc: [
+    { key: 'relentless',  name: 'ทรหดไม่ย่อท้อ',  icon: '❤️', desc: 'ร่างกายที่ผ่านศึกมานับไม่ถ้วน ทนทานผิดมนุษย์ (HP สูงสุด +8)', effect: { hp: 8 } },
+    { key: 'aggressive',  name: 'ดุดันในสนามรบ',  icon: '🔥', desc: 'พลังบุกตะลุยทำให้โจมตีแรงขึ้น (ดาเมจ +2)', effect: { dmg: 2 } },
+  ],
+  tiefling: [
+    { key: 'infernalLegacy', name: 'มรดกปีศาจ',     icon: '🔥', desc: 'สายเลือดปีศาจซ่อนพลังทำลายล้างในตัว (ดาเมจ +2)', effect: { dmg: 2 } },
+    { key: 'hellishResist',  name: 'ทนต่อพลังนรก', icon: '🛡️', desc: 'ผิวหนังต้านทานพลังชั่วร้ายได้ดีกว่าปกติ (ป้องกัน +1)', effect: { ac: 1 } },
+  ],
+  gnome: [
+    { key: 'gnomeCunning', name: 'ไหวพริบแห่งโนม', icon: '🎯', desc: 'จิตใจแหลมคม จับจังหวะโจมตีได้แม่นยำ (โจมตี +1)', effect: { atk: 1 } },
+    { key: 'tinker',       name: 'ช่างประดิษฐ์',   icon: '💰', desc: 'พกอุปกรณ์และเงินทุนสำรองติดตัวเสมอ (ทองเริ่มต้น +20)', effect: { gold: 20 } },
+  ],
+  dragonborn: [
+    { key: 'breathWeapon',      name: 'ลมหายใจมังกร',     icon: '🔥', desc: 'สายเลือดมังกรซ่อนพลังทำลายล้างในทุกการโจมตี (ดาเมจ +3)', effect: { dmg: 3 } },
+    { key: 'draconicResilience', name: 'ความทรหดแห่งมังกร', icon: '❤️', desc: 'เกล็ดมังกรใต้ผิวหนังช่วยเสริมความอึด (HP สูงสุด +5)', effect: { hp: 5 } },
+  ],
+};
 function dndRacePassivesFor(raceKey) {
   const builtin = DND_RACE_PASSIVES[raceKey] || [];
   // สกิลติดตัวที่ DM สร้างเอง: ผูกกับเผ่าใดเผ่าหนึ่งโดยเฉพาะ หรือ raceKey === 'any' = ใช้ได้ทุกเผ่า
@@ -119,6 +779,7 @@ function dndRacePassiveByKey(raceKey, passiveKey) {
   return dndRacePassivesFor(raceKey).find(p => p.key === passiveKey) || null;
 }
 // ---- สกิลติดตัว (Passive) ที่ DM ออกแบบเอง: เพิ่มเติมจากสกิลติดตัวประจำเผ่าที่มีมาให้ในระบบ ----
+const DND_PASSIVE_EFFECT_KEYS = ['atk', 'dmg', 'ac', 'hp', 'critRange', 'gold'];
 function dndSanitizePassiveEffect(raw) {
   const r = (raw && typeof raw === 'object') ? raw : {};
   const clamp = (v, min, max) => Math.max(min, Math.min(max, Math.round(Number(v) || 0)));
@@ -204,6 +865,49 @@ function dndStatusMods(list) {
 
 // ---- สกิลประจำคลาส: ทุกคลาสมีสกิลเริ่มต้น (เลเวล 1) ให้อัตโนมัติ แล้วปลดสกิลใหม่เพิ่มตามเลเวล ----
 // ผู้เล่นไม่ต้องรอ DM สร้าง/มอบให้ — ระบบคำนวณให้เองจากคลาส + เลเวลปัจจุบันของตัวละคร
+const DND_CLASS_SKILLS = {
+  fighter: [
+    { level: 1, name: 'ฟันดาบหนักหน่วง', desc: 'ฟันเข้าเป้าหมายด้วยแรง STR เต็มกำลัง', stat: 'str', dmgDie: 8, dmgCount: 1, dmgMod: 2, cooldownSec: 6, maxUses: 0 },
+    { level: 4, name: 'จู่โจมสองจังหวะ', desc: 'ฟันสองครั้งรัว ๆ ติดกัน', stat: 'str', dmgDie: 6, dmgCount: 2, dmgMod: 1, cooldownSec: 12, maxUses: 0 },
+    { level: 8, name: 'ท่าไม้ตายนักรบ', desc: 'ทุ่มพลังทั้งหมดฟันเดียวจบ', stat: 'str', dmgDie: 12, dmgCount: 2, dmgMod: 3, cooldownSec: 25, maxUses: 0 },
+  ],
+  wizard: [
+    { level: 1, name: 'ลูกไฟเวทมนตร์', desc: 'ยิงลูกไฟใส่เป้าหมายด้วยพลัง INT', stat: 'int', dmgDie: 6, dmgCount: 1, dmgMod: 2, cooldownSec: 6, maxUses: 0 },
+    { level: 4, name: 'สายฟ้าฟาด', desc: 'ปล่อยสายฟ้าพลังทำลายล้างสูง', stat: 'int', dmgDie: 8, dmgCount: 2, dmgMod: 1, cooldownSec: 15, maxUses: 0 },
+    { level: 8, name: 'อุกกาบาต', desc: 'เรียกอุกกาบาตถล่มเป้าหมาย', stat: 'int', dmgDie: 10, dmgCount: 3, dmgMod: 2, cooldownSec: 30, maxUses: 3 },
+  ],
+  cleric: [
+    { level: 1, name: 'แสงศักดิ์สิทธิ์', desc: 'สาดแสงศักดิ์สิทธิ์ใส่เป้าหมาย', stat: 'wis', dmgDie: 6, dmgCount: 1, dmgMod: 1, cooldownSec: 6, maxUses: 0 },
+    { level: 4, name: 'ตัดสินของพระเจ้า', desc: 'เรียกพลังศักดิ์สิทธิ์ลงโทษเป้าหมาย', stat: 'wis', dmgDie: 8, dmgCount: 1, dmgMod: 2, cooldownSec: 14, maxUses: 0 },
+    { level: 8, name: 'ประกาศิตสวรรค์', desc: 'พลังแห่งเทพเจ้ากระหน่ำเป้าหมาย', stat: 'wis', dmgDie: 10, dmgCount: 2, dmgMod: 2, cooldownSec: 28, maxUses: 3 },
+  ],
+  rogue: [
+    { level: 1, name: 'แทงจุดอ่อน', desc: 'จู่โจมจุดอ่อนด้วยความคล่องแคล่ว', stat: 'dex', dmgDie: 6, dmgCount: 1, dmgMod: 2, cooldownSec: 5, maxUses: 0 },
+    { level: 4, name: 'สังหารเงียบ', desc: 'แอบเข้าประชิดแล้วจู่โจมรุนแรง', stat: 'dex', dmgDie: 8, dmgCount: 1, dmgMod: 3, cooldownSec: 14, maxUses: 0 },
+    { level: 8, name: 'ระเบิดมีดพันเล่ม', desc: 'สาดมีดใส่เป้าหมายรัว ๆ', stat: 'dex', dmgDie: 6, dmgCount: 4, dmgMod: 1, cooldownSec: 24, maxUses: 3 },
+  ],
+  ranger: [
+    { level: 1, name: 'ยิงธนูแม่นยำ', desc: 'ยิงธนูเล็งจุดตายแม่นยำ', stat: 'dex', dmgDie: 6, dmgCount: 1, dmgMod: 2, cooldownSec: 5, maxUses: 0 },
+    { level: 4, name: 'ธนูคู่', desc: 'ยิงธนูสองดอกติดกัน', stat: 'dex', dmgDie: 6, dmgCount: 2, dmgMod: 1, cooldownSec: 12, maxUses: 0 },
+    { level: 8, name: 'ห่าธนู', desc: 'ยิงธนูรัวใส่เป้าหมายไม่หยุด', stat: 'dex', dmgDie: 8, dmgCount: 3, dmgMod: 2, cooldownSec: 26, maxUses: 3 },
+  ],
+  barbarian: [
+    { level: 1, name: 'ทุบกระหน่ำ', desc: 'ทุ่มพลังบ้าคลั่งเข้าใส่เป้าหมาย', stat: 'str', dmgDie: 10, dmgCount: 1, dmgMod: 2, cooldownSec: 6, maxUses: 0 },
+    { level: 4, name: 'คลั่งเลือด', desc: 'ระเบิดพลังบ้าคลั่งฟันรัว', stat: 'str', dmgDie: 8, dmgCount: 2, dmgMod: 2, cooldownSec: 14, maxUses: 0 },
+    { level: 8, name: 'พิโรธไททัน', desc: 'ปลดปล่อยพลังบ้าคลั่งสูงสุด', stat: 'str', dmgDie: 12, dmgCount: 2, dmgMod: 4, cooldownSec: 28, maxUses: 2 },
+  ],
+  paladin: [
+    { level: 1, name: 'ฟันแห่งศรัทธา', desc: 'ฟันดาบพร้อมพลังศักดิ์สิทธิ์', stat: 'str', dmgDie: 8, dmgCount: 1, dmgMod: 2, cooldownSec: 6, maxUses: 0 },
+    { level: 4, name: 'พิพากษาศักดิ์สิทธิ์', desc: 'เรียกพลังศรัทธาลงทัณฑ์เป้าหมาย', stat: 'cha', dmgDie: 8, dmgCount: 2, dmgMod: 1, cooldownSec: 15, maxUses: 0 },
+    { level: 8, name: 'อัศวินแห่งแสง', desc: 'สำแดงพลังศักดิ์สิทธิ์เต็มกำลัง', stat: 'str', dmgDie: 10, dmgCount: 2, dmgMod: 3, cooldownSec: 28, maxUses: 3 },
+  ],
+  bard: [
+    { level: 1, name: 'เสียงเพลงจู่โจม', desc: 'ปล่อยคลื่นเสียงกระแทกเป้าหมาย', stat: 'cha', dmgDie: 6, dmgCount: 1, dmgMod: 1, cooldownSec: 6, maxUses: 0 },
+    { level: 4, name: 'ท่วงทำนองปลุกใจ', desc: 'บรรเลงเพลงกระแทกใจศัตรู', stat: 'cha', dmgDie: 6, dmgCount: 2, dmgMod: 1, cooldownSec: 14, maxUses: 0 },
+    { level: 8, name: 'ซิมโฟนีทำลายล้าง', desc: 'บรรเลงเพลงพลังทำลายล้างสูงสุด', stat: 'cha', dmgDie: 10, dmgCount: 2, dmgMod: 2, cooldownSec: 28, maxUses: 3 },
+  ],
+};
+const DND_CLASS_SKILL_ID_BASE = 900000; // เลข id เฉพาะช่วงสกิลคลาส กันชนกับ id สกิลที่ DM สร้างเอง (เริ่มนับจาก 1)
 function dndClassSkillId(classKey, idx) {
   const ci = Math.max(0, DND_CLASSES.findIndex(c => c.key === classKey));
   return DND_CLASS_SKILL_ID_BASE + ci * 100 + idx;
@@ -213,19 +917,12 @@ function dndClassSkillsForPlayer(p) {
   if (!p || p.isDM || !p.character || !p.character.classKey) return [];
   const templates = DND_CLASS_SKILLS[p.character.classKey] || [];
   const level = Math.max(1, Math.floor(Number(p.character.level) || 1));
-  const overrides = p.character.skillOverrides || {};
-  return templates.map((t, idx) => {
-    const id = dndClassSkillId(p.character.classKey, idx);
-    const ov = overrides[id];
-    const merged = ov ? Object.assign({}, t, ov) : t;
-    return Object.assign({}, merged, {
-      id,
-      assignedIds: [p.id],
-      classSkill: true,
-      locked: t.level > level, // ปลดล็อกตามเลเวลเดิมของคลาสเสมอ ไม่ให้ override เปลี่ยนเงื่อนไขปลดล็อกได้
-      overridden: !!ov,
-    });
-  });
+  return templates.map((t, idx) => Object.assign({}, t, {
+    id: dndClassSkillId(p.character.classKey, idx),
+    assignedIds: [p.id],
+    classSkill: true,
+    locked: t.level > level,
+  }));
 }
 // เรียกตอนเลเวลอัป (ไม่ว่าจะจากฆ่ามอนสเตอร์ได้ EXP หรือ DM แก้ไขเลเวลตรง ๆ) เพื่อประกาศสกิลใหม่ที่เพิ่งปลดล็อก
 function dndAnnounceClassSkillUnlocks(target, oldLevel, newLevel) {
@@ -237,86 +934,11 @@ function dndAnnounceClassSkillUnlocks(target, oldLevel, newLevel) {
   }
 }
 
-// DM แก้ไขสกิลประจำคลาส (🎓) เฉพาะผู้เล่นคนเดียว โดยไม่กระทบผู้เล่นคนอื่นในคลาสเดียวกัน —
-// เก็บเป็น override แยกต่อตัวละคร (skillOverrides[skillId]) ทับค่าเริ่มต้นของคลาสตอนแสดงผล/ใช้งานสกิลเท่านั้น
-function dndHandleClassSkillOverrideSave(ws, targetId, skillId, payload) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) return;
-  const target = dndPlayers.find(pp => pp.id === Number(targetId) && !pp.isDM);
-  if (!target || !target.character.classKey) { dndSendError(ws, 'ไม่พบผู้เล่นเป้าหมาย'); return; }
-  const sid = Number(skillId);
-  const exists = dndClassSkillsForPlayer(target).some(s => s.id === sid);
-  if (!exists) { dndSendError(ws, 'ไม่พบสกิลประจำคลาสนี้'); return; }
-  if (!payload || typeof payload !== 'object') return;
-
-  const name = (payload.name || '').toString().trim().slice(0, 40);
-  if (!name) { dndSendError(ws, 'กรุณาตั้งชื่อสกิล'); return; }
-  const statRaw = (payload.stat || '').toString();
-  const stat = DND_SKILL_STATS.includes(statRaw) ? statRaw : '';
-  const desc = (payload.desc || '').toString().trim().slice(0, 500);
-
-  const dmg = (payload.damage && typeof payload.damage === 'object') ? payload.damage : {};
-  const dmgDie = DND_VALID_DICE.includes(Number(dmg.die)) ? Number(dmg.die) : 0;
-  const dmgCount = Math.max(1, Math.min(20, Math.round(Number(dmg.count) || 1)));
-  const dmgMod = Math.max(-100, Math.min(100, Math.round(Number(dmg.mod) || 0)));
-  const cooldownSec = Math.max(0, Math.min(3600, Math.round(Number(payload.cooldownSec) || 0)));
-  const maxUses = Math.max(0, Math.min(99, Math.round(Number(payload.maxUses) || 0)));
-  // SP ที่ต้องใช้ต่อการใช้สกิลนี้ 1 ครั้ง เฉพาะผู้เล่นคนนี้คนเดียว — 0 = ไม่ใช้ SP เลย
-  const spCost = Math.max(0, Math.min(999, Math.round(Number(payload.spCost) || 0)));
-  // โอกาสโดน (%) — ใช้เฉพาะตอนสกิลนี้ไม่ได้ผูกสเตตัส ดูรายละเอียดที่ dndSanitizeHitChance
-  const hitChance = dndSanitizeHitChance(payload.hitChance);
-  // โดนเสมอ (guaranteedHit) — DM ตั้งไว้ล่วงหน้าตอนแก้สกิลประจำคลาส ไม่ใช่ตัวเลือกที่ผู้เล่นกดตอนใช้สกิล ดูรายละเอียดที่ dndHandleSkillCreate
-  const guaranteedHit = !!payload.guaranteedHit;
-
-  const heal = (payload.heal && typeof payload.heal === 'object') ? payload.heal : {};
-  const healDie = DND_VALID_DICE.includes(Number(heal.die)) ? Number(heal.die) : 0;
-  const healCount = Math.max(1, Math.min(20, Math.round(Number(heal.count) || 1)));
-  const healMod = Math.max(-100, Math.min(100, Math.round(Number(heal.mod) || 0)));
-  // ประเภทของสกิลชุบ HP — false (ค่าเริ่มต้น) = "ฟื้นฟู" ธรรมดา ปลุกคนหมดสติไม่ได้, true = "ชุบชีวิต" ปลุกคนหมดสติได้ด้วย (เหมือนไอเทม heal/revive)
-  const healRevive = !!heal.revive;
-
-  // สถานะ/ดีบัฟที่ผูกกับสกิล (ไม่บังคับ) — เหมือนตอนสร้าง/แก้ไขสกิลที่ DM สร้างเอง
-  const status = dndSanitizeSkillStatus(payload.status);
-  // สกิลบัฟเพื่อน (ไม่บังคับ) — เปิดไว้แล้วตอนใช้สกิลจะเลือกเป้าหมายเป็นผู้เล่นได้
-  const buffAlly = !!payload.buffAlly;
-
-  // รัศมี AOE (0 = เป้าเดี่ยวปกติ)
-  const aoeRaw = (payload.aoe && typeof payload.aoe === 'object') ? payload.aoe : {};
-  const aoeRadius = Math.max(0, Math.min(100, Math.round(Number(aoeRaw.radius) || 0)));
-  // ระยะโจมตี (0 = ไม่จำกัดระยะ) — ระยะห่างจริงบนแผนที่ (หน่วย % ของแผนที่ เหมือนพิกัด token) ระหว่าง token ผู้ใช้กับ token เป้าหมาย ดูรายละเอียดที่ dndHandleSkillCreate
-  const range = Math.max(0, Math.min(100, Math.round(Number(payload.range) || 0)));
-
-  // สกิลลบล้างสถานะ (cleanse)
-  const cleanseRaw = (payload.cleanse && typeof payload.cleanse === 'object') ? payload.cleanse : {};
-  const cleanseEnabled = !!cleanseRaw.enabled;
-  const cleanseName = cleanseEnabled ? (cleanseRaw.name || '').toString().trim().slice(0, 24) : '';
-  // เป้าหมายที่เลือกได้ตอนใช้สกิลนี้: 'monster' / 'player' / 'both' — ดูรายละเอียดที่ dndHandleSkillCreate
-  const targetMode = dndSanitizeTargetMode(payload.targetMode) || (buffAlly || healDie || cleanseEnabled ? 'player' : 'monster');
-
-  target.character.skillOverrides = target.character.skillOverrides || {};
-  target.character.skillOverrides[sid] = {
-    name, stat, desc, dmgDie, dmgCount, dmgMod, cooldownSec, maxUses, spCost, hitChance, guaranteedHit,
-    healDie, healCount, healMod, healRevive, statusName: status.name, statusNote: status.note, statusChance: status.chance, buffAlly, targetMode,
-    statusDurationSec: status.durationSec, statusAtkMod: status.atkMod, statusDmgMod: status.dmgMod, statusDefMod: status.defMod,
-    statusTickValue: status.tickValue, statusTickIntervalSec: status.tickIntervalSec, statusIcon: status.icon, statusColor: status.color,
-    aoeRadius, cleanseEnabled, cleanseName, range,
-  };
-  dndAddLog(`✏️ DM ปรับสกิลประจำคลาส "${name}" ของ ${target.character.charName || target.name} (เฉพาะคนนี้คนเดียว คนอื่นในคลาสเดียวกันไม่กระทบ)`);
-}
-function dndHandleClassSkillOverrideReset(ws, targetId, skillId) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) return;
-  const target = dndPlayers.find(pp => pp.id === Number(targetId) && !pp.isDM);
-  if (!target) { dndSendError(ws, 'ไม่พบผู้เล่นเป้าหมาย'); return; }
-  const sid = Number(skillId);
-  if (target.character.skillOverrides && target.character.skillOverrides[sid]) {
-    delete target.character.skillOverrides[sid];
-    dndAddLog(`♻️ DM รีเซ็ตสกิลประจำคลาสของ ${target.character.charName || target.name} กลับเป็นค่าเริ่มต้นของคลาสแล้ว`);
-  }
-}
-
 // ---- อุปกรณ์สวมใส่: อาวุธ / เกราะ / รองเท้า / เครื่องประดับ — แต่ละชิ้นมีค่าป้องกันและความคงทน ----
+const DND_EQUIP_SLOTS = ['weapon', 'armor', 'shoes', 'accessory'];
+const DND_EQUIP_SLOT_LABELS = { weapon: 'อาวุธ', armor: 'เกราะ', shoes: 'รองเท้า', accessory: 'เครื่องประดับ' };
 // จำกัดขนาดรูปไอเทม (เป็น data URL base64) กันข้อความ websocket ใหญ่เกินไป — ประมาณ 220KB ไฟล์จริง
+const DND_EQUIP_ICON_MAX_LEN = 300000;
 function dndSanitizeEquipIcon(raw) {
   if (typeof raw !== 'string' || !raw) return '';
   if (!raw.startsWith('data:image/')) return '';
@@ -354,6 +976,9 @@ function dndSanitizeEquipment(raw) {
   return out;
 }
 // ---- แต่งหน้าตาตัวละคร (ทรงผม/สีผม/สีหน้า) — เรื่องความสวยงามล้วนๆ ไม่กระทบสเตตัส แก้ไขได้เองทุกเมื่อไม่ต้องรอ DM ปลดล็อกการ์ด ----
+const DND_HAIR_STYLES = ['bald', 'short', 'long', 'mohawk', 'ponytail'];
+const DND_HAIR_COLORS = ['#2b1b12', '#5b3a1e', '#8a5a2b', '#c9a227', '#e8e2d0', '#7a3b2e', '#3b3b3b', '#c94f4f'];
+const DND_FACE_STYLES = ['neutral', 'smile', 'serious', 'surprised', 'wink'];
 function dndSanitizeAppearance(raw) {
   const r = (raw && typeof raw === 'object') ? raw : {};
   const hair = DND_HAIR_STYLES.includes(r.hair) ? r.hair : 'short';
@@ -373,22 +998,10 @@ function dndSanitizeBag(raw) {
   }
   return out;
 }
-// เช็คว่ากระเป๋ายังมีที่ว่างพอสำหรับไอเทมชื่อนี้ไหม — ถ้ามีไอเทมชื่อนี้อยู่แล้วถือว่ามีที่เสมอ (กองรวมช่องเดิม ไม่กินช่องเพิ่ม)
-// ถ้าเป็นไอเทมชนิดใหม่ ต้องดูว่าจำนวนช่องที่ใช้อยู่ยังไม่เต็ม DND_BAG_CAPACITY
-function dndBagHasRoomFor(character, name) {
-  const bag = dndSanitizeBag(character.bag);
-  if (bag.some(it => it.name === name)) return true;
-  return bag.length < DND_BAG_CAPACITY;
-}
-// เพิ่มไอเทมเข้ากระเป๋า — คืนค่า true ถ้าเพิ่มสำเร็จ, false ถ้ากระเป๋าเต็ม (ช่องไอเทมไม่พอสำหรับไอเทมชนิดใหม่) แล้วไม่ได้แก้ไขอะไร
-// force: true = บังคับเพิ่มแม้กระเป๋าเต็ม (ใช้เฉพาะตอนถอดของสวมใส่คืนกระเป๋า กันไม่ให้ไอเทมที่ใส่อยู่แล้วหายไปเฉยๆ เพราะกระเป๋าเต็มพอดี)
-function dndBagAdd(character, name, qty, force) {
+function dndBagAdd(character, name, qty) {
   character.bag = dndSanitizeBag(character.bag);
   const row = character.bag.find(it => it.name === name);
-  if (row) { row.qty += qty; return true; }
-  if (!force && character.bag.length >= DND_BAG_CAPACITY) return false;
-  character.bag.push({ name, qty });
-  return true;
+  if (row) row.qty += qty; else character.bag.push({ name, qty });
 }
 // คืน true ถ้าลบสำเร็จ (มีของพอให้ลบ), false ถ้าของไม่พอ
 function dndBagRemove(character, name, qty) {
@@ -418,7 +1031,14 @@ function dndDefaultShopItems() {
   }))];
 }
 // ---- ร้านตีบวก: DM สร้างร้านประเภท "forge" — ผู้เล่นเลือกอุปกรณ์ที่สวมใส่อยู่มาตีบวกทีละขั้นด้วยทอง ----
+const DND_SHOP_TYPES = ['item', 'forge'];
 // นโยบายเมื่อตีบวกพลาด: safe = ไม่มีอะไรเกิดขึ้นนอกจากเสียทอง, downgrade = ระดับตีบวกลดลง 1 ขั้น, break = ไอเทมพัง (รีเซตโบนัสตีบวกทั้งหมดกลับเป็น +0)
+const DND_FORGE_FAIL_POLICIES = ['safe', 'downgrade', 'break'];
+const DND_FORGE_FAIL_POLICY_LABELS = {
+  safe: 'พลาดแล้วไม่มีอะไรเกิดขึ้น (เสียแค่ทอง)',
+  downgrade: 'พลาดแล้วระดับตีบวกลดลง 1 ขั้น',
+  break: 'พลาดแล้วไอเทมพัง (โบนัสตีบวกรีเซตกลับเป็น +0 ทั้งหมด)',
+};
 function dndSanitizeForgeTier(raw) {
   const r = (raw && typeof raw === 'object') ? raw : {};
   const name = (r.name || '').toString().trim().slice(0, 40) || 'ตีบวก';
@@ -457,6 +1077,7 @@ function dndDefaultItemEffectsInit() {
 }
 // ---- ไอเทมใช้งานได้: DM กำหนดชื่อ + ผล (ฟื้นฟู HP / ชุบชีวิต / ให้ทอง / สวมใส่อุปกรณ์) — ชื่อต้องตรงกับชื่อไอเทมในกระเป๋าผู้เล่นเป๊ะๆ ถึงจะมีปุ่ม "ใช้" ----
 // "heal" ฟื้นฟู HP ได้เฉพาะเป้าหมายที่ยังไม่หมดสติเท่านั้น (ปลุกคนหมดสติไม่ได้) — ต้องเป็น "revive" เท่านั้นที่ DM สร้างขึ้นมาโดยเฉพาะ ถึงจะใช้ชุบชีวิตคนหมดสติได้
+const DND_ITEM_EFFECT_TYPES = ['heal', 'revive', 'gold', 'equip', 'none'];
 function dndSanitizeItemEffect(raw) {
   const r = (raw && typeof raw === 'object') ? raw : {};
   const name = (r.name || '').toString().trim().slice(0, 40);
@@ -570,7 +1191,7 @@ function dndHandleUseItem(ws, name, targetId) {
     const slot = def.slot;
     const oldItem = c.equipment[slot];
     // ถ้าช่องนั้นมีของสวมอยู่แล้ว คืนของเก่ากลับเข้ากระเป๋าก่อนสวมของใหม่ ไม่ให้ของหาย
-    if (oldItem && oldItem.name) dndBagAdd(c, oldItem.name, 1, true); // force: กันของที่สวมอยู่หายเพราะกระเป๋าเต็มพอดี
+    if (oldItem && oldItem.name) dndBagAdd(c, oldItem.name, 1);
     c.equipment[slot] = { name: cleanName, atk: def.atk, def: def.def, durability: def.maxDurability, maxDurability: def.maxDurability, icon: def.icon || '' };
     const slotLabel = DND_EQUIP_SLOT_LABELS[slot] || slot;
     resultText = `🛡️ สวมใส่เป็น${slotLabel}${oldItem && oldItem.name ? ` (ถอด "${oldItem.name}" เก็บเข้ากระเป๋า)` : ''}`;
@@ -594,6 +1215,10 @@ function dndTotalDefense(equipment) {
   }, 0);
 }
 // ตาราง EXP สะสมสำหรับเลเวล (ใช้ EXP รวม ไม่ใช่ EXP ที่เหลือหลังเลเวลอัป)
+const DND_LEVEL_EXP = [
+  0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000,
+  85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000
+];
 function dndLevelFromExp(exp) {
   const total = Math.max(0, Math.floor(Number(exp) || 0));
   let level = 1;
@@ -658,14 +1283,15 @@ function dndHpRange(level, conMod, hitDie) {
   const max = Math.max(min, level * (hitDie + conMod));
   return { min, max };
 }
+const DND_POINT_BUY_TOTAL = 72;
+const DND_STARTING_GOLD_MAX = 200; // เพดานทองเริ่มต้นที่ผู้เล่นกรอกเองได้ตอนสร้างตัวละคร กัน exploit
 function dndComputeFinalStats(pointBuy, race, cls) {
   const stats = {};
   for (const k of ['str', 'dex', 'con', 'int', 'wis', 'cha']) {
-    let score = Math.round(Number(pointBuy && pointBuy[k]));
-    if (!Number.isFinite(score) || score < POINT_BUY_MIN) score = POINT_BUY_MIN;
+    const pb = Math.max(0, Math.min(DND_POINT_BUY_TOTAL, Math.round(Number(pointBuy && pointBuy[k]) || 0)));
     const rb = (race && race.bonus && race.bonus[k]) || 0;
     const cb = (cls && cls.bonus && cls.bonus[k]) || 0;
-    stats[k] = score + rb + cb;
+    stats[k] = 1 + pb + rb + cb;
   }
   return stats;
 }
@@ -673,48 +1299,24 @@ function dndComputeFinalStats(pointBuy, race, cls) {
 function newDndCharacter(displayName) {
   return {
     charName: displayName, raceKey: '', classKey: '', race: '', cls: '', level: 1, passiveKey: '',
-    hp: 10, maxHp: 10, ac: 10, sp: DND_STARTING_SP, maxSp: DND_STARTING_SP,
+    hp: 10, maxHp: 10, ac: 10,
     str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10,
     inventory: '', backstory: '', locked: false, pointBuy: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
-    equipment: dndSanitizeEquipment(null), statuses: [], exp: 0, gold: 0, statPoints: 0,
-    appearance: dndSanitizeAppearance(null), bag: [], normalAttack: null,
-    skillOverrides: {}, // DM ปรับสกิลประจำคลาสเฉพาะผู้เล่นคนนี้คนเดียว — คีย์ = id สกิลคลาส, ค่า = ฟิลด์ที่ทับค่าเริ่มต้นของคลาส
+    equipment: dndSanitizeEquipment(null), statuses: [], exp: 0, gold: 0,
+    appearance: dndSanitizeAppearance(null), bag: [],
   };
-}
-// เติมฟิลด์ที่อาจขาดหายไปให้ตัวละคร (เช่นไฟล์เซฟเก่าที่บันทึกไว้ก่อนจะมีระบบ SP)
-// ป้องกัน sp/maxSp เป็น undefined แล้วโหลดไฟล์เก่ากลับมาแล้วหลอด SP ไม่ขึ้นทั้งฝั่งผู้เล่น/DM
-function dndEnsureCharacterDefaults(character) {
-  const c = character || newDndCharacter('ผู้เล่น');
-  if (c.maxSp == null || !Number.isFinite(Number(c.maxSp))) c.maxSp = DND_STARTING_SP;
-  if (c.sp == null || !Number.isFinite(Number(c.sp))) c.sp = c.maxSp;
-  return c;
 }
 function dndPublicPlayer(p) {
   // สกิลที่ DM มอบให้ผู้เล่นคนนี้โดยเฉพาะ — ส่งให้ทุกคนเห็นบนการ์ดตัวละครของเขาในปาร์ตี้
   const assignedSkills = dndSkills.filter(s => s.assignedIds && s.assignedIds.includes(p.id)).map(s => ({ id: s.id, name: s.name }));
   // สกิลประจำคลาสของผู้เล่นคนนี้ทั้งหมด (รวมที่ยังไม่ปลดล็อก) — ให้ DM เห็นครบตอนเปิดหน้าต่างแก้ไขผู้เล่นคนนี้
-  const classSkills = dndClassSkillsForPlayer(p).map(s => ({
-    id: s.id, name: s.name, desc: s.desc, level: s.level, locked: s.locked, overridden: s.overridden,
-    stat: s.stat, dmgDie: s.dmgDie, dmgCount: s.dmgCount, dmgMod: s.dmgMod, cooldownSec: s.cooldownSec, maxUses: s.maxUses, spCost: s.spCost || 0,
-    hitChance: s.hitChance, guaranteedHit: !!s.guaranteedHit,
-    healDie: s.healDie || 0, healCount: s.healCount || 1, healMod: s.healMod || 0, healRevive: !!s.healRevive,
-    statusName: s.statusName || '', statusNote: s.statusNote || '', statusChance: s.statusChance,
-    statusDurationSec: s.statusDurationSec || 0, statusAtkMod: s.statusAtkMod || 0, statusDmgMod: s.statusDmgMod || 0,
-    statusDefMod: s.statusDefMod || 0, statusTickValue: s.statusTickValue || 0, statusTickIntervalSec: s.statusTickIntervalSec || 6,
-    aoeRadius: s.aoeRadius || 0, cleanseEnabled: !!s.cleanseEnabled, cleanseName: s.cleanseName || '', range: s.range || 0,
-    buffAlly: !!s.buffAlly, targetMode: dndSkillTargetMode(s),
-  }));
+  const classSkills = dndClassSkillsForPlayer(p).map(s => ({ id: s.id, name: s.name, desc: s.desc, level: s.level, locked: s.locked }));
   return { id: p.id, isDM: p.isDM, connected: p.connected, character: p.character, assignedSkills, classSkills };
 }
 // คืนรายการสกิลที่ผู้เล่นคนนี้มองเห็น พร้อมสถานะคูลดาวน์/จำนวนครั้งที่ใช้ไปแล้ว "เฉพาะของเขาเอง"
 // (ไม่แก้ไขอ็อบเจกต์สกิลต้นฉบับ เพราะสกิลเดียวกันอาจถูกมองจากผู้เล่นหลายคนพร้อมกัน)
-// ผู้เล่นทั่วไป (ไม่ใช่ DM) เห็นเฉพาะ: สกิลที่ DM ยังไม่ได้จำกัดสิทธิ์ (ใช้ได้ทั้งปาร์ตี้) + สกิลที่ตัวเองถูกระบุสิทธิ์ไว้โดยเฉพาะ
-// (ไม่เห็นรายละเอียด/ชื่อของสกิลที่ DM มอบสิทธิ์ให้ผู้เล่นคนอื่นเท่านั้น) — DM เห็นสกิลทั้งหมดในห้องเสมอเพื่อจัดการได้ครบ
 function dndVisibleSkills(p) {
-  const customVisible = p.isDM
-    ? dndSkills
-    : dndSkills.filter(s => !s.assignedIds || s.assignedIds.length === 0 || s.assignedIds.includes(p.id));
-  const all = customVisible.concat(dndClassSkillsForPlayer(p));
+  const all = dndSkills.concat(dndClassSkillsForPlayer(p));
   return all.map(s => {
     const used = (p.skillUsedCount && p.skillUsedCount[s.id]) || 0;
     const usesLeft = s.maxUses > 0 ? Math.max(0, s.maxUses - used) : null;
@@ -743,35 +1345,23 @@ function dndBroadcastState() {
         passives: DND_RACE_PASSIVES,
         customPassives: dndCustomPassives,
         skills: dndVisibleSkills(p),
-        pointBuyMin: POINT_BUY_MIN,
-        pointBuyBudget: POINT_BUY_BUDGET,
-        pointBuyCost: POINT_BUY_COST,
-        pointBuyCostMaxDefined: POINT_BUY_COST_MAX_DEFINED,
-        pointBuyCostPerStepAboveMax: POINT_BUY_COST_PER_STEP_ABOVE_MAX,
-        statPointsPerLevel: STAT_POINTS_PER_LEVEL,
+        pointBuyTotal: DND_POINT_BUY_TOTAL,
         equipSlots: DND_EQUIP_SLOTS,
         equipSlotLabels: DND_EQUIP_SLOT_LABELS,
-        bagCapacity: DND_BAG_CAPACITY,
         hairStyles: DND_HAIR_STYLES,
         hairColors: DND_HAIR_COLORS,
         faceStyles: DND_FACE_STYLES,
-        shops: p.isDM ? dndShops : dndShops.filter(s => !s.closed),
+        shops: dndShops,
         forgeFailPolicyLabels: DND_FORGE_FAIL_POLICY_LABELS,
         itemEffects: dndItemEffects,
         trades: dndTradesForPlayer(p),
         scene: dndScene,
-        gameTime: dndGameTime,
-        timeAuto: dndTimeAuto,
         tokens: dndTokensPublic(),
-        walls: dndWallsForCurrentMap(),
-        visionEnabled: dndVisionEnabled,
-        visionTypeLabels: DND_VISION_TYPE_LABELS,
-        visionDefaults: DND_VISION_DEFAULT_RADIUS,
         mapBackground: dndCurrentMap().background,
         maps: dndMaps.map(m => ({ id: m.id, name: m.name })),
         currentMapId: dndCurrentMapId,
         levelExpTable: DND_LEVEL_EXP,
-        turnOrder: dndTurnOrder.map(e => ({ kind: e.kind, id: e.id, name: dndTurnEntryName(e) })),
+        turnOrder: dndTurnOrder,
         turnIndex: dndTurnIndex,
         currentTurnPlayerId: dndCurrentTurnPlayerId(),
       }));
@@ -809,27 +1399,18 @@ function dndPublicToken(t) {
     const ac = owner ? owner.character.ac : 0;
     const statuses = owner ? (owner.character.statuses || []) : [];
     const pos = dndPcPosForCurrentMap(t);
-    const visionType = DND_VISION_TYPES.includes(t.visionType) ? t.visionType : 'normal';
-    const visionRadius = Number.isFinite(t.visionRadius) ? t.visionRadius : DND_VISION_DEFAULT_RADIUS[visionType];
-    return {
-      id: t.id, kind: 'pc', ownerId: t.ownerId, name, color: t.color, image: t.image || null, x: pos.x, y: pos.y, hp, maxHp, ac, attacks: [], statuses,
-      visionType, visionRadius, visionRadiusOverride: Number.isFinite(t.visionRadius) ? t.visionRadius : null,
-    };
+    return { id: t.id, kind: 'pc', ownerId: t.ownerId, name, color: t.color, image: t.image || null, x: pos.x, y: pos.y, hp, maxHp, ac, attacks: [], statuses };
   }
   return {
     id: t.id, kind: 'npc', ownerId: null, name: t.name, color: t.color, image: t.image || null, x: t.x, y: t.y, mapId: t.mapId,
     hp: t.hp, maxHp: t.maxHp, ac: t.ac, size: t.size || 'normal',
     str: t.str || 10, dex: t.dex || 10, con: t.con || 10, int: t.int || 10, wis: t.wis || 10, cha: t.cha || 10,
-    attacks: t.attacks || [], statuses: t.statuses || [], expReward: t.expReward || 0, goldReward: t.goldReward || 0, loot: t.loot || [], statusResist: t.statusResist || 0,
+    attacks: t.attacks || [], statuses: t.statuses || [], expReward: t.expReward || 0, goldReward: t.goldReward || 0, loot: t.loot || [],
   };
 }
 // ผู้เล่น (pc) เห็นเสมอไม่ว่าจะสลับไปแผนที่ไหน — มอนสเตอร์ (npc) แสดงเฉพาะที่อยู่บนแผนที่ปัจจุบันเท่านั้น
 function dndTokensPublic() {
   return dndTokens.filter(t => t.kind === 'pc' || t.mapId === dndCurrentMapId).map(dndPublicToken);
-}
-// กำแพงที่อยู่บนแผนที่ที่กำลังแสดงอยู่ตอนนี้เท่านั้น (เหมือน npc token ที่ผูกกับแผนที่)
-function dndWallsForCurrentMap() {
-  return dndWalls.filter(w => w.mapId === dndCurrentMapId);
 }
 // ---- AOE: หาตำแหน่งเป้าหมายบนแผนที่ปัจจุบัน + รวบรวมเป้าหมายทั้งหมดไว้คำนวณระยะห่างตอนใช้สกิล AOE ----
 // พิกัด x,y ของ token ทุกตัวเป็นหน่วย % ของแผนที่ (0-100 ทั้งสองแกน) อยู่แล้ว จึงใช้ระยะทางแบบยุคลิดตรง ๆ ได้
@@ -873,11 +1454,6 @@ const DND_DEAD_MSG = 'คุณหมดสติอยู่ ทำอะไร
 function dndIsCharDead(c) { return !!c && (Number(c.hp) || 0) <= 0; }
 
 function dndHandleJoin(ws, name) {
-  // เชื่อมต่อ (ws) นี้มีตัวละครอยู่ในห้องอยู่แล้ว — เช่น รีเฟรช/สลับหน้าเร็วจนข้อความ join เข้ามาซ้ำ
-  // ก่อนที่เซิร์ฟเวอร์จะรู้ตัวว่าการเชื่อมต่อเก่าหลุดไปแล้ว ถ้าปล่อยให้สร้างตัวละครใหม่ซ้อนไป จะเกิดตัวละคร "ผี" ค้าง
-  // อยู่ในห้อง (โชว์สถานะ/ค่าสเตตัสเก่าค้างไม่อัปเดต เพราะ ws เดียวกันไปผูกกับผู้เล่น 2 รายการพร้อมกัน) — จึงส่งสถานะปัจจุบันกลับไปแทน
-  const existing = dndFindByWs(ws);
-  if (existing) { dndBroadcastState(); return; }
   const cleanName = (name || '').toString().trim().slice(0, 16) || `นักผจญภัย${dndPlayers.length + 1}`;
   const isDM = dndPlayers.length === 0; // คนแรกที่เข้าห้องเป็น DM เสมอ และจะยังคงเป็น DM แม้หลุดการเชื่อมต่อ (ไม่มีใครมาแทนที่)
   const id = dndNextId++;
@@ -897,10 +1473,6 @@ function dndHandleListSeats(ws) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'dndSeatList', seats: dndVacantSeats() }));
 }
 function dndHandleTakeSeat(ws, id) {
-  // เชื่อมต่อ (ws) นี้ผูกกับผู้เล่นอยู่แล้ว (นั่งอยู่แล้ว หรือ join ไปแล้วในจังหวะไล่เลี่ยกัน) — กันไม่ให้ ws เดียวไปผูกซ้อนกับผู้เล่น 2 คน
-  // ซึ่งจะทำให้การกระทำต่างๆ ไปอัปเดตผิดตัว และตัวละครที่เห็นบนจอค้างค่าเก่าไม่อัปเดต
-  const already = dndFindByWs(ws);
-  if (already) { dndBroadcastState(); return; }
   const target = dndPlayers.find(p => p.id === Number(id) && !p.connected);
   if (!target) { dndHandleListSeats(ws); return; } // ที่นั่งถูกคนอื่นเอาไปแล้ว หรือข้อมูลเก่า — ส่งรายชื่อล่าสุดกลับไป
   target.ws = ws;
@@ -927,19 +1499,15 @@ function dndHandleCreateCharacter(ws, payload) {
   const passiveEffect = passive.effect || {};
 
   const pointBuy = { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 };
-  let spentCost = 0;
+  let spent = 0;
   for (const k of Object.keys(pointBuy)) {
     const raw = payload.pointBuy && payload.pointBuy[k];
-    let score = Math.round(Number(raw));
-    if (!Number.isFinite(score) || score < POINT_BUY_MIN) score = POINT_BUY_MIN;
-    pointBuy[k] = score;
-    // ราคาต้องอิงค่ารวม (ดิบ+โบนัสเผ่า/คลาส) ไม่ใช่ค่าดิบเฉยๆ — ถ้าสเตตัสไหนมีโบนัสติดตัวอยู่แล้ว
-    // การซื้อแต้มเพิ่มในสเตตัสนั้นจะยิ่งแพงขึ้นเรื่อยๆ เร็วกว่าสเตตัสที่ไม่มีโบนัส (โบนัสเองไม่เสียแต้ม)
-    const bonus = ((race.bonus && race.bonus[k]) || 0) + ((cls.bonus && cls.bonus[k]) || 0);
-    spentCost += pointBuyCostForRaw(score, bonus);
+    const n = Math.max(0, Math.min(DND_POINT_BUY_TOTAL, Math.round(Number(raw) || 0)));
+    pointBuy[k] = n;
+    spent += n;
   }
-  if (spentCost !== POINT_BUY_BUDGET) {
-    dndSendError(ws, `ต้องใช้พอยต์ให้ครบพอดี ${POINT_BUY_BUDGET} พอย (ตอนนี้ใช้ไป ${spentCost} พอย)`);
+  if (spent !== DND_POINT_BUY_TOTAL) {
+    dndSendError(ws, `ต้องแจกแต้มสเตตัสให้ครบพอดี ${DND_POINT_BUY_TOTAL} แต้ม (ตอนนี้ใช้ไป ${spent} แต้ม)`);
     return;
   }
 
@@ -974,12 +1542,11 @@ function dndHandleCreateCharacter(ws, payload) {
 
   p.character = {
     charName, raceKey: race.key, classKey: cls.key, race: race.name, cls: cls.name, passiveKey: passive.key,
-    level, hp: maxHp, maxHp, ac, sp: DND_STARTING_SP, maxSp: DND_STARTING_SP,
+    level, hp: maxHp, maxHp, ac,
     str: finalStats.str, dex: finalStats.dex, con: finalStats.con,
     int: finalStats.int, wis: finalStats.wis, cha: finalStats.cha,
     inventory, backstory, locked: true, pointBuy, equipment, statuses: (p.character.statuses || []),
     appearance, gold: (p.character.gold || 0) + gold, bag: dndSanitizeBag(p.character.bag),
-    statPoints: (p.character.statPoints || 0),
   };
   // สร้าง token บนแผนที่ให้อัตโนมัติ (ครั้งแรกที่ล็อกการ์ดตัวละครเท่านั้น เพราะฟังก์ชันนี้ทำงานได้แค่ครั้งเดียวต่อคน)
   if (!dndTokens.some(t => t.kind === 'pc' && t.ownerId === p.id)) {
@@ -992,54 +1559,9 @@ function dndHandleCreateCharacter(ws, payload) {
   dndAddLog(`${charName} (${race.name} ${cls.name} · สกิลติดตัว: ${passive.name}) สร้างการ์ดตัวละครแล้ว — บันทึกล็อกเรียบร้อย`);
 }
 
-// ผู้เล่นกดใช้ "แต้มสเตตัส" ที่ได้จากการเลเวลอัพ เพิ่มสเตตัสตัวใดตัวหนึ่งขึ้นทีละ 1 แต้ม
-// ต้นทุนต่อ 1 แต้มที่เพิ่มขึ้นอยู่กับค่าปัจจุบัน (ขั้นบันไดเดียวกับตอนสร้างตัวละคร — ดู data/point-buy.js)
-// สำคัญ: ต้องคิดต้นทุนจากค่ารวม (ดิบ + โบนัสเผ่าพันธุ์/คลาส) ไม่ใช่ค่าดิบเฉยๆ (c.pointBuy[key])
-// เพราะถ้าสเตตัสนั้นมีโบนัสติดตัวอยู่แล้ว ค่ารวมจริงจะยืนอยู่สูงกว่าค่าดิบ — ต้องคิดราคาขั้นถัดไปตามตำแหน่ง
-// ค่ารวมจริง ไม่งั้นสเตตัสที่มีโบนัสเผ่า/คลาสจะได้แต้มถูกกว่าที่ควรเทียบกับกำลังจริงที่ได้ (ดู pointBuyStepCost(raw, bonus))
-const DND_STAT_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
-function dndHandleSpendStatPoint(ws, stat) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.character || !p.character.locked) { dndSendError(ws, 'ต้องสร้างการ์ดตัวละครก่อนถึงจะอัพสเตตัสได้'); return; }
-  const key = (stat || '').toString();
-  if (!DND_STAT_KEYS.includes(key)) { dndSendError(ws, 'สเตตัสไม่ถูกต้อง'); return; }
-  const c = p.character;
-  if (!c.pointBuy) c.pointBuy = { str: POINT_BUY_MIN, dex: POINT_BUY_MIN, con: POINT_BUY_MIN, int: POINT_BUY_MIN, wis: POINT_BUY_MIN, cha: POINT_BUY_MIN };
-  const currentRaw = Math.round(Number(c.pointBuy[key])) || POINT_BUY_MIN;
-  const race = dndRaceByKey(c.raceKey);
-  const cls = dndClassByKey(c.classKey);
-  const raceBonus = (race && race.bonus && race.bonus[key]) || 0;
-  const clsBonus = (cls && cls.bonus && cls.bonus[key]) || 0;
-  // สำคัญ: ราคาต้องอิงค่ารวม (ดิบ+โบนัสเผ่า/คลาส) ไม่ใช่ค่าดิบเฉยๆ — ถ้าเผ่า/คลาสให้โบนัสสเตตัสนี้อยู่แล้ว
-  // ค่ารวมจริงจะยืนอยู่สูงกว่าค่าดิบ ต้องคิดราคาขั้นถัดไปจากตำแหน่งค่ารวมนั้น ไม่ใช่จากค่าดิบซึ่งจะทำให้ถูกกว่าที่ควร
-  const cost = pointBuyStepCost(currentRaw, raceBonus + clsBonus);
-  const available = Math.round(Number(c.statPoints) || 0);
-  if (available < cost) { dndSendError(ws, `แต้มสเตตัสไม่พอ (เพิ่ม ${key.toUpperCase()} อีก 1 ต้องใช้ ${cost} แต้ม ตอนนี้มี ${available} แต้ม)`); return; }
-  // อิงกลไก D&D: ถ้าสเตตัสที่เพิ่มคือ CON ตัวปรับ (modifier) ของ CON อาจขยับขึ้น ซึ่งใน D&D ค่า HP สูงสุดผูกกับ CON โดยตรง
-  // ต้องจับค่า modifier "ก่อน" เพิ่มสเตตัสไว้ก่อน แล้วเทียบกับ modifier "หลัง" เพิ่ม เพื่อคำนวณ HP ที่ควรได้เพิ่มมาด้วย (มาตรฐาน D&D: HP เปลี่ยนตาม conMod คูณเลเวล)
-  const oldConMod = key === 'con' ? dndAbilityMod(Number(c.con) || 10) : 0;
-  c.pointBuy[key] = currentRaw + 1;
-  c[key] = c.pointBuy[key] + raceBonus + clsBonus;
-  c.statPoints = available - cost;
-  let hpNote = '';
-  if (key === 'con') {
-    const newConMod = dndAbilityMod(Number(c.con) || 10);
-    const conModDelta = newConMod - oldConMod;
-    if (conModDelta !== 0) {
-      const level = Math.max(1, Math.round(Number(c.level) || 1));
-      const hpDelta = conModDelta * level;
-      c.maxHp = Math.max(1, Math.round((Number(c.maxHp) || 1) + hpDelta));
-      c.hp = Math.max(0, Math.min(c.maxHp, Math.round((Number(c.hp) || 0) + hpDelta)));
-      hpNote = ` (ตัวปรับ CON เปลี่ยน ${conModDelta > 0 ? '+' : ''}${conModDelta} → HP สูงสุด ${hpDelta > 0 ? '+' : ''}${hpDelta} เป็น ${c.maxHp})`;
-    }
-  }
-  dndAddLog(`📈 ${c.charName || p.name} เพิ่ม ${key.toUpperCase()} เป็น ${c[key]} (ใช้แต้มสเตตัส ${cost} แต้ม เหลือ ${c.statPoints} แต้ม)${hpNote}`);
-  dndBroadcastState();
-}
-
 const DND_DM_STR_FIELDS = ['charName', 'race', 'cls', 'inventory', 'backstory'];
 const DND_DM_STR_FIELD_MAXLEN = { inventory: 500, backstory: 800 };
-const DND_DM_NUM_FIELDS = ['level', 'maxHp', 'ac', 'maxSp', 'str', 'dex', 'con', 'int', 'wis', 'cha', 'exp', 'gold', 'statPoints'];
+const DND_DM_NUM_FIELDS = ['level', 'maxHp', 'ac', 'str', 'dex', 'con', 'int', 'wis', 'cha', 'exp', 'gold'];
 // DM แก้ไขข้อมูลของผู้เล่นคนไหนก็ได้ ทุกช่อง ทุกเมื่อ ไม่มีการล็อกหรือจำกัดช่วงค่า
 function dndHandleDmUpdate(ws, targetId, updates) {
   const p = dndFindByWs(ws);
@@ -1047,14 +1569,10 @@ function dndHandleDmUpdate(ws, targetId, updates) {
   const target = dndPlayers.find(pp => pp.id === Number(targetId));
   if (!target || !updates || typeof updates !== 'object') return;
   const c = target.character;
-  // จับโบนัสพาสซีพ "ก่อน" แก้ไขอะไรทั้งสิ้นไว้ก่อน — ใช้เทียบกับโบนัสพาสซีพ "หลัง" แก้ไข เพื่อคำนวณส่วนต่าง AC/HP ที่ควรได้เพิ่ม/ลด
-  const oldPassiveEffect = dndCharPassiveEffect(c);
 
-  let dndRaceOrClassChanged = false;
   if (updates.raceKey !== undefined) {
     const race = dndRaceByKey(updates.raceKey.toString());
     if (race) {
-      if (race.key !== c.raceKey) dndRaceOrClassChanged = true;
       c.raceKey = race.key; c.race = race.name;
       // เปลี่ยนเผ่าแล้ว ถ้าสกิลติดตัวเดิมไม่ได้อยู่ในรายการของเผ่าใหม่ ให้ล้างทิ้งไปก่อน (กันสกิลติดตัวจากเผ่าเก่าค้างอยู่)
       if (!dndRacePassiveByKey(race.key, c.passiveKey)) c.passiveKey = '';
@@ -1062,22 +1580,15 @@ function dndHandleDmUpdate(ws, targetId, updates) {
   }
   if (updates.classKey !== undefined) {
     const cls = dndClassByKey(updates.classKey.toString());
-    if (cls) {
-      if (cls.key !== c.classKey) dndRaceOrClassChanged = true;
-      c.classKey = cls.key; c.cls = cls.name;
-    }
+    if (cls) { c.classKey = cls.key; c.cls = cls.name; }
   }
-  // หมายเหตุ: การใช้งาน updates.passiveKey จริงอยู่ "หลัง" ลูป DND_DM_NUM_FIELDS ด้านล่าง (ดูคอมเมนต์ตรงนั้น)
-  // เพราะฟอร์มฝั่งไคลเอนต์ส่งค่า ac/maxHp เดิมมาด้วยเสมอ ถ้าคำนวณส่วนต่างพาสซีพตรงนี้ก่อน จะโดนค่าดิบจากฟอร์มทับทิ้ง
+  if (updates.passiveKey !== undefined) {
+    const passive = dndRacePassiveByKey(c.raceKey, updates.passiveKey.toString());
+    if (passive) c.passiveKey = passive.key;
+  }
   for (const f of DND_DM_STR_FIELDS) {
     if (updates[f] !== undefined) c[f] = updates[f].toString().slice(0, DND_DM_STR_FIELD_MAXLEN[f] || 40);
   }
-  // ต้องจับเลเวลเดิมไว้ "ก่อน" ที่ค่า exp จะถูกเขียนทับด้านล่าง ไม่งั้นจะเทียบเลเวลเดิมกับเลเวลใหม่ไม่ได้เลย (เดิมเป็นบั๊ก)
-  const previousLevel = dndLevelFromExp(c.exp);
-  // อิงกลไก D&D: HP สูงสุดผูกกับตัวปรับ (modifier) ของ CON โดยตรง — ต้องจับ modifier ของ CON "ก่อน" แก้ไข
-  // ไว้ก่อน เพื่อเทียบกับ modifier "หลัง" แก้ไข แล้วปรับ HP สูงสุด/HP ปัจจุบันตามส่วนต่างที่เปลี่ยนไปคูณเลเวล
-  // (ถ้าไม่ทำแบบนี้ ตอน DM แก้ CON ในฟอร์ม ค่า HP จะไม่ขยับตามเลย เพราะช่อง HP ในฟอร์มยังเป็นค่าเดิมที่ยังไม่ได้คำนวณใหม่)
-  const oldConMod = dndAbilityMod(Number(c.con) || 10);
   for (const f of DND_DM_NUM_FIELDS) {
     if (f === 'level') continue; // Level คำนวณจาก EXP อัตโนมัติ
     if (updates[f] !== undefined) {
@@ -1085,70 +1596,18 @@ function dndHandleDmUpdate(ws, targetId, updates) {
       if (Number.isFinite(n)) c[f] = Math.max(0, Math.min(9999, Math.round(n)));
     }
   }
-  if (updates.passiveKey !== undefined) {
-    const passive = dndRacePassiveByKey(c.raceKey, updates.passiveKey.toString());
-    if (passive) {
-      c.passiveKey = passive.key;
-      // สกิลติดตัวเดิม/ใหม่อาจให้โบนัส AC/HP ต่างกัน — บวก/ลบส่วนต่างเข้า ac/maxHp/hp ทันที
-      // ทำหลังบล็อกด้านบนที่เขียนทับ ac/maxHp ดิบจากฟอร์ม เพื่อไม่ให้ส่วนต่างนี้โดนทับทิ้ง
-      // (ฟอร์มฝั่งไคลเอนต์ยังไม่รู้จะพรีวิวค่าใหม่ยังไง เลยส่งค่า ac/maxHp เดิมก่อนเปลี่ยนพาสซีพมาด้วยเสมอ)
-      const newPassiveEffect = dndCharPassiveEffect(c);
-      const acDelta = (newPassiveEffect.ac || 0) - (oldPassiveEffect.ac || 0);
-      const hpDelta = (newPassiveEffect.hp || 0) - (oldPassiveEffect.hp || 0);
-      if (acDelta) c.ac = Math.max(0, Math.round((Number(c.ac) || 0) + acDelta));
-      if (hpDelta) {
-        c.maxHp = Math.max(1, Math.round((Number(c.maxHp) || 1) + hpDelta));
-        c.hp = Math.max(0, Math.min(c.maxHp, Math.round((Number(c.hp) || 0) + hpDelta)));
-      }
-      if (acDelta || hpDelta) {
-        dndAddLog(`✨ ${c.charName || target.name} เปลี่ยนสกิลติดตัวเป็น "${passive.name}"${acDelta ? ` (AC ${acDelta > 0 ? '+' : ''}${acDelta} เป็น ${c.ac})` : ''}${hpDelta ? ` (HP สูงสุด ${hpDelta > 0 ? '+' : ''}${hpDelta} เป็น ${c.maxHp})` : ''}`);
-      }
-    }
-  }
-  // DM เปลี่ยนเผ่าพันธุ์และ/หรือคลาส — ต้องคิดสเตตัสหลัก (str/dex/con/int/wis/cha) ใหม่จากคะแนน point-buy เดิม + โบนัสเผ่า/คลาสล่าสุดเสมอ
-  // (ก่อนแก้บั๊กนี้ ค่าที่ส่งมาจากฟอร์มยังเป็นสเตตัสของเผ่า/คลาสเก่าอยู่ เพราะฟอร์มไม่ได้คิดผลรวมใหม่ให้ก่อนกดบันทึก)
-  if (dndRaceOrClassChanged) {
-    const raceObj = dndRaceByKey(c.raceKey);
-    const clsObj = dndClassByKey(c.classKey);
-    const pointBuySource = (c.pointBuy && typeof c.pointBuy === 'object') ? c.pointBuy : c;
-    const recomputed = dndComputeFinalStats(pointBuySource, raceObj, clsObj);
-    c.str = recomputed.str; c.dex = recomputed.dex; c.con = recomputed.con;
-    c.int = recomputed.int; c.wis = recomputed.wis; c.cha = recomputed.cha;
-  }
+  const previousLevel = dndLevelFromExp(c.exp);
   dndSyncLevelFromExp(c);
   if (c.level > previousLevel) {
-    c.statPoints = Math.round(Number(c.statPoints) || 0) + STAT_POINTS_PER_LEVEL * (c.level - previousLevel);
-    dndAddLog(`🎉 ${c.charName || target.name} เลเวลอัป! Lv.${previousLevel} → Lv.${c.level} (ได้แต้มสเตตัส +${STAT_POINTS_PER_LEVEL * (c.level - previousLevel)})`);
+    dndAddLog(`🎉 ${c.charName || target.name} เลเวลอัป! Lv.${previousLevel} → Lv.${c.level}`);
     dndAnnounceClassSkillUnlocks(target, previousLevel, c.level);
-  }
-  // ส่วนต่างของ HP ที่ต้องปรับตามตัวปรับ CON ที่เปลี่ยนไป (มาตรฐาน D&D: HP เปลี่ยน = ส่วนต่าง conMod x เลเวลปัจจุบัน)
-  let conHpDelta = 0;
-  if (updates.con !== undefined || dndRaceOrClassChanged) {
-    const newConMod = dndAbilityMod(Number(c.con) || 10);
-    const conModDelta = newConMod - oldConMod;
-    if (conModDelta !== 0) {
-      const level = Math.max(1, Math.round(Number(c.level) || 1));
-      conHpDelta = conModDelta * level;
-      c.maxHp = Math.max(1, Math.min(9999, Math.round((Number(c.maxHp) || 1) + conHpDelta)));
-      dndAddLog(`❤️ ${c.charName || target.name} ตัวปรับ CON เปลี่ยน ${conModDelta > 0 ? '+' : ''}${conModDelta} → HP สูงสุด ${conHpDelta > 0 ? '+' : ''}${conHpDelta} เป็น ${c.maxHp} (อิงกลไก D&D)`);
-    }
   }
   let revived = false;
   if (updates.hp !== undefined) {
-    let n = Number(updates.hp);
-    // ถ้า CON เปลี่ยนในการแก้ไขครั้งนี้ด้วย ให้บวกส่วนต่าง HP เข้าไปกับค่าที่ DM ส่งมา (เผื่อช่อง HP ในฟอร์มยังเป็นค่าเดิมที่ยังไม่ได้คิด CON ใหม่)
-    if (Number.isFinite(n) && conHpDelta) n += conHpDelta;
+    const n = Number(updates.hp);
     const wasDead = dndIsCharDead(c);
     if (Number.isFinite(n)) c.hp = Math.max(0, Math.min(c.maxHp || 9999, Math.round(n)));
     revived = wasDead && !dndIsCharDead(c);
-  } else if (conHpDelta) {
-    // DM ไม่ได้ส่งค่า HP มาด้วย แต่ CON เปลี่ยน — ปรับ HP ปัจจุบันตามส่วนต่างเช่นกัน
-    c.hp = Math.max(0, Math.min(c.maxHp || 9999, Math.round((Number(c.hp) || 0) + conHpDelta)));
-  }
-  // SP ไม่ผูกกับ INT/เลเวลอัตโนมัติแล้ว — DM เป็นคนกำหนด sp/maxSp เองตรง ๆ ผ่านฟอร์มแก้ไขเท่านั้น
-  if (updates.sp !== undefined) {
-    const n = Number(updates.sp);
-    if (Number.isFinite(n)) c.sp = Math.max(0, Math.min(c.maxSp || 9999, Math.round(n)));
   }
   if (updates.locked !== undefined) c.locked = !!updates.locked;
   if (updates.equipment !== undefined) {
@@ -1159,8 +1618,6 @@ function dndHandleDmUpdate(ws, targetId, updates) {
     }
   }
   if (updates.appearance !== undefined) c.appearance = dndSanitizeAppearance(updates.appearance);
-  // DM ปรับแต่ง "โจมตีปกติ" ของผู้เล่นคนนี้ได้ — ส่ง null มา = ล้างกลับไปใช้ค่าเริ่มต้นของระบบ (max STR/DEX, 1d6)
-  if (updates.normalAttack !== undefined) c.normalAttack = dndSanitizeNormalAttack(updates.normalAttack);
 
   dndAddLog(`DM แก้ไขข้อมูลของ ${c.charName || target.name}`);
   if (revived) dndAddLog(`🌟 ${c.charName || target.name} ฟื้นจากหมดสติแล้ว! (DM เพิ่ม HP ให้)`);
@@ -1182,7 +1639,7 @@ function dndHandleShopCreate(ws, name, type) {
   const cleanName = (name || '').toString().trim().slice(0, 40)
     || (shopType === 'forge' ? `ร้านตีบวก ${dndShops.length + 1}` : `ร้านค้า ${dndShops.length + 1}`);
   dndShops.push({
-    id: dndNextShopId++, name: cleanName, type: shopType, closed: false,
+    id: dndNextShopId++, name: cleanName, type: shopType,
     items: shopType === 'forge' ? dndDefaultForgeItems() : dndDefaultShopItems(),
   });
   dndAddLog(`🏪 DM เปิด${shopType === 'forge' ? 'ร้านตีบวก' : 'ร้านค้า'}ใหม่: "${cleanName}"`);
@@ -1197,26 +1654,14 @@ function dndHandleShopRename(ws, shopId, name) {
   if (cleanName) shop.name = cleanName;
   dndBroadcastState();
 }
-// ปิด/เปิดร้านชั่วคราว — ไม่ลบไอเทมในร้านทิ้ง แค่ซ่อนร้านจากมุมมองผู้เล่น (DM ยังเห็น/จัดการ/เปิดกลับได้เสมอ)
-// แยกออกจาก dndHandleShopDelete โดยเจตนา เพราะการ "ปิดร้าน" ไม่ควรทำให้ไอเทมที่ตั้งค่าไว้หายไปถาวร
-function dndHandleShopToggleClosed(ws, shopId) {
-  const p = dndFindByWs(ws);
-  if (!p) { dndSendError(ws, 'ไม่พบข้อมูลผู้เล่นของคุณในห้องนี้ ลองเข้าห้องใหม่อีกครั้ง'); return; }
-  if (!p.isDM) { dndSendError(ws, 'เฉพาะ DM เท่านั้นที่ปิด/เปิดร้านค้าได้'); return; }
-  const shop = dndShops.find(s => s.id === Number(shopId));
-  if (!shop) { dndSendError(ws, 'ไม่พบร้านค้านี้แล้ว'); return; }
-  shop.closed = !shop.closed;
-  dndAddLog(shop.closed ? `🔒 DM ปิดร้าน "${shop.name}" ชั่วคราว (ไอเทมในร้านยังอยู่ครบ เปิดกลับได้ทุกเมื่อ)` : `🔓 DM เปิดร้าน "${shop.name}" กลับมาขายอีกครั้ง`);
-}
-// ลบร้านค้าออกจากห้องอย่างถาวร — ไอเทมทั้งหมดในร้านจะหายไปด้วย กู้คืนไม่ได้ ใช้เมื่อไม่ต้องการร้านนี้อีกแล้วจริงๆ เท่านั้น
 function dndHandleShopDelete(ws, shopId) {
   const p = dndFindByWs(ws);
   if (!p) { dndSendError(ws, 'ไม่พบข้อมูลผู้เล่นของคุณในห้องนี้ ลองเข้าห้องใหม่อีกครั้ง'); return; }
-  if (!p.isDM) { dndSendError(ws, 'เฉพาะ DM เท่านั้นที่ลบร้านค้าได้'); return; }
+  if (!p.isDM) { dndSendError(ws, 'เฉพาะ DM เท่านั้นที่ปิดร้านค้าได้'); return; }
   const idx = dndShops.findIndex(s => s.id === Number(shopId));
   if (idx === -1) { dndSendError(ws, 'ไม่พบร้านค้านี้แล้ว'); return; }
   const [removed] = dndShops.splice(idx, 1);
-  dndAddLog(`🗑️ DM ลบร้านค้า "${removed.name}" ออกจากห้องอย่างถาวร (ไอเทมในร้านหายไปทั้งหมด)`);
+  dndAddLog(`🏪 DM ปิดร้านค้า "${removed.name}" แล้ว`);
 }
 function dndHandleShopItemAdd(ws, shopId, payload) {
   const p = dndFindByWs(ws);
@@ -1261,7 +1706,6 @@ function dndHandleShopBuy(ws, shopId, itemId) {
   if (item.stock !== null && item.stock <= 0) { dndSendError(ws, `${item.name} ในร้านหมดแล้ว`); return; }
   const c = p.character;
   if ((c.gold || 0) < item.price) { dndSendError(ws, `ทองไม่พอซื้อ ${item.name} (ต้องการ ${item.price}, มี ${c.gold || 0})`); return; }
-  if (!dndBagHasRoomFor(c, item.name)) { dndSendError(ws, `กระเป๋าเต็มแล้ว (${DND_BAG_CAPACITY} ช่อง) ซื้อ ${item.name} ไม่ได้ ลองใช้หรือขายไอเทมอื่นก่อน`); return; }
   c.gold = (c.gold || 0) - item.price;
   dndBagAdd(c, item.name, 1);
   if (item.stock !== null) item.stock -= 1;
@@ -1342,14 +1786,6 @@ function dndCharacterHasItemsAndGold(character, items, gold) {
     if (!row || row.qty < it.qty) return false;
   }
   return true;
-}
-// เช็คว่ากระเป๋ายังมีที่ว่างพอรับไอเทมชุดนี้ทั้งหมดไหม (ใช้ก่อนยืนยันเทรด — นับเฉพาะไอเทมชนิดใหม่ที่ยังไม่มีในกระเป๋า)
-function dndCharacterHasRoomForItems(character, items) {
-  const bag = dndSanitizeBag(character.bag);
-  const existingNames = new Set(bag.map(it => it.name));
-  const newNames = new Set();
-  for (const it of items) if (!existingNames.has(it.name)) newNames.add(it.name);
-  return bag.length + newNames.size <= DND_BAG_CAPACITY;
 }
 // สมมติว่าตรวจสอบ (dndCharacterHasItemsAndGold) ผ่านแล้วก่อนเรียกฟังก์ชันนี้เสมอ
 function dndApplyItemsAndGoldTransfer(fromChar, toChar, items, gold) {
@@ -1433,16 +1869,6 @@ function dndHandleTradeRespond(ws, tradeId, accept) {
     dndAddLog(`🔄 การแลกเปลี่ยนล้มเหลว — ${p.character.charName || p.name} มีของไม่พอตามที่ถูกขอ`);
     return;
   }
-  if (!dndCharacterHasRoomForItems(p.character, trade.offerItems)) {
-    dndSendError(ws, `กระเป๋าของคุณเต็มแล้ว (${DND_BAG_CAPACITY} ช่อง) รับของจากข้อเสนอนี้ไม่ได้`);
-    dndAddLog(`🔄 การแลกเปลี่ยนล้มเหลว — กระเป๋าของ ${p.character.charName || p.name} เต็ม`);
-    return;
-  }
-  if (!dndCharacterHasRoomForItems(fromP.character, trade.requestItems)) {
-    dndSendError(ws, `กระเป๋าของ ${fromP.character.charName || fromP.name} เต็มแล้ว (${DND_BAG_CAPACITY} ช่อง) แลกเปลี่ยนไม่ได้`);
-    dndAddLog(`🔄 การแลกเปลี่ยนล้มเหลว — กระเป๋าของ ${fromP.character.charName || fromP.name} เต็ม`);
-    return;
-  }
   // ซิงค์เข้ากระเป๋าของทั้งสองฝ่ายพร้อมกัน (เหมือนของที่ได้รับ/ซื้อมา)
   dndApplyItemsAndGoldTransfer(fromP.character, p.character, trade.offerItems, trade.offerGold);
   dndApplyItemsAndGoldTransfer(p.character, fromP.character, trade.requestItems, trade.requestGold);
@@ -1459,66 +1885,20 @@ function dndHandleTradeCancel(ws, tradeId) {
   dndAddLog(`🔄 ยกเลิกข้อเสนอแลกเปลี่ยน #${trade.id}`);
 }
 
-// ---- ลำดับเทิร์นผู้เล่น+มอนสเตอร์: DM จัดลำดับเอง (ลาก/เลื่อนขึ้นลง ไม่ทอย initiative) แล้วกดเลื่อนตาไปเรื่อยๆ วนลูป ----
-// แต่ละช่องในลำดับเทิร์นเป็น entry รูปแบบ { kind: 'pc'|'npc', id } — 'pc' คือผู้เล่น (id = player id), 'npc' คือมอนสเตอร์/token บนแผนที่ (id = token id)
-// ต้องแยก kind เพราะ player id กับ token id คนละชุดตัวเลข อาจชนกันได้ ถ้าเทียบแค่ id เฉยๆ จะสับสนว่าเป็นใครกันแน่
-function dndNormalizeTurnEntry(raw) {
-  // รองรับของเก่า (เซฟไฟล์ก่อนหน้านี้ที่ยังเก็บลำดับเทิร์นเป็นเลข player id ล้วนๆ ไม่มี kind) ให้ตีความเป็น 'pc' เสมอ
-  if (raw && typeof raw === 'object') {
-    const kind = raw.kind === 'npc' ? 'npc' : 'pc';
-    const id = Number(raw.id);
-    return Number.isFinite(id) ? { kind, id } : null;
-  }
-  const id = Number(raw);
-  return Number.isFinite(id) ? { kind: 'pc', id } : null;
-}
-// เอา entry ที่อ้างถึงผู้เล่น/มอนสเตอร์ที่ไม่มีอยู่แล้วออกจากลำดับเทิร์น (เผื่อถูกเตะออก หรือมอนสเตอร์ถูกลบ/แผนที่ถูกลบระหว่างนับเทิร์นอยู่)
-function dndCleanTurnOrder() {
-  dndTurnOrder = dndTurnOrder.filter(e => {
-    if (e.kind === 'npc') return dndTokens.some(t => t.id === e.id && t.kind === 'npc');
-    return dndPlayers.some(pp => pp.id === e.id && !pp.isDM);
-  });
-  if (dndTurnIndex >= dndTurnOrder.length) dndTurnIndex = dndTurnOrder.length ? 0 : -1;
-}
-function dndTurnEntryName(e) {
-  if (!e) return '-';
-  if (e.kind === 'npc') {
-    const t = dndTokens.find(tt => tt.id === e.id && tt.kind === 'npc');
-    return t ? t.name : '(มอนสเตอร์ที่ถูกลบไปแล้ว)';
-  }
-  const pp = dndPlayers.find(pl => pl.id === e.id);
-  return pp ? (pp.character.charName || pp.name) : '-';
-}
-function dndCurrentTurnEntry() {
+// ---- ลำดับเทิร์นผู้เล่น: DM จัดลำดับเอง (ลาก/เลื่อนขึ้นลง ไม่ทอย initiative) แล้วกดเลื่อนตาไปเรื่อยๆ วนลูป ----
+function dndCurrentTurnPlayerId() {
   if (dndTurnIndex < 0 || dndTurnIndex >= dndTurnOrder.length) return null;
   return dndTurnOrder[dndTurnIndex];
-}
-// คืน player id เฉพาะตอนที่ตาปัจจุบันเป็นของ "ผู้เล่น" เท่านั้น — ถ้าเป็นตาของมอนสเตอร์ ให้คืน null เสมอ
-// (ผลคือผู้เล่นทุกคนกระทำการไม่ได้ในตามอนสเตอร์ ต้องรอ DM สั่งมอนสเตอร์เอง เหมือนตากันแทรกในลำดับปกติ)
-function dndCurrentTurnPlayerId() {
-  const e = dndCurrentTurnEntry();
-  return (e && e.kind === 'pc') ? e.id : null;
-}
-// ถ้ากำลังนับเทิร์นอยู่ (dndTurnIndex >= 0) เวลามีมอนสเตอร์ตัวใหม่ถูกวางเพิ่มลงแผนที่ปัจจุบันระหว่างนั้น
-// ให้ต่อท้ายลำดับเทิร์นทันที เพื่อให้มอนสเตอร์ตัวใหม่เข้าคิวได้โดยไม่ต้องกด "เริ่มเทิร์น" ใหม่ (ซึ่งจะรีเซ็ตกลับไปเป็นตาแรกทุกครั้ง)
-function dndAppendTurnEntryIfActive(kind, id) {
-  if (dndTurnIndex < 0 || !dndTurnOrder.length) return;
-  if (dndTurnOrder.some(e => e.kind === kind && e.id === id)) return;
-  dndTurnOrder.push({ kind, id });
 }
 function dndHandleTurnSetOrder(ws, order) {
   const p = dndFindByWs(ws);
   if (!p || !p.isDM || !Array.isArray(order)) return;
-  const validPlayerIds = new Set(dndPlayers.filter(pp => !pp.isDM).map(pp => pp.id));
-  const validNpcIds = new Set(dndTokens.filter(t => t.kind === 'npc' && t.mapId === dndCurrentMapId).map(t => t.id));
+  const validIds = new Set(dndPlayers.filter(pp => !pp.isDM).map(pp => pp.id));
   const seen = new Set();
   const cleaned = [];
   for (const raw of order) {
-    const entry = dndNormalizeTurnEntry(raw);
-    if (!entry) continue;
-    const valid = entry.kind === 'npc' ? validNpcIds.has(entry.id) : validPlayerIds.has(entry.id);
-    const key = `${entry.kind}:${entry.id}`;
-    if (valid && !seen.has(key)) { seen.add(key); cleaned.push(entry); }
+    const id = Number(raw);
+    if (validIds.has(id) && !seen.has(id)) { seen.add(id); cleaned.push(id); }
   }
   dndTurnOrder = cleaned;
   if (dndTurnIndex >= dndTurnOrder.length) dndTurnIndex = dndTurnOrder.length ? 0 : -1;
@@ -1526,24 +1906,18 @@ function dndHandleTurnSetOrder(ws, order) {
 function dndHandleTurnStart(ws) {
   const p = dndFindByWs(ws);
   if (!p || !p.isDM) return;
-  // สำคัญ: ต้อง "ซิงค์" ทุกครั้งที่กดเริ่ม ไม่ใช่สร้างใหม่แค่ตอนลำดับว่างเปล่าเท่านั้น
-  // เพราะถ้าเคยกดเริ่ม/หยุดไปแล้วครั้งหนึ่ง (ตอนนั้นยังไม่มีมอนสเตอร์) dndTurnOrder จะไม่ว่างอีกต่อไป
-  // แล้วพอ DM วางมอนสเตอร์เพิ่มทีหลังแล้วกดเริ่มใหม่ มอนสเตอร์จะไม่ถูกเติมเข้าลำดับเลยเพราะเงื่อนไข "ถ้าว่าง" ไม่จริงแล้ว
-  // เก็บลำดับที่ DM เคยจัดไว้สำหรับคนที่ยังอยู่ไว้ก่อน แล้วเติมผู้เล่น/มอนสเตอร์บนแผนที่นี้ที่ยังไม่มีในลำดับต่อท้ายให้อัตโนมัติ
-  dndCleanTurnOrder();
-  const existingKeys = new Set(dndTurnOrder.map(e => `${e.kind}:${e.id}`));
-  const missingPlayers = dndPlayers.filter(pp => !pp.isDM && !existingKeys.has(`pc:${pp.id}`)).map(pp => ({ kind: 'pc', id: pp.id }));
-  const missingNpcs = dndTokens.filter(t => t.kind === 'npc' && t.mapId === dndCurrentMapId && !existingKeys.has(`npc:${t.id}`)).map(t => ({ kind: 'npc', id: t.id }));
-  dndTurnOrder = [...dndTurnOrder, ...missingPlayers, ...missingNpcs];
-  if (!dndTurnOrder.length) { dndSendError(ws, 'ยังไม่มีผู้เล่นหรือมอนสเตอร์บนแผนที่นี้ให้เริ่มเทิร์น'); return; }
+  if (!dndTurnOrder.length) dndTurnOrder = dndPlayers.filter(pp => !pp.isDM).map(pp => pp.id);
+  if (!dndTurnOrder.length) { dndSendError(ws, 'ยังไม่มีผู้เล่นในปาร์ตี้ให้เริ่มเทิร์น'); return; }
   dndTurnIndex = 0;
-  dndAddLog(`🎯 เริ่มลำดับเทิร์น (${dndTurnOrder.length} ตัว) — ตอนนี้เป็นตาของ ${dndTurnEntryName(dndCurrentTurnEntry())}`);
+  const cur = dndPlayers.find(pp => pp.id === dndCurrentTurnPlayerId());
+  dndAddLog(`🎯 เริ่มลำดับเทิร์น — ตอนนี้เป็นตาของ ${cur ? (cur.character.charName || cur.name) : '-'}`);
 }
 function dndHandleTurnNext(ws) {
   const p = dndFindByWs(ws);
   if (!p || !p.isDM || !dndTurnOrder.length || dndTurnIndex < 0) return;
   dndTurnIndex = (dndTurnIndex + 1) % dndTurnOrder.length;
-  dndAddLog(`➡️ ตาถัดไป: ${dndTurnEntryName(dndCurrentTurnEntry())}`);
+  const cur = dndPlayers.find(pp => pp.id === dndCurrentTurnPlayerId());
+  dndAddLog(`➡️ ตาถัดไป: ${cur ? (cur.character.charName || cur.name) : '-'}`);
 }
 function dndHandleTurnStop(ws) {
   const p = dndFindByWs(ws);
@@ -1599,13 +1973,6 @@ function dndHandleMapCreate(ws, name) {
   dndCurrentMapId = map.id; // สลับไปแผนที่ใหม่ทันทีเพื่อให้ DM ออกแบบต่อได้เลย
   dndAddLog(`🗺️ DM สร้างแผนที่ใหม่ "${cleanName}" และสลับไปแสดงแผนที่นี้`);
 }
-// DM เปิด/ปิดระบบวิสัยทัศน์ (fog of war) ให้ทั้งห้อง — นอกระยะวิสัยทัศน์ผู้เล่นจะมืดสนิทมองไม่เห็นอะไรเลย DM เองยังเห็นแผนที่เต็มเสมอ
-function dndHandleVisionToggle(ws, enabled) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) return;
-  dndVisionEnabled = !!enabled;
-  dndAddLog(`👁️ DM ${dndVisionEnabled ? 'เปิด' : 'ปิด'}ระบบวิสัยทัศน์ผู้เล่น (Fog of War)`);
-}
 function dndHandleMapSwitch(ws, mapId) {
   const p = dndFindByWs(ws);
   if (!p || !p.isDM) return;
@@ -1632,39 +1999,8 @@ function dndHandleMapDelete(ws, mapId) {
   if (idx === -1) return;
   const [removed] = dndMaps.splice(idx, 1);
   dndTokens = dndTokens.filter(t => !(t.kind === 'npc' && t.mapId === removed.id)); // ลบมอนสเตอร์ที่อยู่บนแผนที่นี้ไปด้วย
-  dndWalls = dndWalls.filter(w => w.mapId !== removed.id); // ลบกำแพงที่อยู่บนแผนที่นี้ไปด้วย
   if (dndCurrentMapId === removed.id) dndCurrentMapId = dndMaps[0].id;
-  dndCleanTurnOrder(); // มอนสเตอร์บนแผนที่ที่ลบไปอาจอยู่ในลำดับเทิร์นอยู่ ต้องเอาออกด้วย
-  dndAddLog(`🗺️ DM ลบแผนที่ "${removed.name}" (รวมมอนสเตอร์และกำแพงบนแผนที่นั้นทั้งหมด)`);
-}
-// ---- DM วาดกำแพงบนแผนที่ปัจจุบัน (ลากเมาส์/นิ้วเป็นเส้นตรง) ----
-function dndHandleWallCreate(ws, payload) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM || !payload || typeof payload !== 'object') return;
-  const x1 = Number(payload.x1), y1 = Number(payload.y1), x2 = Number(payload.x2), y2 = Number(payload.y2);
-  if (![x1, y1, x2, y2].every(Number.isFinite)) return;
-  const clamp = n => Math.max(0, Math.min(100, n));
-  const cx1 = clamp(x1), cy1 = clamp(y1), cx2 = clamp(x2), cy2 = clamp(y2);
-  if (Math.hypot(cx2 - cx1, cy2 - cy1) < 1) return; // ลากสั้นเกินไป (แค่คลิกเฉยๆ) ไม่นับเป็นกำแพง
-  dndWalls.push({ id: dndNextWallId++, mapId: dndCurrentMapId, x1: cx1, y1: cy1, x2: cx2, y2: cy2 });
-  dndAddLog(`🧱 DM วาดกำแพงเพิ่มบนแผนที่ "${dndCurrentMap().name}"`);
-}
-// DM ลบกำแพงเส้นเดียวที่วาดผิดหรือไม่ต้องการแล้ว
-function dndHandleWallDelete(ws, id) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) return;
-  const idx = dndWalls.findIndex(w => w.id === Number(id));
-  if (idx === -1) return;
-  dndWalls.splice(idx, 1);
-  dndAddLog(`🧱 DM ลบกำแพงออกจากแผนที่ "${dndCurrentMap().name}"`);
-}
-// DM ล้างกำแพงทั้งหมดบนแผนที่ปัจจุบันทีเดียว
-function dndHandleWallClear(ws) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) return;
-  const before = dndWalls.length;
-  dndWalls = dndWalls.filter(w => w.mapId !== dndCurrentMapId);
-  if (dndWalls.length !== before) dndAddLog(`🧱 DM ล้างกำแพงทั้งหมดบนแผนที่ "${dndCurrentMap().name}"`);
+  dndAddLog(`🗺️ DM ลบแผนที่ "${removed.name}" (รวมมอนสเตอร์บนแผนที่นั้นทั้งหมด)`);
 }
 // DM เท่านั้นที่ประกาศสถานที่/สถานการณ์ปัจจุบันให้ทุกคนในห้องเห็นพร้อมกันได้ — ใช้บอกฉากปัจจุบันของปาร์ตี้
 function dndHandleSceneUpdate(ws, payload) {
@@ -1679,149 +2015,30 @@ function dndHandleSceneUpdate(ws, payload) {
     : '(ล้างประกาศแล้ว)';
   dndAddLog(`🖥️ DM ประกาศสถานการณ์: ${text}`);
 }
-// ---- นาฬิกาในเกม — DM เท่านั้นที่เดินเวลา/ข้ามวัน/ตั้งเวลาเองได้ ----
-const DND_TIME_DAY_LABELS_TH = ['วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์', 'วันอาทิตย์'];
-function dndFormatGameTime(t) {
-  const hh = String(t.hour).padStart(2, '0');
-  const mm = String(t.minute).padStart(2, '0');
-  return `วันที่ ${t.day} เวลา ${hh}:${mm}`;
-}
-function dndNormalizeGameTime(day, totalMinutesOfDay) {
-  // totalMinutesOfDay อาจติดลบหรือเกิน 1440 ได้ (เช่นเดินเวลาถอยหลัง หรือบวกหลายชั่วโมงข้ามวัน) — ฟังก์ชันนี้ทบวันให้ถูกต้อง
-  let d = day;
-  let m = totalMinutesOfDay;
-  while (m < 0) { m += 1440; d -= 1; }
-  while (m >= 1440) { m -= 1440; d += 1; }
-  if (d < 1) d = 1;
-  return { day: d, hour: Math.floor(m / 60), minute: m % 60 };
-}
-// DM เดินเวลาไปข้างหน้า (หรือถอยหลังถ้าใส่ค่าติดลบ) เป็นนาที เช่น +30 = เดินไป 30 นาที, +1440 = ข้ามไป 1 วันเต็ม
-function dndFormatMinutesSpan(mins) {
-  const abs = Math.abs(mins);
-  if (abs % 60 === 0) return `${abs / 60} ชม.`;
-  if (abs < 60) return `${abs} นาที`;
-  return `${Math.floor(abs / 60)} ชม. ${abs % 60} นาที`;
-}
-function dndHandleTimeAdvance(ws, minutes) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) return;
-  const delta = Math.max(-100000, Math.min(100000, Math.round(Number(minutes) || 0)));
-  if (!delta) return;
-  const totalNow = dndGameTime.hour * 60 + dndGameTime.minute;
-  dndGameTime = dndNormalizeGameTime(dndGameTime.day, totalNow + delta);
-  const verb = delta > 0 ? 'เดินเวลาไป' : 'ย้อนเวลากลับ';
-  dndAddLog(`⏰ DM ${verb} ${dndFormatMinutesSpan(delta)} — ตอนนี้เป็น${dndFormatGameTime(dndGameTime)}`);
-}
-// DM ข้ามไปวันถัดไปทันที (คงเวลาของวันเดิมไว้ เช่นถ้าตอนนี้ 20:00 ข้ามวันแล้วจะเป็น 20:00 ของวันถัดไป)
-function dndHandleTimeSkipDay(ws) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) return;
-  dndGameTime = { day: dndGameTime.day + 1, hour: dndGameTime.hour, minute: dndGameTime.minute };
-  dndAddLog(`⏭️ DM ข้ามไปวันถัดไป — ตอนนี้เป็น${dndFormatGameTime(dndGameTime)}`);
-}
-// DM ตั้งวัน/เวลาในเกมเองโดยตรง (เช่นแก้ให้ตรงกับเนื้อเรื่อง)
-function dndHandleTimeSet(ws, payload) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM || !payload || typeof payload !== 'object') return;
-  const day = Math.max(1, Math.min(999999, Math.round(Number(payload.day)) || 1));
-  const hour = Math.max(0, Math.min(23, Math.round(Number(payload.hour)) || 0));
-  const minute = Math.max(0, Math.min(59, Math.round(Number(payload.minute)) || 0));
-  dndGameTime = { day, hour, minute };
-  dndAddLog(`🛠️ DM ตั้งเวลาในเกมเป็น${dndFormatGameTime(dndGameTime)}`);
-}
-// DM เปิด/ปิดโหมดเวลาวิ่งอัตโนมัติ (เดินเองตามความเร็วที่ตั้งไว้ ไม่ต้องกดเดินเวลาเอง)
-function dndHandleTimeAutoToggle(ws, running) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) return;
-  dndTimeAuto.running = !!running;
-  dndTimeAutoAccumMinutes = 0; // เริ่ม/หยุดใหม่ทุกครั้ง ล้างเศษนาทีสะสมทิ้งกันสะดุด
-  dndAddLog(dndTimeAuto.running ? `▶️ DM เปิดเวลาวิ่งอัตโนมัติ (ความเร็ว x${dndTimeAuto.speed})` : '⏸️ DM หยุดเวลาวิ่งอัตโนมัติ');
-}
-// DM ปรับความเร็วเวลาวิ่งอัตโนมัติ — speed = กี่นาทีในเกม ต่อ 1 นาทีจริง
-function dndHandleTimeAutoSpeedSet(ws, speed) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) return;
-  const s = Math.max(1, Math.min(1440, Math.round(Number(speed)) || 1));
-  dndTimeAuto.speed = s;
-  dndAddLog(`🛠️ DM ตั้งความเร็วเวลาวิ่งอัตโนมัติเป็น x${s} (1 นาทีจริง = ${s} นาทีในเกม)`);
-}
 const DND_VALID_DICE = [4, 6, 8, 10, 12, 20, 100];
-// ทอยลูกเต๋าอิสระ (d4-d100 เลือกเอง) — statKey (ไม่บังคับ) ให้ผู้เล่นเลือกได้เองว่าจะบวกตัวปรับของสเตตัสตัวไหนเพิ่มจาก modifier
-// ที่พิมพ์เอง (บวกเสริมกัน ไม่ใช่แทนที่) ต่างจากโจมตี/สกิลที่สเตตัสถูกกำหนดตายตัวไว้ล่วงหน้าโดย DM
-function dndHandleRoll(ws, die, count, modifier, label, statKey) {
+function dndHandleRoll(ws, die, count, modifier, label) {
   const p = dndFindByWs(ws);
   if (!p) return;
   const d = DND_VALID_DICE.includes(Number(die)) ? Number(die) : 20;
   const n = Math.max(1, Math.min(20, Math.round(Number(count) || 1)));
-  const typedMod = Math.max(-100, Math.min(100, Math.round(Number(modifier) || 0)));
-  const statRaw = (statKey || '').toString();
-  const stat = DND_STAT_KEYS.includes(statRaw) ? statRaw : '';
-  const statMod = stat ? dndAbilityMod(Number(p.character && p.character[stat]) || 10) : 0;
-  // สำคัญ: เช็ค (ability check) ที่อิงสเตตัสควรได้รับโบนัส/บทลงโทษจากสกิลติดตัว (passive) และสถานะบัฟ/ดีบัฟ
-  // ที่ติดตัวผู้เล่นอยู่ตอนนี้ด้วย เหมือนกับตอนโจมตี ไม่งั้นพาสซีพจะมีผลแค่ตอนตีมอนสเตอร์ แต่ไม่มีผลตอนทอยเช็คทั่วไป
-  const passive = stat ? dndCharPassiveEffect(p.character) : { atk: 0 };
-  const statusMods = stat ? dndStatusMods(p.character && p.character.statuses) : { atk: 0 };
-  const passiveAtk = stat ? (passive.atk + statusMods.atk) : 0;
-  const mod = typedMod + statMod + passiveAtk;
+  const mod = Math.max(-100, Math.min(100, Math.round(Number(modifier) || 0)));
   const rolls = [];
   for (let i = 0; i < n; i++) rolls.push(1 + Math.floor(Math.random() * d));
   const sum = rolls.reduce((a, b) => a + b, 0) + mod;
   const modStr = mod ? (mod > 0 ? ` +${mod}` : ` ${mod}`) : '';
-  const passiveTag = passiveAtk ? ` · พาสซีพ/สถานะ ${passiveAtk >= 0 ? '+' : ''}${passiveAtk}` : '';
-  const statTag = stat ? ` [${stat.toUpperCase()} ${statMod >= 0 ? '+' : ''}${statMod}${typedMod ? ` · Modifier ${typedMod >= 0 ? '+' : ''}${typedMod}` : ''}${passiveTag}]` : '';
   const safeLabel = (label || '').toString().trim().slice(0, 30);
   const labelStr = safeLabel ? ` (${safeLabel})` : '';
-  dndAddLog(`🎲 ${p.character.charName || p.name} ทอย ${n}d${d}${modStr}${labelStr}${statTag}: [${rolls.join(', ')}]${modStr} = ${sum}`);
+  dndAddLog(`🎲 ${p.character.charName || p.name} ทอย ${n}d${d}${modStr}${labelStr}: [${rolls.join(', ')}]${modStr} = ${sum}`);
 }
 const DND_SKILL_STATS = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const DND_STAT_LABELS_TH = { str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA' };
-// ค่าตั้งต้นของ "โจมตีปกติ" (ตีธรรมดา) — ใช้เมื่อ DM ยังไม่ได้ปรับแต่งอะไรให้ตัวละครคนนั้น (คงพฤติกรรมเดิมของระบบไว้)
-const DND_NORMAL_ATTACK_DEFAULT = { name: 'โจมตีปกติ', stat: 'auto', dmgDie: 6, dmgCount: 1, atkBonus: 0, dmgBonus: 0 };
-// DM ปรับแต่ง "โจมตีปกติ" ของผู้เล่นแต่ละคนได้ (ชื่อท่า / สเตตัสที่ใช้ทอย / ลูกเต๋าดาเมจ / โบนัสทอยตี-โบนัสดาเมจ)
-// stat: 'auto' = เดิม ใช้ค่ามากสุดระหว่าง STR/DEX เหมือนระบบเดิม, หรือระบุสเตตัสเฉพาะ (เช่น caster ที่อยากให้ตีธรรมดาใช้ INT/WIS/CHA แทน)
-function dndSanitizeNormalAttack(raw) {
-  if (raw === null) return null; // DM ล้างค่ากลับไปใช้ค่าเริ่มต้นของระบบ
-  const r = (raw && typeof raw === 'object') ? raw : {};
-  const name = (r.name || '').toString().trim().slice(0, 30) || DND_NORMAL_ATTACK_DEFAULT.name;
-  const statRaw = (r.stat || '').toString();
-  const stat = (statRaw === 'auto' || DND_SKILL_STATS.includes(statRaw)) ? statRaw : 'auto';
-  const dmgDie = DND_VALID_DICE.includes(Number(r.dmgDie)) ? Number(r.dmgDie) : DND_NORMAL_ATTACK_DEFAULT.dmgDie;
-  const dmgCount = Math.max(1, Math.min(20, Math.round(Number(r.dmgCount) || 1)));
-  const atkBonus = Math.max(-100, Math.min(100, Math.round(Number(r.atkBonus) || 0)));
-  const dmgBonus = Math.max(-100, Math.min(100, Math.round(Number(r.dmgBonus) || 0)));
-  return { name, stat, dmgDie, dmgCount, atkBonus, dmgBonus };
-}
 // สกิลที่ตั้งค่าสถานะ/ดีบัฟไว้ — เมื่อใช้สกิลแล้วจะติดสถานะนี้ให้เป้าหมายอัตโนมัติ (เหมือนที่ DM มอบสถานะเองด้วยมือ แต่ผูกมากับสกิลแทน)
 function dndSanitizeSkillStatus(raw) {
   const s = (raw && typeof raw === 'object') ? raw : {};
   const name = (s.name || '').toString().trim().slice(0, 24);
-  if (!name) return { name: '', note: '', chance: 100, durationSec: 0, atkMod: 0, dmgMod: 0, defMod: 0, tickValue: 0, tickIntervalSec: 0, icon: '', color: '' };
+  if (!name) return { name: '', note: '' };
   const note = (s.note || '').toString().trim().slice(0, 100);
-  // โอกาสติดสถานะ (%) — ค่าเริ่มต้น 100 = ติดเสมอเหมือนพฤติกรรมเดิมของระบบ ถ้าอยากให้มีโอกาสพลาด DM ปรับลดได้ (1-100)
-  const chanceRaw = s.chance === undefined || s.chance === '' ? 100 : Number(s.chance);
-  const chance = Number.isFinite(chanceRaw) ? Math.max(1, Math.min(100, Math.round(chanceRaw))) : 100;
-  // ระยะเวลาสถานะ + บัฟ/ดีบัฟค่าโจมตี/ดาเมจ/ป้องกัน + ระบบ "ต่อวิ" (tick ต่อเวลา) — ใช้ helper ชุดเดียวกับที่ DM มอบสถานะเองมือ
-  // (dndHandleStatusApply) เพื่อให้พฤติกรรมของสถานะที่ติดจากสกิลผู้เล่นกับสถานะที่ DM ใส่มือ ทำงานเหมือนกันทุกประการ
-  const durationSec = dndSanitizeStatusDuration(s.durationSec);
-  const atkMod = dndSanitizeStatusMod(s.atkMod);
-  const dmgMod = dndSanitizeStatusMod(s.dmgMod);
-  const defMod = dndSanitizeStatusMod(s.defMod);
-  const tickValue = dndSanitizeStatusTick(s.tickValue);
-  const tickIntervalSec = tickValue !== 0 ? dndSanitizeTickInterval(s.tickIntervalSec) : 0;
-  // ไอคอน/สีของสถานะนี้ (ไม่บังคับ) — ใช้ตอนติดสถานะจากสกิลนี้จริง ๆ แทนค่าเริ่มต้น ☠️/ไม่มีสี เหมือนตอน DM มอบสถานะเองด้วยมือ
-  const icon = dndSanitizeStatusIcon(s.icon);
-  const color = dndSanitizeStatusColor(s.color);
-  return { name, note, chance, durationSec, atkMod, dmgMod, defMod, tickValue, tickIntervalSec, icon, color };
-}
-// เป้าหมายที่สกิล/บัฟ/ดีบัฟ/โจมตีนี้เลือกได้: 'monster' = มอนสเตอร์เท่านั้น, 'player' = ผู้เล่นเท่านั้น, 'both' = ใช้กับใครก็ได้
-// สกิลเก่าที่สร้างไว้ก่อนมีช่องนี้ (targetMode เป็น undefined) จะ fallback ไปใช้กฎเดิม เพื่อไม่ให้พฤติกรรมสกิลที่มีอยู่แล้วเปลี่ยนไปโดยไม่ตั้งใจ
-function dndSanitizeTargetMode(raw) {
-  return (raw === 'monster' || raw === 'player' || raw === 'both') ? raw : '';
-}
-function dndSkillTargetMode(skill) {
-  const explicit = dndSanitizeTargetMode(skill.targetMode);
-  if (explicit) return explicit;
-  return (skill.buffAlly || skill.healDie > 0 || skill.cleanseEnabled) ? 'player' : 'monster';
+  return { name, note };
 }
 // DM เท่านั้นที่ออกแบบ/ลบสกิลได้ — กำหนดดาเมจ (ลูกเต๋า) และมอบสกิลให้ผู้เล่นเฉพาะคนได้ (ไม่เลือกใคร = ทั้งปาร์ตี้ใช้ได้)
 function dndHandleSkillCreate(ws, payload) {
@@ -1829,12 +2046,9 @@ function dndHandleSkillCreate(ws, payload) {
   if (!p || !p.isDM || !payload || typeof payload !== 'object') return;
   const name = (payload.name || '').toString().trim().slice(0, 40);
   if (!name) { dndSendError(ws, 'กรุณาตั้งชื่อสกิล'); return; }
-  // ไอคอน/สีประจำสกิล (ไม่บังคับ) — แสดงบนชิปสกิลของผู้เล่นและมอนสเตอร์ เหมือนระบบไอคอน/สีของสถานะ
-  const icon = dndSanitizeSkillIcon(payload.icon);
-  const color = dndSanitizeStatusColor(payload.color);
   const statRaw = (payload.stat || '').toString();
   const stat = DND_SKILL_STATS.includes(statRaw) ? statRaw : '';
-  const desc = (payload.desc || '').toString().trim().slice(0, 500);
+  const desc = (payload.desc || '').toString().trim().slice(0, 200);
 
   const dmg = (payload.damage && typeof payload.damage === 'object') ? payload.damage : {};
   const dmgDie = DND_VALID_DICE.includes(Number(dmg.die)) ? Number(dmg.die) : 0; // 0 = ไม่มีดาเมจ
@@ -1846,39 +2060,21 @@ function dndHandleSkillCreate(ws, payload) {
   const healDie = DND_VALID_DICE.includes(Number(heal.die)) ? Number(heal.die) : 0;
   const healCount = Math.max(1, Math.min(20, Math.round(Number(heal.count) || 1)));
   const healMod = Math.max(-100, Math.min(100, Math.round(Number(heal.mod) || 0)));
-  // ประเภทของสกิลชุบ HP — false (ค่าเริ่มต้น) = "ฟื้นฟู" ธรรมดา ปลุกคนหมดสติไม่ได้ (ต้องยังไม่หมดสติถึงใช้ได้),
-  // true = "ชุบชีวิต" ปลุกคนหมดสติได้ด้วย — แยกกันเหมือนไอเทม effectType heal/revive
-  const healRevive = !!heal.revive;
 
   const assignedIds = Array.isArray(payload.assignedIds)
     ? payload.assignedIds.map(Number).filter(id => dndPlayers.some(pp => pp.id === id))
     : [];
   const cooldownSec = Math.max(0, Math.min(3600, Math.round(Number(payload.cooldownSec) || 0)));
   const maxUses = Math.max(0, Math.min(99, Math.round(Number(payload.maxUses) || 0)));
-  // SP (Skill Point / Mana) ที่ต้องใช้ต่อการใช้สกิลนี้ 1 ครั้ง — 0 = ไม่ใช้ SP เลย ผู้เล่นใช้ได้อิสระ (ไม่นับรวม DM)
-  const spCost = Math.max(0, Math.min(999, Math.round(Number(payload.spCost) || 0)));
-  // โอกาสโดน (%) — ใช้เฉพาะตอนสกิลนี้ไม่ได้ผูกสเตตัส (ไม่มีการทอยโจมตีวัด AC อยู่แล้ว) ดูรายละเอียดที่ dndSanitizeHitChance
-  const hitChance = dndSanitizeHitChance(payload.hitChance);
-  // โดนเสมอ (guaranteedHit) — DM ตั้งไว้ล่วงหน้าตอนออกแบบสกิล ไม่ใช่ตัวเลือกที่ผู้เล่นกดตอนใช้สกิล
-  // ถ้าเปิดไว้ สกิลนี้จะไม่ทอย 1d20 vs AC / ทอยโอกาสโดน (d100) อีกต่อไป ถือว่าโดนเป้าหมายทันทีทุกครั้งที่ใช้ (ไม่นับคริติคอล) แล้วทอยดาเมจตรง ๆ เลย
-  const guaranteedHit = !!payload.guaranteedHit;
 
   // สถานะ/ดีบัฟที่ผูกกับสกิล (ไม่บังคับ) — ใช้สกิลแล้วเป้าหมายจะติดสถานะนี้ให้อัตโนมัติ ใช้ร่วมกับดาเมจ/ฮีลได้ในสกิลเดียวกัน
   const status = dndSanitizeSkillStatus(payload.status);
-  // สกิลบัฟเพื่อน (ไม่บังคับ) — เปิดไว้แล้วตอนใช้สกิลจะเลือกเป้าหมายเป็นผู้เล่นได้ (เหมือนสกิลฮีล) แทนที่จะเลือกได้แต่มอนสเตอร์
-  const buffAlly = !!payload.buffAlly;
-  // เป้าหมายที่เลือกได้ตอนใช้สกิลนี้: 'monster' / 'player' / 'both' (ใช้กับใครก็ได้) — ไม่ระบุ = ให้ระบบเดาจากค่าฮีล/บัฟ/ลบล้างสถานะเหมือนเดิม
-  const targetMode = dndSanitizeTargetMode(payload.targetMode) || (buffAlly || healDie || (payload.cleanse && payload.cleanse.enabled) ? 'player' : 'monster');
 
   // สกิล AOE (พื้นที่บริเวณ): เป้าเดี่ยวปกติยังต้องเลือกเป้าหมายหลักเหมือนเดิม แต่ถ้าตั้งรัศมีไว้ (>0)
   // ดาเมจจะกระจายไปโดนเป้าหมายอื่น ๆ ที่อยู่ในระยะรอบเป้าหมายหลักบนแผนที่ด้วย โดยดาเมจจะลดหลั่นตามระยะห่างจากจุดศูนย์กลาง
   // หน่วยรัศมีอิงตามพิกัด token บนแผนที่ (0-100 = กว้าง/ยาวเต็มแผนที่) — 0 = ไม่มี AOE ยิงเป้าเดี่ยวเหมือนเดิม
   const aoeRaw = (payload.aoe && typeof payload.aoe === 'object') ? payload.aoe : {};
   const aoeRadius = Math.max(0, Math.min(100, Math.round(Number(aoeRaw.radius) || 0)));
-  // ระยะโจมตี (%) — 0 = ไม่จำกัดระยะ, ใช้เดียวกันกับหน่วยพิกัด token บนแผนที่ (0-100 = กว้าง/ยาวเต็มแผนที่)
-  // ตอนใช้สกิลจะวัดระยะห่างจริงระหว่าง token ผู้ใช้กับ token เป้าหมายบนแผนที่ปัจจุบัน ถ้าไกลเกินระยะนี้จะใช้สกิลไม่ได้
-  // ถ้าฝ่ายใดฝ่ายหนึ่งไม่มี token อยู่บนแผนที่ (เล่นแบบไม่มีแผนที่) จะไม่ตรวจระยะให้ ปล่อยผ่านเหมือนเดิม ดูรายละเอียดที่ dndHandleSkillUse
-  const range = Math.max(0, Math.min(100, Math.round(Number(payload.range) || 0)));
 
   // สกิลลบล้างสถานะผิดปกติ (cleanse): เปิดใช้แล้วต้องเลือกเป้าหมายเป็นผู้เล่นเท่านั้น — cleanseName ว่าง = ล้างสถานะทั้งหมดที่ติดอยู่,
   // ถ้าระบุชื่อไว้จะล้างเฉพาะสถานะที่ชื่อตรงกัน (ใช้ทำสกิลแก้พิษ/แก้มึนงงเฉพาะทางได้) — ใช้ร่วมกับดาเมจ/ฮีล/ติดสถานะในสกิลเดียวกันได้
@@ -1886,18 +2082,12 @@ function dndHandleSkillCreate(ws, payload) {
   const cleanseEnabled = !!cleanseRaw.enabled;
   const cleanseName = cleanseEnabled ? (cleanseRaw.name || '').toString().trim().slice(0, 24) : '';
 
-  const skill = { id: dndNextSkillId++, name, icon, color, stat, desc, dmgDie, dmgCount, dmgMod, healDie, healCount, healMod, healRevive,
-    statusName: status.name, statusNote: status.note, statusChance: status.chance,
-    statusDurationSec: status.durationSec, statusAtkMod: status.atkMod, statusDmgMod: status.dmgMod, statusDefMod: status.defMod,
-    statusTickValue: status.tickValue, statusTickIntervalSec: status.tickIntervalSec, statusIcon: status.icon, statusColor: status.color,
-    buffAlly, targetMode, assignedIds, cooldownSec, maxUses, spCost, hitChance, guaranteedHit, aoeRadius, range, cleanseEnabled, cleanseName };
+  const skill = { id: dndNextSkillId++, name, stat, desc, dmgDie, dmgCount, dmgMod, healDie, healCount, healMod, statusName: status.name, statusNote: status.note, assignedIds, cooldownSec, maxUses, aoeRadius, cleanseEnabled, cleanseName };
   dndSkills.push(skill);
   const assignedNames = assignedIds.map(id => { const pp = dndPlayers.find(pp => pp.id === id); return pp ? (pp.character.charName || pp.name) : null; }).filter(Boolean);
   const assignText = assignedNames.length ? ` — มอบให้: ${assignedNames.join(', ')}` : ' — ทั้งปาร์ตี้ใช้ได้';
-  const ruleText = `${cooldownSec ? ` (คูลดาวน์ ${cooldownSec}วิ)` : ''}${maxUses ? ` (ใช้ได้ ${maxUses} ครั้ง)` : ''}${spCost ? ` (ใช้ SP ${spCost})` : ''}`;
-  const healText = healDie ? ` (${healRevive ? '🌟 ชุบชีวิต' : '💚 ฟื้นฟู'} HP ${healCount}d${healDie}${healMod ? (healMod > 0 ? '+' + healMod : healMod) : ''})` : '';
-  const targetModeText = targetMode === 'both' ? ' 🎯เป้าหมาย: มอนสเตอร์+ผู้เล่น' : (targetMode === 'player' ? ' 🎯เป้าหมาย: ผู้เล่นเท่านั้น' : ' 🎯เป้าหมาย: มอนสเตอร์เท่านั้น');
-  dndAddLog(`✨ DM ออกแบบสกิลใหม่: ${name}${stat ? ` (ผูก ${stat.toUpperCase()})` : (hitChance < 100 ? ` (🎯 โอกาสโดน ${hitChance}%)` : '')}${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${dmgDie ? ` (ดาเมจ ${dmgCount}d${dmgDie}${dmgMod ? (dmgMod > 0 ? '+' + dmgMod : dmgMod) : ''})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec)})` : ''}${aoeRadius ? ` (💥 AOE รัศมี ${aoeRadius})` : ''}${range ? ` (📏 ระยะโจมตี ${range})` : ''}${cleanseEnabled ? ` (✨ ลบล้างสถานะ${cleanseName ? ` "${cleanseName}"` : 'ทั้งหมด'})` : ''}${ruleText}${assignText}${targetModeText}`);
+  const ruleText = `${cooldownSec ? ` (คูลดาวน์ ${cooldownSec}วิ)` : ''}${maxUses ? ` (ใช้ได้ ${maxUses} ครั้ง)` : ''}`;
+  dndAddLog(`✨ DM ออกแบบสกิลใหม่: ${name}${stat ? ` (ผูก ${stat.toUpperCase()})` : ''}${dmgDie ? ` (ดาเมจ ${dmgCount}d${dmgDie}${dmgMod ? (dmgMod > 0 ? '+' + dmgMod : dmgMod) : ''})` : ''}${healDie ? ` (ชุบ HP ${healCount}d${healDie}${healMod ? (healMod > 0 ? '+' + healMod : healMod) : ''})` : ''}${status.name ? ` (ติดสถานะ "${status.name}")` : ''}${aoeRadius ? ` (💥 AOE รัศมี ${aoeRadius})` : ''}${cleanseEnabled ? ` (✨ ลบล้างสถานะ${cleanseName ? ` "${cleanseName}"` : 'ทั้งหมด'})` : ''}${ruleText}${assignText}`);
 }
 // DM แก้ไขสกิลที่มีอยู่แล้วได้ทุกเมื่อ — เปลี่ยนรายละเอียด, คูลดาวน์, จำนวนครั้ง, หรือมอบ/ถอนสิทธิ์ให้ผู้เล่นคนไหนก็ได้
 function dndHandleSkillEdit(ws, skillId, payload) {
@@ -1910,7 +2100,7 @@ function dndHandleSkillEdit(ws, skillId, payload) {
   if (!name) { dndSendError(ws, 'กรุณาตั้งชื่อสกิล'); return; }
   const statRaw = (payload.stat || '').toString();
   const stat = DND_SKILL_STATS.includes(statRaw) ? statRaw : '';
-  const desc = (payload.desc || '').toString().trim().slice(0, 500);
+  const desc = (payload.desc || '').toString().trim().slice(0, 200);
 
   const dmg = (payload.damage && typeof payload.damage === 'object') ? payload.damage : {};
   const dmgDie = DND_VALID_DICE.includes(Number(dmg.die)) ? Number(dmg.die) : 0;
@@ -1918,32 +2108,18 @@ function dndHandleSkillEdit(ws, skillId, payload) {
   const dmgMod = Math.max(-100, Math.min(100, Math.round(Number(dmg.mod) || 0)));
   const cooldownSec = Math.max(0, Math.min(3600, Math.round(Number(payload.cooldownSec) || 0)));
   const maxUses = Math.max(0, Math.min(99, Math.round(Number(payload.maxUses) || 0)));
-  // SP ที่ต้องใช้ต่อการใช้สกิลนี้ 1 ครั้ง — 0 = ไม่ใช้ SP เลย
-  const spCost = Math.max(0, Math.min(999, Math.round(Number(payload.spCost) || 0)));
-  // โอกาสโดน (%) — ใช้เฉพาะตอนสกิลนี้ไม่ได้ผูกสเตตัส ดูรายละเอียดที่ dndSanitizeHitChance
-  const hitChance = dndSanitizeHitChance(payload.hitChance);
-  // โดนเสมอ (guaranteedHit) — DM ตั้งไว้ล่วงหน้าตอนแก้สกิล ไม่ใช่ตัวเลือกที่ผู้เล่นกดตอนใช้สกิล ดูรายละเอียดที่ dndHandleSkillCreate
-  const guaranteedHit = !!payload.guaranteedHit;
 
   const heal = (payload.heal && typeof payload.heal === 'object') ? payload.heal : {};
   const healDie = DND_VALID_DICE.includes(Number(heal.die)) ? Number(heal.die) : 0;
   const healCount = Math.max(1, Math.min(20, Math.round(Number(heal.count) || 1)));
   const healMod = Math.max(-100, Math.min(100, Math.round(Number(heal.mod) || 0)));
-  // ประเภทของสกิลชุบ HP — false = "ฟื้นฟู" ธรรมดา ปลุกคนหมดสติไม่ได้, true = "ชุบชีวิต" ปลุกคนหมดสติได้ด้วย
-  const healRevive = !!heal.revive;
 
   // สถานะ/ดีบัฟที่ผูกกับสกิล (ไม่บังคับ) — แก้ไขได้เหมือนดาเมจ/ฮีล
   const status = dndSanitizeSkillStatus(payload.status);
-  // สกิลบัฟเพื่อน (ไม่บังคับ) — เปิดไว้แล้วตอนใช้สกิลจะเลือกเป้าหมายเป็นผู้เล่นได้
-  const buffAlly = !!payload.buffAlly;
-  // เป้าหมายที่เลือกได้ตอนใช้สกิลนี้: 'monster' / 'player' / 'both' — ดูรายละเอียดที่ dndHandleSkillCreate
-  const targetMode = dndSanitizeTargetMode(payload.targetMode) || (buffAlly || healDie || (payload.cleanse && payload.cleanse.enabled) ? 'player' : 'monster');
 
   // รัศมี AOE (0 = เป้าเดี่ยวปกติ) — ดูรายละเอียดหน่วยที่ dndHandleSkillCreate
   const aoeRaw = (payload.aoe && typeof payload.aoe === 'object') ? payload.aoe : {};
   const aoeRadius = Math.max(0, Math.min(100, Math.round(Number(aoeRaw.radius) || 0)));
-  // ระยะโจมตี (0 = ไม่จำกัดระยะ) — ดูรายละเอียดที่ dndHandleSkillCreate
-  const range = Math.max(0, Math.min(100, Math.round(Number(payload.range) || 0)));
 
   // สกิลลบล้างสถานะ (cleanse) — ดูรายละเอียดที่ dndHandleSkillCreate
   const cleanseRaw = (payload.cleanse && typeof payload.cleanse === 'object') ? payload.cleanse : {};
@@ -1954,21 +2130,18 @@ function dndHandleSkillEdit(ws, skillId, payload) {
     ? payload.assignedIds.map(Number).filter(id => dndPlayers.some(pp => pp.id === id))
     : [];
 
-  skill.name = name; skill.icon = dndSanitizeSkillIcon(payload.icon); skill.color = dndSanitizeStatusColor(payload.color); skill.stat = stat; skill.desc = desc;
+  skill.name = name; skill.stat = stat; skill.desc = desc;
   skill.dmgDie = dmgDie; skill.dmgCount = dmgCount; skill.dmgMod = dmgMod;
-  skill.healDie = healDie; skill.healCount = healCount; skill.healMod = healMod; skill.healRevive = healRevive;
-  skill.statusName = status.name; skill.statusNote = status.note; skill.statusChance = status.chance; skill.buffAlly = buffAlly; skill.targetMode = targetMode;
-  skill.statusDurationSec = status.durationSec; skill.statusAtkMod = status.atkMod; skill.statusDmgMod = status.dmgMod; skill.statusDefMod = status.defMod;
-  skill.statusTickValue = status.tickValue; skill.statusTickIntervalSec = status.tickIntervalSec; skill.statusIcon = status.icon; skill.statusColor = status.color;
-  skill.cooldownSec = cooldownSec; skill.maxUses = maxUses; skill.spCost = spCost; skill.hitChance = hitChance; skill.guaranteedHit = guaranteedHit;
+  skill.healDie = healDie; skill.healCount = healCount; skill.healMod = healMod;
+  skill.statusName = status.name; skill.statusNote = status.note;
+  skill.cooldownSec = cooldownSec; skill.maxUses = maxUses;
   skill.assignedIds = assignedIds;
-  skill.aoeRadius = aoeRadius; skill.range = range;
+  skill.aoeRadius = aoeRadius;
   skill.cleanseEnabled = cleanseEnabled; skill.cleanseName = cleanseName;
 
   const assignedNames = assignedIds.map(id => { const pp = dndPlayers.find(pp => pp.id === id); return pp ? (pp.character.charName || pp.name) : null; }).filter(Boolean);
   const assignText = assignedNames.length ? ` — มอบให้: ${assignedNames.join(', ')}` : ' — ทั้งปาร์ตี้ใช้ได้';
-  const healText = healDie ? ` (${healRevive ? '🌟 ชุบชีวิต' : '💚 ฟื้นฟู'} HP ${healCount}d${healDie}${healMod ? (healMod > 0 ? '+' + healMod : healMod) : ''})` : '';
-  dndAddLog(`✏️ DM แก้ไขสกิล: ${name}${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${range ? ` (📏 ระยะโจมตี ${range})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec)})` : ''}${assignText}`);
+  dndAddLog(`✏️ DM แก้ไขสกิล: ${name}${status.name ? ` (ติดสถานะ "${status.name}")` : ''}${assignText}`);
 }
 function dndHandleSkillDelete(ws, skillId) {
   const p = dndFindByWs(ws);
@@ -2002,26 +2175,17 @@ function dndGrantRewardsForDefeat(token, killerPlayer) {
   pp.character.gold = Math.max(0, Math.round(Number(pp.character.gold) || 0)) + gold;
   const levelInfo = dndSyncLevelFromExp(pp.character);
   if (levelInfo.newLevel > oldLevel) {
-    const gained = STAT_POINTS_PER_LEVEL * (levelInfo.newLevel - oldLevel);
-    pp.character.statPoints = Math.round(Number(pp.character.statPoints) || 0) + gained;
-    dndAddLog(`🎉 ${pp.character.charName || pp.name} เลเวลอัป! Lv.${oldLevel} → Lv.${levelInfo.newLevel} (ได้แต้มสเตตัส +${gained})`);
+    dndAddLog(`🎉 ${pp.character.charName || pp.name} เลเวลอัป! Lv.${oldLevel} → Lv.${levelInfo.newLevel}`);
     dndAnnounceClassSkillUnlocks(pp, oldLevel, levelInfo.newLevel);
-    // SP ไม่โตอัตโนมัติตามเลเวลแล้ว — DM เป็นคนปรับ maxSp เองผ่านฟอร์มแก้ไขผู้เล่น
   }
-  const grantedLoot = [];
-  const overflowLoot = [];
   if (loot.length) {
-    for (const item of loot) {
-      if (dndBagAdd(pp.character, item.name, item.qty)) grantedLoot.push(item);
-      else overflowLoot.push(item); // กระเป๋าเต็ม (ช่องไอเทมไม่พอ) — ของชิ้นนี้หายไป ไม่ถูกเพิ่มเข้ากระเป๋า
-    }
+    for (const item of loot) dndBagAdd(pp.character, item.name, item.qty);
   }
   const rewardParts = [];
   if (exp) rewardParts.push(`✨ EXP +${exp}`);
   if (gold) rewardParts.push(`💰 ทอง +${gold}`);
-  if (grantedLoot.length) rewardParts.push(`🎁 ${grantedLoot.map(item => `${item.name} x${item.qty}`).join(', ')}`);
+  if (loot.length) rewardParts.push(`🎁 ${loot.map(item => `${item.name} x${item.qty}`).join(', ')}`);
   if (rewardParts.length) dndAddLog(`🎉 ${token.name} ถูกกำจัด — แจกให้ ${pp.character.charName || pp.name}: ${rewardParts.join(' | ')}`);
-  if (overflowLoot.length) dndAddLog(`🎒 กระเป๋าของ ${pp.character.charName || pp.name} เต็ม (${DND_BAG_CAPACITY} ช่อง) พลาดของ: ${overflowLoot.map(item => `${item.name} x${item.qty}`).join(', ')}`);
 }
 function dndCheckTokenDefeat(token, killerPlayer) {
   if (token._rewarded || token.hp > 0) return;
@@ -2041,17 +2205,15 @@ function dndFindCombatTarget(targetType, targetId) {
     const t = dndTokens.find(tt => tt.id === Number(targetId) && tt.kind === 'npc');
     if (!t) return null;
     const defMod = dndStatusMods(t.statuses).def;
-    const obj = { type: 'token', id: t.id, name: t.name, hp: t.hp, maxHp: t.maxHp, ac: Math.max(0, t.ac + defMod), dead: Number(t.hp) <= 0 };
+    const obj = { type: 'token', id: t.id, name: t.name, hp: t.hp, maxHp: t.maxHp, ac: Math.max(0, t.ac + defMod) };
     obj.applyDamage = dmg => { t.hp = Math.max(0, Math.min(t.maxHp, t.hp - dmg)); obj.hp = t.hp; };
-    // มอนสเตอร์ก็โดนสกิลชุบ HP ได้เหมือนผู้เล่น เผื่อ DM ตั้งสกิลให้ใช้กับใครก็ได้ (เช่น ชุบมอนสเตอร์ฝ่ายเดียวกัน/สัตว์เลี้ยง)
-    obj.applyHeal = amount => { t.hp = Math.max(0, Math.min(t.maxHp, t.hp + amount)); obj.hp = t.hp; return { revived: false }; };
     return obj;
   }
   if (targetType === 'player') {
     const target = dndPlayers.find(pp => pp.id === Number(targetId));
     if (!target) return null;
     const defMod = dndStatusMods(target.character.statuses).def;
-    const obj = { type: 'player', id: target.id, name: target.character.charName || target.name, hp: target.character.hp, maxHp: target.character.maxHp, ac: Math.max(0, target.character.ac + defMod), dead: dndIsCharDead(target.character) };
+    const obj = { type: 'player', id: target.id, name: target.character.charName || target.name, hp: target.character.hp, maxHp: target.character.maxHp, ac: Math.max(0, target.character.ac + defMod) };
     obj.applyDamage = dmg => {
       const wasDead = dndIsCharDead(target.character);
       target.character.hp = Math.max(0, Math.min(target.character.maxHp, target.character.hp - dmg));
@@ -2088,18 +2250,9 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
   const target = dndFindCombatTarget(targetType, targetId);
   if (!target) { dndSendError(ws, 'กรุณาเลือกเป้าหมายที่ถูกต้อง'); return; }
   const isHealSkill = skill.healDie > 0;
+  if (isHealSkill && target.type !== 'player') { dndSendError(ws, 'สกิลชุบ HP ต้องเลือกเป้าหมายเป็นผู้เล่นเท่านั้น'); return; }
   const isCleanseSkill = !!skill.cleanseEnabled;
-  // targetMode: 'both' (ใช้กับใครก็ได้ทั้งมอนสเตอร์/ผู้เล่น — DM เลือกไว้ตอนสร้าง/แก้สกิล), 'player', หรือ 'monster'
-  // สกิลเก่าที่ยังไม่มีค่านี้ (สร้างไว้ก่อนอัปเดต) จะ fallback ไปใช้กฎเดิม: ฮีล/ลบล้างสถานะ/บัฟเพื่อน = ผู้เล่นเท่านั้น, นอกนั้น = มอนสเตอร์เท่านั้น
-  const skillTargetMode = dndSkillTargetMode(skill);
-  if (skillTargetMode === 'player' && target.type !== 'player') { dndSendError(ws, `สกิล "${skill.name}" ตั้งค่าให้ใช้กับผู้เล่นเท่านั้น`); return; }
-  if (skillTargetMode === 'monster' && target.type !== 'token') { dndSendError(ws, `สกิล "${skill.name}" ตั้งค่าให้ใช้กับมอนสเตอร์เท่านั้น`); return; }
-  // สกิล "ฟื้นฟู" ธรรมดา (healRevive = false) ใช้ปลุกคนหมดสติไม่ได้เด็ดขาด — ต้องเป็นสกิล "ชุบชีวิต" ที่ DM ตั้งค่าไว้โดยเฉพาะเท่านั้น (เหมือนไอเทม heal/revive)
-  // (มอนสเตอร์ไม่มีสถานะ "หมดสติ" แบบผู้เล่น จึงเช็คเฉพาะตอนเป้าหมายเป็นผู้เล่นเท่านั้น)
-  if (isHealSkill && target.type === 'player' && target.dead && !skill.healRevive) {
-    dndSendError(ws, `สกิล "${skill.name}" ฟื้นฟู HP เท่านั้น ใช้ปลุก ${target.name} ที่หมดสติไม่ได้ — ต้องใช้สกิลชุบชีวิตแทน (ให้ DM ตั้งค่าสกิลประเภท "ชุบชีวิต")`);
-    return;
-  }
+  if (isCleanseSkill && target.type !== 'player') { dndSendError(ws, 'สกิลลบล้างสถานะต้องเลือกเป้าหมายเป็นผู้เล่นเท่านั้น'); return; }
 
   if (!p.isDM) {
     const now = Date.now();
@@ -2115,27 +2268,6 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
         return;
       }
     }
-    // ตรวจ SP (Skill Point / Mana) ให้พอก่อนใช้สกิล — ถ้าสกิลนี้ไม่ใช้ SP เลย (spCost 0) จะข้ามการเช็กนี้ไปเลย
-    if (skill.spCost > 0) {
-      const curSp = Math.round(Number(p.character.sp) || 0);
-      if (curSp < skill.spCost) {
-        dndSendError(ws, `SP ไม่พอใช้สกิล "${skill.name}" (ต้องใช้ ${skill.spCost} SP ตอนนี้มี ${curSp} SP)`);
-        return;
-      }
-    }
-    // ตรวจระยะโจมตี (skill.range, 0 = ไม่จำกัด) — วัดระยะห่างจริงบนแผนที่ระหว่าง token ผู้ใช้กับ token เป้าหมาย (พิกัดหน่วย % ของแผนที่ 0-100 ทั้งสองแกน เหมือน AOE)
-    // ถ้าฝ่ายใดฝ่ายหนึ่งไม่มี token อยู่บนแผนที่ปัจจุบัน (ยังไม่ได้วาง/เล่นแบบไม่ใช้แผนที่) จะไม่ตรวจระยะให้ ปล่อยผ่านเหมือนเดิม
-    if (skill.range > 0) {
-      const casterPos = dndTargetMapPos('player', p.id);
-      const targetPos = dndTargetMapPos(target.type, target.id);
-      if (casterPos && targetPos) {
-        const dist = Math.hypot(targetPos.x - casterPos.x, targetPos.y - casterPos.y);
-        if (dist > skill.range) {
-          dndSendError(ws, `เป้าหมายอยู่ไกลเกินระยะโจมตีของสกิล "${skill.name}" (ระยะที่ตั้งไว้ ${skill.range} แต่ห่างจริง ${dist.toFixed(1)}) ให้เข้าใกล้เป้าหมายก่อนแล้วค่อยใช้สกิลนี้`);
-          return;
-        }
-      }
-    }
   }
 
   const charName = p.character.charName || p.name;
@@ -2144,40 +2276,16 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
   const passive = dndCharPassiveEffect(p.character);
   const statusMods = dndStatusMods(p.character && p.character.statuses);
   const hasAttackRoll = !isHealSkill && !isCleanseSkill && skill.stat && DND_SKILL_STATS.includes(skill.stat);
-  // ตัวช่วยโดนแน่นอน (guaranteedHit) — DM เป็นคนตั้งค่านี้ไว้ตอนสร้าง/แก้สกิลเท่านั้น (ไม่ใช่ผู้เล่นเลือกตอนใช้)
-  // ถ้าเปิดไว้ สกิลนี้จะข้ามการทอย 1d20 vs AC / ทอยโอกาสโดน (d100) ไปเลยทุกครั้งที่มีคนใช้ ถือว่าโดนเป้าหมายทันที (แต่ไม่นับเป็นคริติคอล) แล้วไปทอยดาเมจต่อตามปกติ
-  const wantForceHit = !!skill.guaranteedHit;
   if (hasAttackRoll) {
-    if (wantForceHit) {
-      attackRoll = null; attackMod = 0; attackTotal = null; hit = true; crit = false; fumble = false;
-      parts.push(`🎯 ใช้ตัวช่วยโดนแน่นอน — ข้ามทอย 1d20 vs AC ${target.ac} — ✅ โดน (ไม่นับคริติคอล)`);
-    } else {
-      const score = Number(p.character[skill.stat]) || 10;
-      const mod = dndAbilityMod(score) + passive.atk + statusMods.atk;
-      const modStr = mod ? (mod > 0 ? ` +${mod}` : ` ${mod}`) : '';
-      const roll = 1 + Math.floor(Math.random() * 20);
-      const res = dndRollVsAC(roll, mod, target.ac, passive.critRange);
-      attackRoll = roll; attackMod = mod; attackTotal = res.total; hit = res.hit; crit = res.crit; fumble = res.fumble;
-      const hitTag = fumble ? ' 💨 พลาดสุด ๆ' : (!hit ? ' 🛡️ พลาด! หลบได้' : (crit ? ' 🎯 คริติคอล!' : ' ✅ โดน'));
-      parts.push(`🎯 โจมตี 1d20${modStr} = [${roll}]${modStr} = ${res.total} vs AC ${target.ac} —${hitTag}`);
-    }
+    const score = Number(p.character[skill.stat]) || 10;
+    const mod = dndAbilityMod(score) + passive.atk + statusMods.atk;
+    const modStr = mod ? (mod > 0 ? ` +${mod}` : ` ${mod}`) : '';
+    const roll = 1 + Math.floor(Math.random() * 20);
+    const res = dndRollVsAC(roll, mod, target.ac, passive.critRange);
+    attackRoll = roll; attackMod = mod; attackTotal = res.total; hit = res.hit; crit = res.crit; fumble = res.fumble;
+    const hitTag = fumble ? ' 💨 พลาดสุด ๆ' : (!hit ? ' 🛡️ พลาด! หลบได้' : (crit ? ' 🎯 คริติคอล!' : ' ✅ โดน'));
+    parts.push(`🎯 โจมตี 1d20${modStr} = [${roll}]${modStr} = ${res.total} vs AC ${target.ac} —${hitTag}`);
   }
-  // สกิลที่ไม่ได้ผูกสเตตัส (จึงไม่มีการทอยโจมตีวัด AC ด้านบน) — ใช้โอกาสโดน (hitChance) แทน ทอย d100 เทียบดู
-  // ไม่ใช้กับสกิลชุบ/ลบล้างสถานะ/บัฟเพื่อน เพราะเป็นการให้พรไม่ใช่การโจมตี จึงติดเสมอเหมือนเดิม
-  const hasHitChance = !isHealSkill && !isCleanseSkill && !skill.buffAlly && !hasAttackRoll;
-  if (hasHitChance) {
-    const chance = dndSanitizeHitChance(skill.hitChance);
-    if (wantForceHit && chance < 100) {
-      hit = true;
-      parts.push(`🎯 ใช้ตัวช่วยโดนแน่นอน — ข้ามทอยโอกาสโดน ${chance}% — ✅ โดน!`);
-    } else {
-      const roll = 1 + Math.floor(Math.random() * 100);
-      hit = roll <= chance;
-      if (chance < 100) parts.push(`🎲 โอกาสโดน ${chance}%: ทอยได้ ${roll} — ${hit ? '✅ โดน!' : '❌ พลาด!'}`);
-    }
-  }
-  // ผลสรุปว่าสกิลนี้ "โดน" เป้าหมายหรือไม่ (ใช้คุมว่าจะคิดดาเมจ/ติดสถานะหรือไม่) — สกิลชุบ/ลบล้างสถานะ/บัฟเพื่อนไม่มีโอกาสพลาด จึงถือว่าโดนเสมอ
-  const skillLands = (hasAttackRoll || hasHitChance) ? hit : true;
   if (hasAttackRoll && hit && target.type === 'player') {
     const targetPlayer = dndPlayers.find(pp => pp.id === Number(targetId));
     const wear = dndWearArmorOnHit(targetPlayer);
@@ -2190,7 +2298,7 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
   let damage = 0;
   let dmgRolls = null;
   let aoeHitsForAnim = [];
-  if (skill.dmgDie && !isHealSkill && skillLands) {
+  if (skill.dmgDie && !isHealSkill && (!hasAttackRoll || hit)) {
     const effDmgMod = skill.dmgMod + passive.dmg + statusMods.dmg;
     const dmg = dndRollDamage(skill.dmgDie, skill.dmgCount, effDmgMod, crit);
     dmgRolls = dmg.rolls; damage = dmg.damage;
@@ -2259,44 +2367,14 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
     }
   }
   // ติดสถานะ/ดีบัฟที่ผูกไว้กับสกิล (ถ้ามี) ให้เป้าหมายที่เลือกไว้ — ใช้ได้ทั้งเป้าหมายที่เป็นผู้เล่นและมอนสเตอร์ ไม่ต้องทอยโจมตีก่อน (นอกจากสกิลนี้จะมีดาเมจ/ทอยโจมตีอยู่แล้วและพลาด)
-  // ดีบัฟใส่ศัตรู: มีโอกาสติด (statusChance ของสกิล) หักด้วยค่าต้านทานของมอนสเตอร์ (statusResist) แล้วทอย d100 เทียบ — ไม่ติด 100% เสมอไปแบบเดิมอีกต่อไป
-  // บัฟใส่เพื่อน (buffAlly): ติดเสมอ ไม่มีการทอย/ต้านทาน เพราะเป็นการให้พรตัวเอง/ปาร์ตี้ ไม่ใช่การโจมตี
-  if (skill.statusName && skillLands) {
-    const isBuffApply = !!skill.buffAlly;
-    const chance = Number(skill.statusChance) || 100;
-    let resist = 0;
-    if (!isBuffApply && target.type === 'token') {
-      const rawToken = dndTokens.find(tt => tt.id === target.id);
-      resist = Math.max(0, Math.min(100, Number(rawToken && rawToken.statusResist) || 0));
-    }
-    const effChance = isBuffApply ? 100 : Math.max(0, Math.min(100, chance - resist));
-    const statusRoll = 1 + Math.floor(Math.random() * 100);
-    const landed = isBuffApply || statusRoll <= effChance;
-    const rollTag = (chance < 100 || resist > 0) ? ` (🎲 ${statusRoll} vs ${effChance}%${resist ? ` — โอกาส ${chance}% หักต้านทาน ${resist}%` : ''})` : '';
-    if (landed) {
-      const statusTarget = dndFindStatusTarget(target.type, target.id);
-      if (statusTarget) {
-        // ต่อวิ (tick): ใช้ค่าที่ตั้งไว้ตอนออกแบบสกิล (statusTickValue/statusTickIntervalSec) คำนวณ expiresAt/nextTickAt ตอนติดจริง
-        // เหมือนกับตอน DM มอบสถานะเองมือทุกประการ (ดู dndHandleStatusApply) — สกิลผู้เล่นจึงมีดีบัฟ/บัฟต่อเนื่อง (พิษ/ไฟลุก/รีเจน ฯลฯ) ได้เหมือนกัน
-        const durationSec = Number(skill.statusDurationSec) || 0;
-        const expiresAt = durationSec > 0 ? Date.now() + durationSec * 1000 : 0;
-        const tickValue = Number(skill.statusTickValue) || 0;
-        const tickIntervalSec = tickValue !== 0 ? (Number(skill.statusTickIntervalSec) || 6) : 0;
-        const nextTickAt = tickValue !== 0 ? Date.now() + tickIntervalSec * 1000 : 0;
-        statusTarget.list.push({
-          id: dndNextStatusId++, name: skill.statusName, note: skill.statusNote,
-          durationSec, expiresAt,
-          atkMod: Number(skill.statusAtkMod) || 0, dmgMod: Number(skill.statusDmgMod) || 0, defMod: Number(skill.statusDefMod) || 0,
-          tickValue, tickIntervalSec, nextTickAt,
-          icon: skill.statusIcon || '☠️', color: skill.statusColor || '',
-        });
-        parts.push(`☠️ ติดสถานะ "${skill.statusName}"${skill.statusNote ? ` (${skill.statusNote})` : ''} ให้ ${target.name}${rollTag}${dndBuildStatusModText(skill.statusAtkMod, skill.statusDmgMod, skill.statusDefMod, tickValue, tickIntervalSec)}`);
-      }
-    } else {
-      parts.push(`🛡️ ${target.name} ต้านทานสถานะ "${skill.statusName}" ได้สำเร็จ!${rollTag}`);
+  if (skill.statusName && (!hasAttackRoll || hit)) {
+    const statusTarget = dndFindStatusTarget(target.type, target.id);
+    if (statusTarget) {
+      statusTarget.list.push({ id: dndNextStatusId++, name: skill.statusName, note: skill.statusNote });
+      parts.push(`☠️ ติดสถานะ "${skill.statusName}"${skill.statusNote ? ` (${skill.statusNote})` : ''} ให้ ${target.name}`);
     }
   }
-  const dealtDamage = skill.dmgDie && !isHealSkill && skillLands;
+  const dealtDamage = skill.dmgDie && !isHealSkill && (!hasAttackRoll || hit);
   if (attackRoll !== null || dealtDamage) {
     dndBroadcastAttackAnim({
       atkKey: 'p' + p.id,
@@ -2314,11 +2392,6 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
       p.skillReadyAt = p.skillReadyAt || {};
       p.skillReadyAt[skill.id] = Date.now() + skill.cooldownSec * 1000;
     }
-    // หัก SP ตามที่สกิลนี้กำหนด (ถ้ามี) — เช็กว่าพอแล้วก่อนหน้านี้แล้วตอนต้นฟังก์ชัน
-    if (skill.spCost > 0) {
-      p.character.sp = Math.max(0, Math.round((Number(p.character.sp) || 0) - skill.spCost));
-      parts.push(`🔵 ใช้ SP ${skill.spCost} (เหลือ ${p.character.sp}/${p.character.maxSp})`);
-    }
   }
 
   if (parts.length) dndAddLog(`✨ ${charName} ใช้สกิล "${skill.name}" ใส่ ${target.name}: ${parts.join(' | ')}`);
@@ -2334,28 +2407,21 @@ function dndHandleNormalAttack(ws, targetType, targetId) {
     return;
   }
   const target = dndFindCombatTarget(targetType, targetId);
-  if (!target || target.hp <= 0) { dndSendError(ws, 'กรุณาเลือกเป้าหมายที่ยังมี HP'); return; }
+  if (!target || target.hp <= 0) { dndSendError(ws, 'กรุณาเลือกมอนสเตอร์ที่ยังมี HP'); return; }
   const c = p.character || {};
-  const na = c.normalAttack || DND_NORMAL_ATTACK_DEFAULT;
-  const naName = na.name || DND_NORMAL_ATTACK_DEFAULT.name;
-  const naStat = (na.stat === 'auto' || DND_STAT_KEYS.includes(na.stat)) ? na.stat : 'auto';
-  const naDmgDie = DND_VALID_DICE.includes(Number(na.dmgDie)) ? Number(na.dmgDie) : DND_NORMAL_ATTACK_DEFAULT.dmgDie;
-  const naDmgCount = Math.max(1, Math.min(20, Math.round(Number(na.dmgCount) || 1)));
-  const naAtkBonus = Math.round(Number(na.atkBonus) || 0);
-  const naDmgBonus = Math.round(Number(na.dmgBonus) || 0);
   const strMod = dndAbilityMod(Number(c.str) || 10);
   const dexMod = dndAbilityMod(Number(c.dex) || 10);
-  const abilityMod = naStat === 'auto' ? Math.max(strMod, dexMod) : dndAbilityMod(Number(c[naStat]) || 10);
+  const abilityMod = Math.max(strMod, dexMod);
   const equipAtk = dndTotalAttack(c.equipment);
   const passive = dndCharPassiveEffect(c);
   const statusMods = dndStatusMods(c.statuses);
-  const mod = abilityMod + equipAtk + passive.atk + statusMods.atk + naAtkBonus;
+  const mod = abilityMod + equipAtk + passive.atk + statusMods.atk;
   const attackRoll = 1 + Math.floor(Math.random() * 20);
   const res = dndRollVsAC(attackRoll, mod, target.ac, passive.critRange);
   const modStr = mod >= 0 ? ` +${mod}` : ` ${mod}`;
   let damage = 0, damageRolls = [];
   if (res.hit) {
-    const dmg = dndRollDamage(naDmgDie, naDmgCount, mod + passive.dmg + statusMods.dmg + naDmgBonus, res.crit);
+    const dmg = dndRollDamage(6, 1, mod + passive.dmg + statusMods.dmg, res.crit);
     damage = dmg.damage; damageRolls = dmg.rolls;
     const oldHp = target.hp;
     target.applyDamage(damage);
@@ -2365,14 +2431,14 @@ function dndHandleNormalAttack(ws, targetType, targetId) {
   const hitTag = res.fumble ? ' | 💨 พลาดสุด ๆ (ทอยได้ 1)' : (!res.hit ? ' | 🛡️ พลาด! หลบได้' : (res.crit ? ' | 🎯 คริติคอล!' : ' | ✅ โดน'));
   // ไม่บอกเลือดที่เหลือของมอนสเตอร์ในข้อความแชท — ผู้เล่นจะไม่รู้ HP มอนสเตอร์จากตรงนี้
   const hpPart = (res.hit && target.type !== 'token') ? ` | ❤️ ${target.name} HP ${target.hp + damage} → ${target.hp}` : '';
-  const dmgPart = res.hit ? ` | 💥 ${damageRolls.length}d${naDmgDie}${modStr} = [${damageRolls.join(', ')}]${modStr} = ${damage}` : '';
-  dndAddLog(`⚔️ ${c.charName || p.name} ใช้ "${naName}" ใส่ ${target.name}: 🎯 1d20${modStr} = [${attackRoll}] = ${res.total} vs AC ${target.ac}${hitTag}${dmgPart}${hpPart}`);
+  const dmgPart = res.hit ? ` | 💥 ${damageRolls.length}d6${modStr} = [${damageRolls.join(', ')}]${modStr} = ${damage}` : '';
+  dndAddLog(`⚔️ ${c.charName || p.name} โจมตีปกติใส่ ${target.name}: 🎯 1d20${modStr} = [${attackRoll}] = ${res.total} vs AC ${target.ac}${hitTag}${dmgPart}${hpPart}`);
   dndBroadcastAttackAnim({
     atkKey: 'p' + p.id,
     attacker: c.charName || p.name, target: target.name, targetType: target.type,
     atkTokenId: dndPcTokenId(p.id), tgtTokenId: target.type === 'token' ? target.id : dndPcTokenId(target.id),
     attackRoll, attackMod: mod, attackTotal: res.total, targetAC: target.ac, hit: res.hit, crit: res.crit, fumble: res.fumble,
-    dmgDie: res.hit ? naDmgDie : null, dmgCount: res.hit ? damageRolls.length : 0, dmgRolls: res.hit ? damageRolls : null, dmgMod: mod, damage: res.hit ? damage : null,
+    dmgDie: res.hit ? 6 : null, dmgCount: res.hit ? damageRolls.length : 0, dmgRolls: res.hit ? damageRolls : null, dmgMod: mod, damage: res.hit ? damage : null,
   });
 }
 
@@ -2423,14 +2489,10 @@ function dndHandleTokenCreate(ws, payload) {
   const expReward = Math.max(0, Math.min(999999, Math.round(Number(payload.expReward) || 0)));
   const goldReward = Math.max(0, Math.min(999999, Math.round(Number(payload.goldReward) || 0)));
   const loot = dndSanitizeLoot(payload.loot);
-  // ค่าต้านทานสถานะ/ดีบัฟ (%) — หักออกจากโอกาสติดสถานะของสกิลที่ใช้ใส่มอนสเตอร์ตัวนี้ (0 = ไม่ต้านทานเลย เหมือนพฤติกรรมเดิม)
-  const statusResist = Math.max(0, Math.min(100, Math.round(Number(payload.statusResist) || 0)));
-  const newTokenId = dndNextTokenId++;
   dndTokens.push({
-    id: newTokenId, kind: 'npc', ownerId: null, name, color, image, x: pos.x, y: pos.y, mapId: dndCurrentMapId, size,
-    hp: maxHp, maxHp, ac, ...stats, attacks, statuses: [], expReward, goldReward, loot, statusResist,
+    id: dndNextTokenId++, kind: 'npc', ownerId: null, name, color, image, x: pos.x, y: pos.y, mapId: dndCurrentMapId, size,
+    hp: maxHp, maxHp, ac, ...stats, attacks, statuses: [], expReward, goldReward, loot,
   });
-  dndAppendTurnEntryIfActive('npc', newTokenId);
   dndAddLog(`🗺️ DM เพิ่ม token "${name}" ลงแผนที่ "${dndCurrentMap().name}" (HP ${maxHp}, AC ${ac})`);
 }
 // ตั้งชื่อสำเนามอนสเตอร์ต่อท้ายด้วย "+1" — ถ้าชื่อเดิมมี "+N" อยู่แล้ว (คัดลอกจากสำเนาอีกที) ให้เพิ่มเลขต่อ (+2, +3, ...)
@@ -2446,21 +2508,18 @@ function dndHandleTokenDuplicate(ws, id) {
   const t = dndTokens.find(tt => tt.id === Number(id) && tt.kind === 'npc');
   if (!t) return;
   const copyName = dndNextCopyName(t.name);
-  const newTokenId = dndNextTokenId++;
   const copy = {
-    id: newTokenId, kind: 'npc', ownerId: null,
+    id: dndNextTokenId++, kind: 'npc', ownerId: null,
     name: copyName, color: t.color, image: t.image || null,
     x: Math.max(0, Math.min(100, t.x + 4)), y: Math.max(0, Math.min(100, t.y + 4)), mapId: t.mapId,
     hp: t.maxHp, maxHp: t.maxHp, ac: t.ac, size: t.size || 'normal',
     str: t.str || 10, dex: t.dex || 10, con: t.con || 10, int: t.int || 10, wis: t.wis || 10, cha: t.cha || 10,
     attacks: (t.attacks || []).map(a => Object.assign({}, a, { id: dndNextAttackId++ })),
     statuses: [], // สถานะ/ดีบัฟไม่คัดลอกตามมา เพราะเป็นของเฉพาะตัวที่เกิดขึ้นระหว่างเล่น
-    statusResist: t.statusResist || 0,
     expReward: t.expReward || 0, goldReward: t.goldReward || 0,
     loot: (t.loot || []).map(item => Object.assign({}, item, { id: dndNextLootId++ })),
   };
   dndTokens.push(copy);
-  dndAppendTurnEntryIfActive('npc', newTokenId);
   dndAddLog(`📋 DM คัดลอก token "${t.name}" เป็น "${copyName}" เพิ่มอีกตัวลงแผนที่ "${dndCurrentMap().name}"`);
 }
 function dndHandleTokenEdit(ws, id, updates) {
@@ -2475,18 +2534,6 @@ function dndHandleTokenEdit(ws, id, updates) {
     t.image = null;
   } else if (typeof updates.image === 'string' && updates.image.startsWith('data:image/') && updates.image.length <= DND_MAX_TOKEN_IMAGE_CHARS) {
     t.image = updates.image;
-  }
-  if (p.isDM && t.kind === 'pc') {
-    // วิสัยทัศน์ (fog of war): DM เท่านั้นที่กำหนดชนิด/รัศมีให้ token ผู้เล่นแต่ละคนได้ — ผู้เล่นแก้เองไม่ได้
-    if (typeof updates.visionType === 'string' && DND_VISION_TYPES.includes(updates.visionType)) t.visionType = updates.visionType;
-    if (updates.visionRadius !== undefined) {
-      if (updates.visionRadius === null || updates.visionRadius === '') {
-        t.visionRadius = null; // null = ใช้ค่ารัศมีตั้งต้นตามชนิดวิสัยทัศน์
-      } else {
-        const n = Number(updates.visionRadius);
-        if (Number.isFinite(n)) t.visionRadius = Math.max(5, Math.min(100, Math.round(n)));
-      }
-    }
   }
   if (p.isDM && t.kind === 'npc') {
     if (typeof updates.name === 'string') {
@@ -2514,7 +2561,6 @@ function dndHandleTokenEdit(ws, id, updates) {
     });
     if (updates.expReward !== undefined) { const n = Number(updates.expReward); if (Number.isFinite(n)) t.expReward = Math.max(0, Math.min(999999, Math.round(n))); }
     if (updates.goldReward !== undefined) { const n = Number(updates.goldReward); if (Number.isFinite(n)) t.goldReward = Math.max(0, Math.min(999999, Math.round(n))); }
-    if (updates.statusResist !== undefined) { const n = Number(updates.statusResist); if (Number.isFinite(n)) t.statusResist = Math.max(0, Math.min(100, Math.round(n))); }
     if (updates.loot !== undefined) t.loot = dndSanitizeLoot(updates.loot);
     if (t.hp > 0) t._rewarded = false;
   }
@@ -2526,7 +2572,6 @@ function dndHandleTokenDelete(ws, id) {
   const idx = dndTokens.findIndex(tt => tt.id === Number(id) && tt.kind === 'npc');
   if (idx === -1) return;
   const [removed] = dndTokens.splice(idx, 1);
-  dndCleanTurnOrder();
   dndAddLog(`🗺️ DM ลบ token "${removed.name}" ออกจากแผนที่`);
 }
 
@@ -2703,26 +2748,6 @@ function dndSanitizeStatusTick(raw) {
 function dndSanitizeTickInterval(raw) {
   return Math.max(1, Math.min(3600, Math.round(Number(raw) || 0) || 6));
 }
-// hitChance: โอกาสที่สกิล (ที่ไม่ได้ผูกสเตตัส จึงไม่มีการทอยโจมตีวัด AC) จะโดนเป้าหมายหรือไม่ — ทอย d100 เทียบค่านี้ก่อนคิดดาเมจ/ติดสถานะ
-// 1-100, ค่าเริ่มต้น 100 = โดนเสมอเหมือนพฤติกรรมเดิมก่อนมีฟีเจอร์นี้ (สกิลเก่าที่ไม่มีค่านี้จะถือว่าเป็น 100 เหมือนเดิมทุกประการ)
-function dndSanitizeHitChance(raw) {
-  return Math.max(1, Math.min(100, Math.round(Number(raw) || 100) || 100));
-}
-// icon: อีโมจิ/สัญลักษณ์แสดงบนชิปสถานะ (ไม่บังคับ) — ไม่ใส่มาก็ใช้ ☠️ เป็นค่าเริ่มต้นเหมือนเดิม
-function dndSanitizeStatusIcon(raw) {
-  const s = (raw || '').toString().trim().slice(0, 4);
-  return s || '☠️';
-}
-// color: สีประจำตัวของสถานะนี้ (hex เท่านั้น เช่น #ff6b6b) — ไม่ใส่มาก็ปล่อยว่าง ใช้สีธีมเริ่มต้นของระบบ
-function dndSanitizeStatusColor(raw) {
-  const s = (raw || '').toString().trim();
-  return /^#[0-9a-fA-F]{6}$/.test(s) ? s.toLowerCase() : '';
-}
-// icon: อีโมจิ/สัญลักษณ์ประจำสกิลที่ DM ออกแบบ (ไม่บังคับ) — ไม่ใส่มาก็ใช้ ✨ เป็นค่าเริ่มต้น
-function dndSanitizeSkillIcon(raw) {
-  const s = (raw || '').toString().trim().slice(0, 4);
-  return s || '✨';
-}
 function dndBuildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec) {
   const parts = [];
   if (atkMod) parts.push(`🎯 โจมตี ${atkMod > 0 ? '+' : ''}${atkMod}`);
@@ -2747,10 +2772,8 @@ function dndHandleStatusApply(ws, payload) {
   const tickValue = dndSanitizeStatusTick(payload.tickValue);
   const tickIntervalSec = tickValue !== 0 ? dndSanitizeTickInterval(payload.tickIntervalSec) : 0;
   const nextTickAt = tickValue !== 0 ? Date.now() + tickIntervalSec * 1000 : 0;
-  const icon = dndSanitizeStatusIcon(payload.icon);
-  const color = dndSanitizeStatusColor(payload.color);
-  target.list.push({ id: dndNextStatusId++, name, note, durationSec, expiresAt, atkMod, dmgMod, defMod, tickValue, tickIntervalSec, nextTickAt, icon, color });
-  dndAddLog(`${icon} DM มอบสถานะ "${name}" ให้ ${target.label}${durationSec ? ` (คูลดาวน์ ${durationSec}วิ)` : ''}${dndBuildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec)}`);
+  target.list.push({ id: dndNextStatusId++, name, note, durationSec, expiresAt, atkMod, dmgMod, defMod, tickValue, tickIntervalSec, nextTickAt });
+  dndAddLog(`☠️ DM มอบสถานะ "${name}" ให้ ${target.label}${durationSec ? ` (คูลดาวน์ ${durationSec}วิ)` : ''}${dndBuildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec)}`);
 }
 function dndHandleStatusRemove(ws, payload) {
   const p = dndFindByWs(ws);
@@ -2778,8 +2801,6 @@ function dndHandleStatusEdit(ws, payload) {
   const defMod = dndSanitizeStatusMod(payload.defMod);
   const tickValue = dndSanitizeStatusTick(payload.tickValue);
   const tickIntervalSec = tickValue !== 0 ? dndSanitizeTickInterval(payload.tickIntervalSec) : 0;
-  const icon = dndSanitizeStatusIcon(payload.icon);
-  const color = dndSanitizeStatusColor(payload.color);
   status.name = name;
   status.note = note;
   status.durationSec = durationSec;
@@ -2789,27 +2810,14 @@ function dndHandleStatusEdit(ws, payload) {
   status.defMod = defMod;
   status.tickValue = tickValue;
   status.tickIntervalSec = tickIntervalSec;
-  status.icon = icon;
-  status.color = color;
   // แก้ไขค่า tick ใหม่ระหว่างที่สถานะติดอยู่แล้ว — รีเซตนับเวลาติ๊กรอบถัดไปใหม่ จะได้ไม่ติ๊กถี่/ห่างผิดจากที่เพิ่งตั้งใหม่
   status.nextTickAt = tickValue !== 0 ? Date.now() + tickIntervalSec * 1000 : 0;
-  dndAddLog(`✏️ DM แก้ไขสถานะของ ${target.label} เป็น "${icon} ${name}"${durationSec ? ` (คูลดาวน์ ${durationSec}วิ)` : ' (ไม่มีคูลดาวน์)'}${dndBuildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec)}`);
+  dndAddLog(`✏️ DM แก้ไขสถานะของ ${target.label} เป็น "${name}"${durationSec ? ` (คูลดาวน์ ${durationSec}วิ)` : ' (ไม่มีคูลดาวน์)'}${dndBuildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec)}`);
 }
 // ไล่เช็กทุกวินาทีว่ามีสถานะของใครหมดคูลดาวน์แล้วหรือยัง (หมดแล้วให้หลุดออกอัตโนมัติ) และมีสถานะไหนถึงรอบติ๊กดาเมจ/ฟื้น HP ต่อเนื่องหรือยัง (พิษ/ไฟลุก/รีเจน ฯลฯ)
 function dndSweepExpiredStatuses() {
   const now = Date.now();
   let changed = false;
-  // เวลาวิ่งอัตโนมัติ — ฟังก์ชันนี้ถูกเรียกทุก 1 วิ (ดู setInterval ใน index.js) ใช้ tick เดิมนี้เดินเวลาในเกมไปด้วยเลย
-  if (dndTimeAuto.running) {
-    dndTimeAutoAccumMinutes += dndTimeAuto.speed / 60; // ต่อ 1 วินาทีจริงที่ผ่านไป
-    if (dndTimeAutoAccumMinutes >= 1) {
-      const wholeMinutes = Math.floor(dndTimeAutoAccumMinutes);
-      dndTimeAutoAccumMinutes -= wholeMinutes;
-      const totalNow = dndGameTime.hour * 60 + dndGameTime.minute;
-      dndGameTime = dndNormalizeGameTime(dndGameTime.day, totalNow + wholeMinutes);
-      changed = true;
-    }
-  }
   const processList = (list, label, applyTick, onAfterTick) => {
     for (let i = list.length - 1; i >= 0; i--) {
       const s = list[i];
@@ -2882,148 +2890,17 @@ function dndHandleRestart(ws) {
   dndCustomPassives = [];
   dndNextPassiveId = 1;
   dndScene = { location: '', situation: '' };
-  dndGameTime = { day: 1, hour: 8, minute: 0 };
-  dndTimeAuto = { running: false, speed: 10 };
-  dndTimeAutoAccumMinutes = 0;
-  dndMaps = cloneDefaultMaps();
-  dndNextMapId = Math.max(0, ...DEFAULT_MAPS.map(m => m.id)) + 1;
-  dndCurrentMapId = DEFAULT_MAPS[0] ? DEFAULT_MAPS[0].id : 1;
-  dndVisionEnabled = false;
+  dndMaps = [{ id: 1, name: 'แผนที่ 1', background: null }];
+  dndNextMapId = 2;
+  dndCurrentMapId = 1;
   dndTokens = [];
   dndNextTokenId = 1;
   dndNextAttackId = 1;
   dndNextStatusId = 1;
-  dndWalls = [];
-  dndNextWallId = 1;
   dndTurnOrder = [];
   dndTurnIndex = -1;
   dndTrades = [];
   dndNextTradeId = 1;
-  const payload = JSON.stringify({ type: 'dndLeft' });
-  for (const pp of everyone) {
-    if (pp.ws && pp.ws.readyState === WebSocket.OPEN) pp.ws.send(payload);
-  }
-}
-// ============================================================
-// บันทึกเกม / โหลดเกม: DM กดบันทึกสถานะห้องทั้งหมด (ผู้เล่น/การ์ดตัวละคร/แผนที่/token/ร้านค้า/เวลาในเกม ฯลฯ)
-// ออกมาเป็นไฟล์ .json เก็บไว้ในเครื่อง แล้วเอาไฟล์นั้นกลับมาโหลดทีหลังเพื่อเล่นต่อจากจุดเดิมได้
-// (เช่น ปิดเซิร์ฟเวอร์ไปแล้วเปิดใหม่ หรือย้ายไปรันที่เครื่องอื่น) — ทำได้เฉพาะ DM เท่านั้น
-// ============================================================
-// รวมสถานะทั้งหมดของห้องเป็นก้อนข้อมูลเดียวที่ JSON.stringify ได้ตรงๆ (ตัด ws ออกเพราะ serialize ไม่ได้)
-function dndSerializeState() {
-  return {
-    version: 1,
-    savedAt: new Date().toISOString(),
-    players: dndPlayers.map(p => ({
-      id: p.id, name: p.name, isDM: p.isDM, character: p.character,
-    })),
-    nextId: dndNextId,
-    log: dndLog,
-    skills: dndSkills,
-    nextSkillId: dndNextSkillId,
-    customPassives: dndCustomPassives,
-    nextPassiveId: dndNextPassiveId,
-    scene: dndScene,
-    gameTime: dndGameTime,
-    timeAuto: dndTimeAuto,
-    timeAutoAccumMinutes: dndTimeAutoAccumMinutes,
-    maps: dndMaps,
-    nextMapId: dndNextMapId,
-    currentMapId: dndCurrentMapId,
-    visionEnabled: dndVisionEnabled,
-    tokens: dndTokens,
-    nextTokenId: dndNextTokenId,
-    nextAttackId: dndNextAttackId,
-    nextStatusId: dndNextStatusId,
-    nextLootId: dndNextLootId,
-    walls: dndWalls,
-    nextWallId: dndNextWallId,
-    turnOrder: dndTurnOrder,
-    turnIndex: dndTurnIndex,
-    shops: dndShops,
-    nextShopId: dndNextShopId,
-    nextShopItemId: dndNextShopItemId,
-    trades: dndTrades,
-    nextTradeId: dndNextTradeId,
-    itemEffects: dndItemEffects,
-    nextItemEffectId: dndNextItemEffectId,
-  };
-}
-// DM กดปุ่ม "บันทึกเกมเป็นไฟล์" — ส่งก้อนข้อมูลสถานะทั้งหมดกลับไปให้เบราว์เซอร์ของ DM คนที่ขอเท่านั้น
-// (ฝั่ง client จะเป็นคนสร้างไฟล์ .json ให้ดาวน์โหลดจากข้อมูลนี้)
-function dndHandleExportState(ws) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) { dndSendError(ws, 'เฉพาะ DM เท่านั้นที่บันทึกเกมเป็นไฟล์ได้'); return; }
-  const snapshot = dndSerializeState();
-  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'dndExportState', data: snapshot }));
-  dndAddLog(`💾 ${p.character.charName || p.name} (DM) บันทึกสถานะห้องทั้งหมดเป็นไฟล์`);
-}
-// DM เลือกไฟล์เซฟที่เคยบันทึกไว้ (จากปุ่ม "โหลดเกมจากไฟล์") มาแทนที่สถานะห้องทั้งหมดตอนนี้
-// ผู้เล่นทุกคน (รวม DM ที่กดโหลด) จะหลุดกลับไปหน้าหลักเหมือนตอนกด "รีเซตห้องทั้งหมด" แล้วต้องกลับเข้ามา
-// "นั่งที่เดิม" ผ่านรายชื่อที่นั่งกันใหม่ทุกคน — เพราะที่นั่งในไฟล์เซฟถูก mark เป็น "ยังไม่ได้เชื่อมต่อ" เสมอ
-function dndHandleImportState(ws, data) {
-  const p = dndFindByWs(ws);
-  if (!p || !p.isDM) { dndSendError(ws, 'เฉพาะ DM เท่านั้นที่โหลดไฟล์เซฟได้'); return; }
-  if (!data || typeof data !== 'object') { dndSendError(ws, 'ไฟล์เซฟไม่ถูกต้องหรือเสียหาย อ่านข้อมูลไม่ได้'); return; }
-
-  const rawPlayers = Array.isArray(data.players) ? data.players : [];
-  const newPlayers = rawPlayers
-    .filter(pl => pl && typeof pl === 'object' && Number.isFinite(Number(pl.id)))
-    .map(pl => ({
-      id: Number(pl.id),
-      ws: null,
-      name: (pl.name || 'ผู้เล่น').toString().slice(0, 16),
-      isDM: !!pl.isDM,
-      connected: false,
-      character: dndEnsureCharacterDefaults((pl.character && typeof pl.character === 'object') ? pl.character : newDndCharacter(pl.name || 'ผู้เล่น')),
-    }));
-  if (!newPlayers.length) { dndSendError(ws, 'ไฟล์เซฟนี้ไม่มีข้อมูลผู้เล่นเลย โหลดไม่ได้'); return; }
-  // ต้องมี DM อย่างน้อย 1 คนเสมอ ไม่งั้นห้องจะไม่มีใครคุมได้ — ถ้าไฟล์เพี้ยนไม่มี DM เลย ให้คนแรกในลิสต์เป็น DM แทน
-  if (!newPlayers.some(pp => pp.isDM)) newPlayers[0].isDM = true;
-
-  const everyone = dndPlayers.slice(); // เก็บรายชื่อคนที่ต่ออยู่ตอนนี้ไว้ก่อน เพื่อเด้งทุกคนกลับหน้าหลัก
-
-  dndPlayers = newPlayers;
-  dndNextId = Number.isFinite(Number(data.nextId)) ? Number(data.nextId) : (Math.max(0, ...dndPlayers.map(pp => pp.id)) + 1);
-  dndLog = Array.isArray(data.log) ? data.log.slice(-500) : [];
-  dndSkills = Array.isArray(data.skills) ? data.skills : [];
-  dndNextSkillId = Number.isFinite(Number(data.nextSkillId)) ? Number(data.nextSkillId) : 1;
-  dndCustomPassives = Array.isArray(data.customPassives) ? data.customPassives : [];
-  dndNextPassiveId = Number.isFinite(Number(data.nextPassiveId)) ? Number(data.nextPassiveId) : 1;
-  dndScene = (data.scene && typeof data.scene === 'object')
-    ? { location: (data.scene.location || '').toString(), situation: (data.scene.situation || '').toString() }
-    : { location: '', situation: '' };
-  dndGameTime = (data.gameTime && typeof data.gameTime === 'object')
-    ? { day: Number(data.gameTime.day) || 1, hour: Number(data.gameTime.hour) || 8, minute: Number(data.gameTime.minute) || 0 }
-    : { day: 1, hour: 8, minute: 0 };
-  dndTimeAuto = (data.timeAuto && typeof data.timeAuto === 'object')
-    ? { running: !!data.timeAuto.running, speed: Number(data.timeAuto.speed) || 10 }
-    : { running: false, speed: 10 };
-  dndTimeAutoAccumMinutes = Number(data.timeAutoAccumMinutes) || 0;
-  dndMaps = (Array.isArray(data.maps) && data.maps.length) ? data.maps : cloneDefaultMaps();
-  dndNextMapId = Number.isFinite(Number(data.nextMapId)) ? Number(data.nextMapId) : (Math.max(0, ...dndMaps.map(m => m.id)) + 1);
-  dndCurrentMapId = (Number.isFinite(Number(data.currentMapId)) && dndMaps.some(m => m.id === Number(data.currentMapId)))
-    ? Number(data.currentMapId)
-    : (dndMaps[0] ? dndMaps[0].id : 1);
-  dndVisionEnabled = !!data.visionEnabled;
-  dndTokens = Array.isArray(data.tokens) ? data.tokens : [];
-  dndNextTokenId = Number.isFinite(Number(data.nextTokenId)) ? Number(data.nextTokenId) : 1;
-  dndNextAttackId = Number.isFinite(Number(data.nextAttackId)) ? Number(data.nextAttackId) : 1;
-  dndNextStatusId = Number.isFinite(Number(data.nextStatusId)) ? Number(data.nextStatusId) : 1;
-  dndNextLootId = Number.isFinite(Number(data.nextLootId)) ? Number(data.nextLootId) : 1;
-  dndWalls = Array.isArray(data.walls) ? data.walls : [];
-  dndNextWallId = Number.isFinite(Number(data.nextWallId)) ? Number(data.nextWallId) : 1;
-  dndTurnOrder = Array.isArray(data.turnOrder) ? data.turnOrder.map(dndNormalizeTurnEntry).filter(Boolean) : [];
-  dndTurnIndex = Number.isFinite(Number(data.turnIndex)) ? Number(data.turnIndex) : -1;
-  dndCleanTurnOrder();
-  dndShops = Array.isArray(data.shops) ? data.shops : [];
-  dndNextShopId = Number.isFinite(Number(data.nextShopId)) ? Number(data.nextShopId) : 1;
-  dndNextShopItemId = Number.isFinite(Number(data.nextShopItemId)) ? Number(data.nextShopItemId) : 1;
-  dndTrades = Array.isArray(data.trades) ? data.trades : [];
-  dndNextTradeId = Number.isFinite(Number(data.nextTradeId)) ? Number(data.nextTradeId) : 1;
-  dndItemEffects = (Array.isArray(data.itemEffects) && data.itemEffects.length) ? data.itemEffects : dndDefaultItemEffectsInit();
-  dndNextItemEffectId = Number.isFinite(Number(data.nextItemEffectId)) ? Number(data.nextItemEffectId) : 1;
-
   const payload = JSON.stringify({ type: 'dndLeft' });
   for (const pp of everyone) {
     if (pp.ws && pp.ws.readyState === WebSocket.OPEN) pp.ws.send(payload);
@@ -3053,8 +2930,9 @@ function dndHandleDmKickPlayer(ws, targetId) {
   }
   dndTokens = dndTokens.filter(t => !(t.kind === 'pc' && t.ownerId === target.id));
   dndSkills.forEach(s => { if (s.assignedIds) s.assignedIds = s.assignedIds.filter(id => id !== target.id); });
+  dndTurnOrder = dndTurnOrder.filter(id => id !== target.id);
+  if (dndTurnIndex >= dndTurnOrder.length) dndTurnIndex = dndTurnOrder.length ? 0 : -1;
   dndPlayers.splice(idx, 1);
-  dndCleanTurnOrder();
   dndAddLog(`🚫 DM ลบผู้เล่น "${name}" ออกจากห้องแล้ว`);
 }
 function dndHandleDisconnect(ws) {
@@ -3074,10 +2952,6 @@ function dndHandleGiveItem(ws, targetId, name, qty) {
   const cleanName = (name || '').toString().trim().slice(0, 40);
   const cleanQty = Math.max(1, Math.min(999, Math.round(Number(qty) || 0)));
   if (!cleanName) { dndSendError(ws, 'กรุณากรอกชื่อไอเทม'); return; }
-  if (!dndBagHasRoomFor(target.character, cleanName)) {
-    dndSendError(ws, `กระเป๋าของ ${target.character.charName || target.name} เต็มแล้ว (${DND_BAG_CAPACITY} ช่อง) มอบไอเทมไม่ได้`);
-    return;
-  }
   dndBagAdd(target.character, cleanName, cleanQty);
   dndAddLog(`🎁 DM มอบ ${cleanName} x${cleanQty} ให้ ${target.character.charName || target.name}`, [p.id, target.id]);
 }
@@ -3115,7 +2989,7 @@ function dndHandleGiveEquip(ws, targetId, payload) {
   const c = target.character;
   c.equipment = dndSanitizeEquipment(c.equipment);
   const oldItem = c.equipment[slot];
-  if (oldItem && oldItem.name) dndBagAdd(c, oldItem.name, 1, true); // force: กันของที่สวมอยู่หายเพราะกระเป๋าเต็มพอดี
+  if (oldItem && oldItem.name) dndBagAdd(c, oldItem.name, 1);
   c.equipment[slot] = { name, atk, def, durability: maxDurability, maxDurability, icon };
   dndAutoRegisterEquipItemEffect(name, c.equipment[slot], slot);
   const slotLabel = DND_EQUIP_SLOT_LABELS[slot] || slot;
@@ -3139,7 +3013,7 @@ function dndHandleUnequip(ws, payload) {
   c.equipment = dndSanitizeEquipment(c.equipment);
   const item = c.equipment[slot];
   if (!item || !item.name) { dndSendError(ws, 'ช่องนี้ไม่มีของสวมใส่อยู่'); return; }
-  dndBagAdd(c, item.name, 1, true); // force: กันของที่สวมอยู่หายเพราะกระเป๋าเต็มพอดี
+  dndBagAdd(c, item.name, 1);
   c.equipment[slot] = dndSanitizeEquipSlot(null);
   const slotLabel = DND_EQUIP_SLOT_LABELS[slot] || slot;
   const who = c.charName || target.name;
@@ -3151,16 +3025,13 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndTakeSeat') dndHandleTakeSeat(ws, msg.id);
   else if (msg.type === 'dndLeave') dndHandleLeave(ws);
   else if (msg.type === 'dndCreateCharacter') dndHandleCreateCharacter(ws, msg.character);
-  else if (msg.type === 'dndSpendStatPoint') dndHandleSpendStatPoint(ws, msg.stat);
   else if (msg.type === 'dndDmUpdate') dndHandleDmUpdate(ws, msg.targetId, msg.updates);
   else if (msg.type === 'dndDmKickPlayer') dndHandleDmKickPlayer(ws, msg.targetId);
-  else if (msg.type === 'dndRoll') dndHandleRoll(ws, msg.die, msg.count, msg.modifier, msg.label, msg.stat);
+  else if (msg.type === 'dndRoll') dndHandleRoll(ws, msg.die, msg.count, msg.modifier, msg.label);
   else if (msg.type === 'dndChat') dndHandleChat(ws, msg.text);
   else if (msg.type === 'dndSkillCreate') dndHandleSkillCreate(ws, msg.skill);
   else if (msg.type === 'dndSkillEdit') dndHandleSkillEdit(ws, msg.skillId, msg.skill);
   else if (msg.type === 'dndSkillDelete') dndHandleSkillDelete(ws, msg.skillId);
-  else if (msg.type === 'dndClassSkillOverrideSave') dndHandleClassSkillOverrideSave(ws, msg.targetId, msg.skillId, msg.skill);
-  else if (msg.type === 'dndClassSkillOverrideReset') dndHandleClassSkillOverrideReset(ws, msg.targetId, msg.skillId);
   else if (msg.type === 'dndPassiveCreate') dndHandlePassiveCreate(ws, msg.passive);
   else if (msg.type === 'dndPassiveEdit') dndHandlePassiveEdit(ws, msg.passiveId, msg.passive);
   else if (msg.type === 'dndPassiveDelete') dndHandlePassiveDelete(ws, msg.passiveId);
@@ -3170,7 +3041,6 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndAppearanceUpdate') dndHandleAppearanceUpdate(ws, msg.appearance);
   else if (msg.type === 'dndShopCreate') dndHandleShopCreate(ws, msg.name, msg.shopType);
   else if (msg.type === 'dndShopRename') dndHandleShopRename(ws, msg.shopId, msg.name);
-  else if (msg.type === 'dndShopToggleClosed') dndHandleShopToggleClosed(ws, msg.shopId);
   else if (msg.type === 'dndShopDelete') dndHandleShopDelete(ws, msg.shopId);
   else if (msg.type === 'dndShopItemAdd') dndHandleShopItemAdd(ws, msg.shopId, msg.item);
   else if (msg.type === 'dndShopItemEdit') dndHandleShopItemEdit(ws, msg.shopId, msg.itemId, msg.item);
@@ -3183,24 +3053,15 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndTradeCancel') dndHandleTradeCancel(ws, msg.tradeId);
   else if (msg.type === 'dndMapBackgroundUpdate') dndHandleMapBackgroundUpdate(ws, msg.image);
   else if (msg.type === 'dndSceneUpdate') dndHandleSceneUpdate(ws, msg.scene);
-  else if (msg.type === 'dndTimeAdvance') dndHandleTimeAdvance(ws, msg.minutes);
-  else if (msg.type === 'dndTimeSkipDay') dndHandleTimeSkipDay(ws);
-  else if (msg.type === 'dndTimeSet') dndHandleTimeSet(ws, msg.time);
-  else if (msg.type === 'dndTimeAutoToggle') dndHandleTimeAutoToggle(ws, msg.running);
-  else if (msg.type === 'dndTimeAutoSpeedSet') dndHandleTimeAutoSpeedSet(ws, msg.speed);
   else if (msg.type === 'dndTokenMove') dndHandleTokenMove(ws, msg.id, msg.x, msg.y);
   else if (msg.type === 'dndTokenCreate') dndHandleTokenCreate(ws, msg.token);
   else if (msg.type === 'dndTokenEdit') dndHandleTokenEdit(ws, msg.id, msg.updates);
   else if (msg.type === 'dndTokenDelete') dndHandleTokenDelete(ws, msg.id);
   else if (msg.type === 'dndTokenDuplicate') dndHandleTokenDuplicate(ws, msg.id);
   else if (msg.type === 'dndMapCreate') dndHandleMapCreate(ws, msg.name);
-  else if (msg.type === 'dndVisionToggle') dndHandleVisionToggle(ws, msg.enabled);
   else if (msg.type === 'dndMapSwitch') dndHandleMapSwitch(ws, msg.mapId);
   else if (msg.type === 'dndMapRename') dndHandleMapRename(ws, msg.mapId, msg.name);
   else if (msg.type === 'dndMapDelete') dndHandleMapDelete(ws, msg.mapId);
-  else if (msg.type === 'dndWallCreate') dndHandleWallCreate(ws, msg.wall);
-  else if (msg.type === 'dndWallDelete') dndHandleWallDelete(ws, msg.id);
-  else if (msg.type === 'dndWallClear') dndHandleWallClear(ws);
   else if (msg.type === 'dndTokenAttackAdd') dndHandleTokenAttackAdd(ws, msg.tokenId, msg.attack);
   else if (msg.type === 'dndTokenAttackEdit') dndHandleTokenAttackEdit(ws, msg.tokenId, msg.attackId, msg.attack);
   else if (msg.type === 'dndTokenAttackDelete') dndHandleTokenAttackDelete(ws, msg.tokenId, msg.attackId);
@@ -3209,8 +3070,6 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndStatusRemove') dndHandleStatusRemove(ws, msg.status);
   else if (msg.type === 'dndStatusEdit') dndHandleStatusEdit(ws, msg.status);
   else if (msg.type === 'dndRestart') dndHandleRestart(ws);
-  else if (msg.type === 'dndExportState') dndHandleExportState(ws);
-  else if (msg.type === 'dndImportState') dndHandleImportState(ws, msg.data);
   else if (msg.type === 'dndRepairArmor') dndHandleRepairArmor(ws);
   else if (msg.type === 'dndGiveItem') dndHandleGiveItem(ws, msg.targetId, msg.name, msg.qty);
   else if (msg.type === 'dndTakeItem') dndHandleTakeItem(ws, msg.targetId, msg.name, msg.qty);
@@ -3226,9 +3085,144 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndTurnStop') dndHandleTurnStop(ws);
 }
 
+const server = http.createServer((req, res) => {
+  let urlPath = req.url === '/' ? '/index.html' : req.url;
+  const filePath = path.join(__dirname, urlPath);
+  fs.readFile(filePath, (err, data) => {
+    if (err) { res.writeHead(404); res.end('Not found'); return; }
+    const ext = path.extname(filePath);
+    const type = ext === '.html' ? 'text/html; charset=utf-8' : ext === '.js' ? 'text/javascript' : ext === '.css' ? 'text/css' : 'application/octet-stream';
+    res.writeHead(200, { 'Content-Type': type });
+    res.end(data);
+  });
+});
 
-module.exports = {
-  handleMessage: dndHandleMessage,
-  handleDisconnect: dndHandleDisconnect,
-  sweepExpiredStatuses: dndSweepExpiredStatuses,
-};
+const wss = new WebSocket.Server({ server });
+
+function handleChatLobby(ws, text) {
+  const c = lobbySeats.find(c => c.ws === ws);
+  if (!c) return;
+  const trimmed = (text || '').toString().trim().slice(0, 300);
+  if (!trimmed) return;
+  for (const cc of lobbySeats) {
+    if (cc.ws.readyState === WebSocket.OPEN) {
+      cc.ws.send(JSON.stringify({ type: 'chat', name: c.name, text: trimmed }));
+    }
+  }
+}
+function handleChatGame(seat, text) {
+  const p = players[seat];
+  if (!p) return;
+  const trimmed = (text || '').toString().trim().slice(0, 300);
+  if (!trimmed) return;
+  for (const pp of players) {
+    if (!pp.isBot && pp.ws && pp.ws.readyState === WebSocket.OPEN) {
+      pp.ws.send(JSON.stringify({ type: 'chat', name: p.name, text: trimmed }));
+    }
+  }
+}
+function handleThrowEmoji(seat, targetSeat, emoji) {
+  const p = players[seat];
+  if (!p) return;
+  const target = Number(targetSeat);
+  if (!Number.isInteger(target) || !players[target]) return;
+  const safeEmoji = (emoji || '').toString().slice(0, 8);
+  if (!safeEmoji) return;
+  for (const pp of players) {
+    if (!pp.isBot && pp.ws && pp.ws.readyState === WebSocket.OPEN) {
+      pp.ws.send(JSON.stringify({ type: 'emojiThrow', fromSeat: seat, targetSeat: target, emoji: safeEmoji }));
+    }
+  }
+}
+
+wss.on('connection', ws => {
+  ws.on('message', raw => {
+    let msg;
+    try { msg = JSON.parse(raw); } catch (e) { return; }
+
+    if (typeof msg.type === 'string' && msg.type.startsWith('dnd')) {
+      dndHandleMessage(ws, msg);
+      return;
+    }
+
+    if (msg.type === 'alarmToggle') {
+      alarmActive = !alarmActive;
+      broadcastAlarm();
+      return;
+    }
+
+    if (!started) {
+      if (msg.type === 'join') {
+        const maxSeats = MODES[gameMode].numPlayers;
+        if (lobbySeats.length >= maxSeats) {
+          ws.send(JSON.stringify({ type: 'error', msg: `ห้องเต็มแล้ว (สูงสุด ${maxSeats} คน)` }));
+          return;
+        }
+        const name = (msg.name || '').toString().trim().slice(0, 16) || `ผู้เล่น${lobbySeats.length + 1}`;
+        lobbySeats.push({ ws, seat: lobbySeats.length, name });
+        broadcastLobby();
+        if (alarmActive) ws.send(JSON.stringify({ type: 'alarm', active: true }));
+      } else if (msg.type === 'setMode') {
+        const c = lobbySeats.find(c => c.ws === ws);
+        if (!c || c.seat !== 0) return;
+        const mode = Number(msg.mode);
+        if (!MODES[mode]) return;
+        if (lobbySeats.length > MODES[mode].numPlayers) {
+          ws.send(JSON.stringify({ type: 'error', msg: `เปลี่ยนโหมดไม่ได้ เพราะมีผู้เล่นเข้าห้องแล้ว ${lobbySeats.length} คน เกินขนาดของโหมดนี้` }));
+          return;
+        }
+        gameMode = mode;
+        broadcastLobby();
+      } else if (msg.type === 'setBotLevel') {
+        const c = lobbySeats.find(c => c.ws === ws);
+        if (!c || c.seat !== 0) return;
+        if (!['easy', 'normal', 'hard'].includes(msg.level)) return;
+        botLevel = msg.level;
+        broadcastLobby();
+      } else if (msg.type === 'startGame') {
+        const c = lobbySeats.find(c => c.ws === ws);
+        if (!c || c.seat !== 0) return;
+        if (lobbySeats.length < 2) {
+          ws.send(JSON.stringify({ type: 'error', msg: 'ต้องมีผู้เล่นจริงอย่างน้อย 2 คน' }));
+          return;
+        }
+        beginGame();
+      } else if (msg.type === 'leaveLobby') {
+        leaveLobby(ws);
+      } else if (msg.type === 'chat') {
+        handleChatLobby(ws, msg.text);
+      }
+      return;
+    }
+
+    // ----- เกมกำลังเล่นอยู่ -----
+    const seat = findSeatByWs(ws);
+    if (seat === null) {
+      // ws นี้ยังไม่มีที่นั่ง (เพิ่งเข้ามาดู หรือออกจากโต๊ะไปแล้ว)
+      if (msg.type === 'join') {
+        const name = (msg.name || '').toString().trim().slice(0, 16) || 'ผู้เล่น';
+        const existing = watchers.find(w => w.ws === ws);
+        if (existing) existing.name = name; else watchers.push({ ws, name });
+        ws.send(seatPickerPayload());
+      } else if (msg.type === 'takeSeat') {
+        handleTakeSeat(ws, msg.seat);
+      }
+      return;
+    }
+    if (msg.type === 'playCard') handlePlayCard(seat, msg.uid);
+    else if (msg.type === 'submitPass') handleSubmitPass(seat, msg.uids);
+    else if (msg.type === 'restartGame') restartToLobby(ws);
+    else if (msg.type === 'leaveSeat') handleLeaveSeat(ws);
+    else if (msg.type === 'chat') handleChatGame(seat, msg.text);
+    else if (msg.type === 'throwEmoji') handleThrowEmoji(seat, msg.targetSeat, msg.emoji);
+  });
+
+  ws.on('close', () => { handleDisconnect(ws); dndHandleDisconnect(ws); });
+});
+
+setInterval(dndSweepExpiredStatuses, 1000);
+
+server.listen(PORT, () => {
+  console.log(`Hearts x8 LAN server กำลังรันที่พอร์ต ${PORT}`);
+  console.log(`ให้ผู้เล่นในวงแลนเดียวกันเปิดเบราว์เซอร์ไปที่ http://<IP เครื่องนี้>:${PORT}`);
+});

@@ -204,7 +204,9 @@ function dndStatusChipHtml(s, innerHtml) {
   const cdHtml = s.expiresAt ? `<span class="dndStatusCd" data-expires-at="${s.expiresAt}">⏳${remainSec}วิ</span>` : '';
   const modSummary = dndStatusModSummary(s);
   const modHtml = modSummary ? `<span class="dndStatusModTag">${modSummary}</span>` : '';
-  return `<span class="dndStatusChip" title="${escapeHtml(s.note || '')}">☠️ ${escapeHtml(s.name)}${modHtml}${cdHtml}${innerHtml || ''}</span>`;
+  const icon = s.icon || '☠️';
+  const colorStyle = s.color ? ` style="border-color:${s.color}; color:${s.color};"` : '';
+  return `<span class="dndStatusChip"${colorStyle} title="${escapeHtml(s.note || '')}">${escapeHtml(icon)} ${escapeHtml(s.name)}${modHtml}${cdHtml}${innerHtml || ''}</span>`;
 }
 // นับถอยหลังคูลดาวน์ของสถานะทุกชิปที่กำลังแสดงอยู่บนหน้าจอ ทุก 1 วินาที (ไม่ต้องรอ state อัปเดตจากเซิร์ฟเวอร์)
 function dndTickStatusCooldowns() {
@@ -534,9 +536,17 @@ function dndPointBuyCostOf(score) {
   }
   return total;
 }
-function dndPointBuyStepCost(currentScore) {
+// bonus = โบนัสเผ่าพันธุ์/คลาสที่บวกเข้ากับค่าดิบอยู่แล้ว — ราคาต้องอิงค่ารวม (ดิบ+โบนัส) ไม่ใช่ค่าดิบเฉยๆ
+function dndPointBuyStepCost(currentScore, bonus) {
+  const b = Math.round(Number(bonus)) || 0;
   const s = Math.max(dndPointBuyMin, Math.round(currentScore));
-  return dndPointBuyCostOf(s + 1) - dndPointBuyCostOf(s);
+  return dndPointBuyCostOf(s + b + 1) - dndPointBuyCostOf(s + b);
+}
+// ต้นทุนรวมของการซื้อค่าดิบ (rawScore) เมื่อมีโบนัสเผ่า/คลาสคงที่ (bonus) บวกอยู่ด้วยเสมอ — ใช้ตอนสร้างตัวละคร
+function dndPointBuyCostForRaw(rawScore, bonus) {
+  const b = Math.round(Number(bonus)) || 0;
+  const s = Math.max(dndPointBuyMin, Math.round(rawScore));
+  return dndPointBuyCostOf(s + b) - dndPointBuyCostOf(dndPointBuyMin + b);
 }
 let dndCurrentDie = 20;
 let dndCreateInitialized = false;
@@ -551,11 +561,14 @@ let dndCreateAppearance = { hair: 'short', hairColor: DND_HAIR_COLOR_LIST[0], fa
 // ช่องไหนที่ผู้เล่นเคยพิมพ์เอง (แก้ไขเอง) ระหว่างสร้างตัวละคร — ช่องนั้นจะไม่ถูกทับตอนสลับคลาสอีก
 // ส่วนช่องที่ยังไม่แตะเลย จะถูกแทนที่ด้วยเซตอุปกรณ์เต็มชุดของคลาสใหม่ทุกครั้งที่เปลี่ยนคลาส (กันอาวุธเก่าของคลาสก่อนหน้าค้างอยู่)
 let dndCreateManualEquip = {};
+// (ตัวแปร/ฟังก์ชันของระบบแผนที่-token เช่น dndTokens, dndMaps, renderDndMap() ฯลฯ
+//  ถูกย้ายไปไว้ที่ public/js/dnd-map.js ทั้งหมดแล้ว — ดูที่ไฟล์นั้นเพื่อแก้ไขส่วนแมพ)
 let dndDmEditTargetId = null;
-let dndTokenEditTargetId = null;
 let dndSkills = [];
 let dndActiveTool = 'dice';
 const DND_STAT_LABELS = { str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA' };
+// ค่าตั้งต้นของ "โจมตีปกติ" ฝั่งไคลเอนต์ — ต้องตรงกับ DND_NORMAL_ATTACK_DEFAULT ฝั่งเซิร์ฟเวอร์ (server/dnd.js)
+const DND_NORMAL_ATTACK_DEFAULT_CLIENT = { name: 'โจมตีปกติ', stat: 'auto', dmgDie: 6, dmgCount: 1, atkBonus: 0, dmgBonus: 0 };
 // ค่าเฉลี่ยคนทั่วไป ~10 — ตัวปรับ (modifier) คำนวณจาก floor((ค่าสเตตัส-10)/2) ยิ่งค่าสูงยิ่งได้ตัวปรับบวกมาก ยิ่งค่าต่ำยิ่งโดนหักลบตอนทอยเต๋า
 const DND_STAT_TIPS = {
   str: '💪 พละกำลัง (STR) — พลังกายภาพและระยะประชิด เพิ่มพลังโจมตีและดาเมจระยะประชิด ค่าเฉลี่ยคนทั่วไป ~10',
@@ -573,6 +586,8 @@ function dndAbilityModText(score) {
 }
 let dndEquipSlots = ['weapon', 'armor', 'shoes', 'accessory'];
 let dndEquipSlotLabels = { weapon: 'อาวุธ', armor: 'เกราะ', shoes: 'รองเท้า', accessory: 'เครื่องประดับ' };
+let dndBagCapacity = 20;
+let dndShopEditKey = null; // "shopId:itemId" ของไอเทมร้านค้าที่กำลังแก้ไขอยู่ (null = ไม่มี) — ใช้ตอน DM กดแก้ไขไอเทมในร้าน
 const DND_EQUIP_SLOT_ICONS = { weapon: '⚔️', armor: '🛡️', shoes: '👢', accessory: '💍' };
 let dndScene = { location: '', situation: '' };
 let dndSceneEditInitialized = false;
@@ -580,7 +595,6 @@ let dndGameTime = { day: 1, hour: 8, minute: 0 };
 let dndTimeSetInputsInitialized = false;
 let dndTimeAuto = { running: false, speed: 10 };
 let dndTimeAutoSpeedInitialized = false;
-const DND_TOKEN_COLORS = ['#ff6b6b', '#6fd3ff', '#9fdc9f', '#ffd76b', '#c792ea', '#ff9d9d', '#7ee8fa', '#f4a261', '#82c9ff', '#f6a6c1'];
 const DND_MAX_TOKEN_IMAGE_BYTES = 300 * 1024;
 // ---- คลังมอนสเตอร์สำเร็จรูป 10 ตัว (DM กดสร้างได้เลย ไม่ต้องตั้งค่าเอง) — เรียงจากอ่อนไปแก่ ----
 // เป็น let (ไม่ใช่ const) เพราะ DM สามารถกด "เพิ่มมอนสเตอร์ตัวนี้เข้าคลัง" จากหน้าต่างแก้ไข token
@@ -691,7 +705,6 @@ function dndRefreshMonsterPresetSelect() {
   dndRenderMonsterPresetPreview();
 }
 dndLoadCustomPresets();
-let dndTokens = [];
 let dndShops = [];
 let dndForgeFailPolicyLabels = { safe: 'พลาดแล้วไม่มีอะไรเกิดขึ้น', downgrade: 'พลาดแล้วตกระดับ 1 ขั้น', break: 'พลาดแล้วไอเทมพัง (รีเซตเป็น +0)' };
 let dndItemEffects = [];
@@ -699,14 +712,6 @@ let dndTrades = [];
 let dndTradeOfferPicked = {};   // name -> qty ที่จะให้
 let dndTradeRequestPicked = {}; // name -> qty ที่จะขอ
 let dndTradeTargetId = null;
-let dndTokenEls = {};       // id -> DOM element, so drags/redraws don't rebuild nodes needlessly
-let dndDraggingId = null;   // id ของ token ที่กำลังลากอยู่ตอนนี้ (กันไม่ให้ state ที่ค้างมาจาก server มาแย่งตำแหน่งระหว่างลาก)
-let dndMyTokenColor = null;
-let dndNpcFormColor = DND_TOKEN_COLORS[0];
-let dndNpcFormImage = null;
-let dndMapBackground = null;
-let dndMaps = [];
-let dndCurrentMapId = 1;
 function readDndImageFile(file, cb) {
   if (!file) return cb(null);
   if (!file.type.startsWith('image/')) return cb(null);
@@ -715,10 +720,6 @@ function readDndImageFile(file, cb) {
   reader.onload = () => cb(reader.result);
   reader.readAsDataURL(file);
 }
-document.getElementById('dndMapBgInput').addEventListener('change', ev => {
-  readDndImageFile(ev.target.files[0], image => { if (image) send({ type: 'dndMapBackgroundUpdate', image }); ev.target.value = ''; });
-});
-document.getElementById('dndMapBgClearBtn').onclick = () => send({ type: 'dndMapBackgroundUpdate', image: null });
 
 document.getElementById('dndNameInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('dndJoinBtn').click(); });
 document.getElementById('dndJoinBtn').onclick = (ev) => {
@@ -1038,6 +1039,13 @@ document.getElementById('dndDiceGrid').querySelectorAll('.dndDieBtn').forEach(bt
     document.getElementById('dndDiceGrid').querySelectorAll('.dndDieBtn').forEach(b => b.classList.toggle('active', b === btn));
   };
 });
+(function fillDiceStatSelect() {
+  const sel = document.getElementById('dndDiceStatSelect');
+  if (sel && !sel.dataset.filled) {
+    sel.innerHTML += Object.keys(DND_STAT_LABELS).map(k => `<option value="${k}">${DND_STAT_LABELS[k]}</option>`).join('');
+    sel.dataset.filled = '1';
+  }
+})();
 document.getElementById('dndRollBtn').onclick = (ev) => {
   flashBtn(ev.currentTarget);
   send({
@@ -1046,6 +1054,7 @@ document.getElementById('dndRollBtn').onclick = (ev) => {
     count: document.getElementById('dndDiceCount').value,
     modifier: document.getElementById('dndDiceMod').value,
     label: document.getElementById('dndDiceLabel').value,
+    stat: document.getElementById('dndDiceStatSelect').value,
   });
 };
 
@@ -1096,6 +1105,33 @@ function fillSkillDmgDieSelect(id) {
 fillSkillDmgDieSelect('dndSkillDmgDie');
 fillSkillDmgDieSelect('dndSkillEditDmgDie');
 fillSkillDmgDieSelect('dndAtkDieSelect');
+function fillNormalAttackSelects() {
+  const statSel = document.getElementById('dndEditNaStat');
+  if (statSel && !statSel.dataset.filled) {
+    statSel.innerHTML = `<option value="auto">อัตโนมัติ (STR/DEX มากสุด)</option>` +
+      Object.keys(DND_STAT_LABELS).map(k => `<option value="${k}">${DND_STAT_LABELS[k]}</option>`).join('');
+    statSel.dataset.filled = '1';
+  }
+  const dieSel = document.getElementById('dndEditNaDmgDie');
+  if (dieSel && !dieSel.dataset.filled) {
+    dieSel.innerHTML = [4, 6, 8, 10, 12, 20, 100].map(d => `<option value="${d}">d${d}</option>`).join('');
+    dieSel.dataset.filled = '1';
+  }
+}
+fillNormalAttackSelects();
+function applyNormalAttackToEditForm(na) {
+  const cfg = na || DND_NORMAL_ATTACK_DEFAULT_CLIENT;
+  document.getElementById('dndEditNaName').value = cfg.name || DND_NORMAL_ATTACK_DEFAULT_CLIENT.name;
+  document.getElementById('dndEditNaStat').value = cfg.stat || 'auto';
+  document.getElementById('dndEditNaDmgDie').value = cfg.dmgDie || DND_NORMAL_ATTACK_DEFAULT_CLIENT.dmgDie;
+  document.getElementById('dndEditNaDmgCount').value = cfg.dmgCount || DND_NORMAL_ATTACK_DEFAULT_CLIENT.dmgCount;
+  document.getElementById('dndEditNaAtkBonus').value = cfg.atkBonus || 0;
+  document.getElementById('dndEditNaDmgBonus').value = cfg.dmgBonus || 0;
+}
+document.getElementById('dndEditNaResetBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  applyNormalAttackToEditForm(null);
+};
 function fillSkillHealDieSelect(id) {
   const sel = document.getElementById(id);
   if (!sel || sel.dataset.filled) return;
@@ -1136,8 +1172,11 @@ document.getElementById('dndSkillAddBtn').onclick = (ev) => {
     type: 'dndSkillCreate',
     skill: {
       name,
+      icon: document.getElementById('dndSkillIcon').value,
+      color: document.getElementById('dndSkillColor').value,
       stat: document.getElementById('dndSkillStat').value,
       desc: document.getElementById('dndSkillDesc').value,
+      guaranteedHit: document.getElementById('dndSkillGuaranteedHit').checked,
       damage: {
         die: document.getElementById('dndSkillDmgDie').value,
         count: document.getElementById('dndSkillDmgCount').value,
@@ -1147,39 +1186,70 @@ document.getElementById('dndSkillAddBtn').onclick = (ev) => {
         die: document.getElementById('dndSkillHealDie').value,
         count: document.getElementById('dndSkillHealCount').value,
         mod: document.getElementById('dndSkillHealMod').value,
+        revive: document.getElementById('dndSkillHealRevive').value === '1',
       },
       status: {
         name: document.getElementById('dndSkillStatusName').value,
         note: document.getElementById('dndSkillStatusNote').value,
+        chance: document.getElementById('dndSkillStatusChance').value,
+        durationSec: document.getElementById('dndSkillStatusDuration').value,
+        atkMod: document.getElementById('dndSkillStatusAtkMod').value,
+        dmgMod: document.getElementById('dndSkillStatusDmgMod').value,
+        defMod: document.getElementById('dndSkillStatusDefMod').value,
+        tickValue: document.getElementById('dndSkillStatusTick').value,
+        tickIntervalSec: document.getElementById('dndSkillStatusTickInterval').value,
+        icon: document.getElementById('dndSkillStatusIcon').value,
+        color: document.getElementById('dndSkillStatusColor').value,
       },
+      buffAlly: document.getElementById('dndSkillBuffAlly').checked,
+      targetMode: document.getElementById('dndSkillTargetMode').value,
       aoe: {
         radius: document.getElementById('dndSkillAoeRadius').value,
       },
+      range: document.getElementById('dndSkillRange').value,
       cleanse: {
         enabled: document.getElementById('dndSkillCleanseEnabled').checked,
         name: document.getElementById('dndSkillCleanseName').value,
       },
       cooldownSec: document.getElementById('dndSkillCooldown').value,
       maxUses: document.getElementById('dndSkillMaxUses').value,
+      spCost: document.getElementById('dndSkillSpCost').value,
       assignedIds: Array.from(dndSkillAssignSelected),
     },
   });
   document.getElementById('dndSkillName').value = '';
+  document.getElementById('dndSkillIcon').value = '';
+  document.getElementById('dndSkillColor').value = '#7ee8fa';
   document.getElementById('dndSkillDesc').value = '';
   document.getElementById('dndSkillStat').value = '';
+  document.getElementById('dndSkillGuaranteedHit').checked = false;
   document.getElementById('dndSkillDmgDie').value = '0';
   document.getElementById('dndSkillDmgCount').value = '1';
   document.getElementById('dndSkillHealDie').value = '0';
   document.getElementById('dndSkillHealCount').value = '1';
   document.getElementById('dndSkillHealMod').value = '0';
+  document.getElementById('dndSkillHealRevive').value = '0';
   document.getElementById('dndSkillDmgMod').value = '0';
   document.getElementById('dndSkillStatusName').value = '';
   document.getElementById('dndSkillStatusNote').value = '';
+  document.getElementById('dndSkillStatusIcon').value = '';
+  document.getElementById('dndSkillStatusColor').value = '#ff6b6b';
+  document.getElementById('dndSkillBuffAlly').checked = false;
+  document.getElementById('dndSkillTargetMode').value = 'both';
+  document.getElementById('dndSkillStatusChance').value = '100';
+  document.getElementById('dndSkillStatusDuration').value = '0';
+  document.getElementById('dndSkillStatusAtkMod').value = '0';
+  document.getElementById('dndSkillStatusDmgMod').value = '0';
+  document.getElementById('dndSkillStatusDefMod').value = '0';
+  document.getElementById('dndSkillStatusTick').value = '0';
+  document.getElementById('dndSkillStatusTickInterval').value = '6';
   document.getElementById('dndSkillAoeRadius').value = '0';
+  document.getElementById('dndSkillRange').value = '0';
   document.getElementById('dndSkillCleanseEnabled').checked = false;
   document.getElementById('dndSkillCleanseName').value = '';
   document.getElementById('dndSkillCooldown').value = '0';
   document.getElementById('dndSkillMaxUses').value = '0';
+  document.getElementById('dndSkillSpCost').value = '0';
   dndSkillAssignSelected = new Set();
   renderDndSkillAssignBox();
 };
@@ -1212,13 +1282,38 @@ function openDndTargetPicker(action) {
       rows.push({ type: 'player', id: p.id, name: (p.character.charName || p.name) + (isMe ? ' (ตัวเอง)' : '') + (dead ? ' 💀' : ''), hp: p.character.hp, maxHp: p.character.maxHp, ac: p.character.ac });
     });
     hint.textContent = allowDead ? 'เลือกคนที่จะใช้ไอเทมนี้ให้ (เลือกเพื่อนที่หมดสติเพื่อชุบชีวิตให้ฟื้น)' : 'เลือกเพื่อนที่จะฟื้นฟู HP ให้ (ใช้กับคนที่หมดสติไม่ได้ ต้องใช้ไอเทมชุบชีวิตแทน)';
-  } else if (action.mode === 'skill' && action.isHeal) {
-    dndPlayersList.filter(p => !p.isDM && p.connected !== false).forEach(p => {
-      const isMe = dndYou && p.id === dndYou.id;
-      const dead = Number(p.character.hp) <= 0;
-      rows.push({ type: 'player', id: p.id, name: (p.character.charName || p.name) + (isMe ? ' (ตัวเอง)' : '') + (dead ? ' 💀' : ''), hp: p.character.hp, maxHp: p.character.maxHp, ac: p.character.ac });
-    });
-    hint.textContent = action.isCleanse ? 'เลือกคนที่จะลบล้างสถานะให้' : 'เลือกคนที่จะชุบ HP ให้ (เลือกเพื่อนที่หมดสติเพื่อชุบให้ฟื้น)';
+  } else if (action.mode === 'skill' || action.mode === 'normalAttack') {
+    // เป้าหมายที่เลือกได้: ตามที่ DM ตั้งไว้ตอนสร้าง/แก้สกิล ('both' = มอนสเตอร์+ผู้เล่นเลือกได้ทั้งคู่) — โจมตีปกติเลือกได้ทั้งคู่เสมอ (ใครก็ได้)
+    const tMode = action.mode === 'normalAttack' ? 'both' : (action.targetMode || 'monster');
+    // สกิลฟื้นฟู HP ธรรมดา (ไม่ใช่สกิลชุบชีวิต) เลือกเป้าหมายที่หมดสติไม่ได้เลย — ต้องใช้สกิลชุบชีวิตแทน
+    const isPlainHeal = !!action.isHeal && !action.isCleanse && !action.isBuff && !action.isRevive;
+    if (tMode === 'player' || tMode === 'both') {
+      dndPlayersList.filter(p => !p.isDM && p.connected !== false).forEach(p => {
+        const isMe = dndYou && p.id === dndYou.id;
+        if (action.mode === 'normalAttack' && isMe) return; // โจมตีปกติเลือกโจมตีตัวเองไม่ได้
+        const dead = Number(p.character.hp) <= 0;
+        if (dead && isPlainHeal) return;
+        rows.push({ type: 'player', id: p.id, name: (p.character.charName || p.name) + (isMe ? ' (ตัวเอง)' : '') + (dead ? ' 💀' : ''), hp: p.character.hp, maxHp: p.character.maxHp, ac: p.character.ac });
+      });
+    }
+    if (tMode === 'monster' || tMode === 'both') {
+      dndTokens.filter(t => t.kind === 'npc' && Number(t.hp) > 0).forEach(t => {
+        rows.push({ type: 'token', id: t.id, name: t.name, hp: t.hp, maxHp: t.maxHp, ac: t.ac });
+      });
+    }
+    if (action.mode === 'normalAttack') {
+      hint.textContent = 'เลือกเป้าหมาย (มอนสเตอร์หรือผู้เล่น)';
+    } else if (action.isCleanse) {
+      hint.textContent = 'เลือกเป้าหมายที่จะลบล้างสถานะให้';
+    } else if (action.isBuff) {
+      hint.textContent = tMode === 'both' ? 'เลือกเป้าหมายที่จะบัฟให้ (มอนสเตอร์หรือผู้เล่น)' : 'เลือกเพื่อนที่จะบัฟให้';
+    } else if (action.isRevive) {
+      hint.textContent = 'เลือกเป้าหมายที่จะชุบ HP ให้ (เลือกคนที่หมดสติเพื่อชุบชีวิตให้ฟื้น)';
+    } else if (action.isHeal) {
+      hint.textContent = tMode === 'both' ? 'เลือกเป้าหมายที่จะฟื้นฟู HP ให้ (ใช้กับคนที่หมดสติไม่ได้ ต้องใช้สกิลชุบชีวิตแทน)' : 'เลือกเพื่อนที่จะฟื้นฟู HP ให้ (ใช้กับคนที่หมดสติไม่ได้ ต้องใช้สกิลชุบชีวิตแทน)';
+    } else {
+      hint.textContent = tMode === 'both' ? 'เลือกเป้าหมาย (มอนสเตอร์หรือผู้เล่น)' : (tMode === 'player' ? 'เลือกผู้เล่นที่จะเป็นเป้าหมาย' : 'เลือกมอนสเตอร์/เป้าหมายบนแผนที่');
+    }
   } else {
     dndTokens.filter(t => t.kind === 'npc' && Number(t.hp) > 0).forEach(t => {
       rows.push({ type: 'token', id: t.id, name: t.name, hp: t.hp, maxHp: t.maxHp, ac: t.ac });
@@ -1307,7 +1402,7 @@ document.getElementById('dndNormalAttackBtn').onclick = (ev) => {
   if (!dndYou || dndYou.isDM) return;
   if (amIDead()) { showDndErrorToast('คุณหมดสติอยู่ ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้'); return; }
   flashBtn(ev.currentTarget);
-  openDndTargetPicker({ mode: 'normalAttack', title: 'เลือกมอนสเตอร์สำหรับโจมตีปกติ' });
+  openDndTargetPicker({ mode: 'normalAttack', title: 'เลือกเป้าหมายสำหรับโจมตีปกติ (มอนสเตอร์หรือผู้เล่น)' });
 };
 
 function renderDndNormalAttackInfo() {
@@ -1317,12 +1412,23 @@ function renderDndNormalAttackInfo() {
   const btn = document.getElementById('dndNormalAttackBtn');
   if (btn) btn.disabled = amIDead();
   const c = me.character || {};
+  const na = c.normalAttack || DND_NORMAL_ATTACK_DEFAULT_CLIENT;
+  const naStat = (na.stat === 'auto' || DND_STAT_LABELS[na.stat]) ? na.stat : 'auto';
   const strMod = Math.floor(((Number(c.str) || 10) - 10) / 2);
   const dexMod = Math.floor(((Number(c.dex) || 10) - 10) / 2);
+  const abilityMod = naStat === 'auto' ? Math.max(strMod, dexMod) : Math.floor(((Number(c[naStat]) || 10) - 10) / 2);
   const equipAtk = dndTotalAttackClient(c.equipment || {});
-  const mod = Math.max(strMod, dexMod);
+  const atkBonus = Number(na.atkBonus) || 0;
+  const dmgBonus = Number(na.dmgBonus) || 0;
+  const mod = abilityMod + atkBonus;
+  const dmgMod = abilityMod + dmgBonus;
   const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
-  el.innerHTML = `🎯 โจมตี: <b>1d20 ${modStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b><br>💥 ดาเมจ: <b>1d6 ${modStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b>`;
+  const dmgModStr = dmgMod >= 0 ? `+${dmgMod}` : `${dmgMod}`;
+  const dmgDie = na.dmgDie || 6;
+  const dmgCount = na.dmgCount || 1;
+  const statTag = naStat === 'auto' ? 'STR/DEX' : DND_STAT_LABELS[naStat];
+  const nameTag = na.name || DND_NORMAL_ATTACK_DEFAULT_CLIENT.name;
+  el.innerHTML = `⚔️ ${escapeHtml(nameTag)} (${statTag})<br>🎯 โจมตี: <b>1d20 ${modStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b><br>💥 ดาเมจ: <b>${dmgCount}d${dmgDie} ${dmgModStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b>`;
 }
 
 function amIDead() {
@@ -1339,10 +1445,23 @@ function renderDndSkillList() {
   list.innerHTML = '';
   dndSkills.forEach(skill => {
     const dmgText = skill.dmgDie ? `💥 ดาเมจ ${skill.dmgCount}d${skill.dmgDie}${skill.dmgMod ? (skill.dmgMod > 0 ? ' +' + skill.dmgMod : ' ' + skill.dmgMod) : ''}` : '';
-    const healText = skill.healDie ? `💚 ชุบ HP ${skill.healCount}d${skill.healDie}${skill.healMod ? (skill.healMod > 0 ? ' +' + skill.healMod : ' ' + skill.healMod) : ''} (เลือกเป้าหมายเป็นผู้เล่น)` : '';
-    const statusText = skill.statusName ? `☠️ ติดสถานะ "${escapeHtml(skill.statusName)}"${skill.statusNote ? ` — ${escapeHtml(skill.statusNote)}` : ''}` : '';
+    const hasHitRoll = !skill.healDie && !skill.cleanseEnabled && !!skill.stat;
+    const guaranteedHitText = (skill.guaranteedHit && hasHitRoll) ? '✅ เลือกโดนเสมอ (ไม่ทอย 1d20/AC)' : '';
+    const healText = skill.healDie ? `${skill.healRevive ? '🌟 ชุบชีวิต' : '💚 ฟื้นฟู'} HP ${skill.healCount}d${skill.healDie}${skill.healMod ? (skill.healMod > 0 ? ' +' + skill.healMod : ' ' + skill.healMod) : ''} (เลือกเป้าหมายเป็นผู้เล่น${skill.healRevive ? ' — ปลุกคนหมดสติได้' : ' — ปลุกคนหมดสติไม่ได้'})` : '';
+    const statusModBits = [];
+    if (skill.statusDurationSec) statusModBits.push(`⏳ ${skill.statusDurationSec}วิ`);
+    if (skill.statusAtkMod) statusModBits.push(`🎯${skill.statusAtkMod > 0 ? '+' : ''}${skill.statusAtkMod}`);
+    if (skill.statusDmgMod) statusModBits.push(`💥${skill.statusDmgMod > 0 ? '+' : ''}${skill.statusDmgMod}`);
+    if (skill.statusDefMod) statusModBits.push(`🛡️${skill.statusDefMod > 0 ? '+' : ''}${skill.statusDefMod}`);
+    if (skill.statusTickValue) statusModBits.push(`${skill.statusTickValue > 0 ? '💚+' : '☠️'}${skill.statusTickValue}/${skill.statusTickIntervalSec || 6}วิ`);
+    const statusIconPreview = skill.statusIcon || '☠️';
+    const statusColorStyle = skill.statusColor ? ` style="color:${skill.statusColor};"` : '';
+    const statusText = skill.statusName ? `<span${statusColorStyle}>${escapeHtml(statusIconPreview)} ติดสถานะ "${escapeHtml(skill.statusName)}"</span>${skill.statusNote ? ` — ${escapeHtml(skill.statusNote)}` : ''}${skill.buffAlly ? ' (🛡️ บัฟ — เลือกเป้าหมายเป็นเพื่อน)' : (skill.statusChance && skill.statusChance < 100 ? ` (🎯 โอกาสติด ${skill.statusChance}%)` : '')}${statusModBits.length ? ` [${statusModBits.join(' · ')}]` : ''}` : '';
     const aoeText = skill.aoeRadius ? `💥 AOE รัศมี ${skill.aoeRadius} (ดาเมจกระจายรอบเป้าหมายหลัก ยิ่งไกลยิ่งเบา)` : '';
+    const rangeText = skill.range ? `📏 ระยะโจมตี ${skill.range} (ต้องอยู่ในระยะนี้บนแผนที่ถึงจะใช้ได้)` : '';
     const cleanseText = skill.cleanseEnabled ? `✨ ลบล้างสถานะ${skill.cleanseName ? ` "${escapeHtml(skill.cleanseName)}"` : 'ทั้งหมด'} (เลือกเป้าหมายเป็นผู้เล่น)` : '';
+    const tMode = dndSkillTargetModeOf(skill);
+    const targetModeText = tMode === 'both' ? '🎯 เป้าหมาย: มอนสเตอร์/ผู้เล่น (เลือกได้ทั้งคู่)' : (tMode === 'player' ? '🎯 เป้าหมาย: ผู้เล่นเท่านั้น' : '🎯 เป้าหมาย: มอนสเตอร์เท่านั้น');
     const assignedNames = (!skill.classSkill && skill.assignedIds && skill.assignedIds.length)
       ? skill.assignedIds.map(id => { const pp = dndPlayersList.find(p => p.id === id); return pp ? (pp.character.charName || pp.name) : null; }).filter(Boolean)
       : [];
@@ -1352,25 +1471,35 @@ function renderDndSkillList() {
     const ruleBits = [];
     if (skill.cooldownSec) ruleBits.push(`⏱ คูลดาวน์ ${skill.cooldownSec} วิ`);
     if (skill.maxUses) ruleBits.push(`🔁 ใช้ได้ ${skill.maxUses} ครั้ง${(dndYou && !dndYou.isDM && skill.usesLeft != null) ? ` (เหลือ ${skill.usesLeft})` : ''}`);
+    if (skill.spCost) ruleBits.push(`🔵 ใช้ SP ${skill.spCost}`);
     const ruleText = ruleBits.join(' · ');
+    const skillIcon = skill.classSkill ? '🎓' : (skill.icon || '✨');
+    const skillColorStyle = (!skill.classSkill && skill.color) ? ` style="color:${skill.color};"` : '';
     const card = document.createElement('div');
     card.className = 'dndSkillCard';
+    if (!skill.classSkill && skill.color) card.style.borderColor = skill.color;
     card.innerHTML = `
       <div class="dndSkillCardTop">
-        <span class="dndSkillCardName">${skill.classSkill ? '🎓' : '✨'} ${escapeHtml(skill.name)}</span>
+        <span class="dndSkillCardName"${skillColorStyle}>${escapeHtml(skillIcon)} ${escapeHtml(skill.name)}</span>
         ${skill.stat ? `<span class="dndSkillCardStat">${DND_STAT_LABELS[skill.stat] || skill.stat}</span>` : ''}
       </div>
       ${skill.desc ? `<div class="dndSkillCardDesc">${escapeHtml(skill.desc)}</div>` : ''}
       ${dmgText ? `<div class="dndSkillCardDmg">${dmgText}</div>` : ''}
+      ${guaranteedHitText ? `<div class="dndSkillCardDmg" style="color:#7affc4;">${guaranteedHitText}</div>` : ''}
       ${healText ? `<div class="dndSkillCardDmg" style="color:#7ee87e;">${healText}</div>` : ''}
       ${statusText ? `<div class="dndSkillCardDmg" style="color:#d8a4ff;">${statusText}</div>` : ''}
       ${aoeText ? `<div class="dndSkillCardDmg" style="color:#ffb86b;">${aoeText}</div>` : ''}
+      ${rangeText ? `<div class="dndSkillCardDmg" style="color:#8fd3ff;">${rangeText}</div>` : ''}
       ${cleanseText ? `<div class="dndSkillCardDmg" style="color:#7ee8fa;">${cleanseText}</div>` : ''}
+      <div class="dndSkillCardDmg" style="color:#9fd0ff;">${targetModeText}</div>
       ${ruleText ? `<div class="dndSkillCardRules">${ruleText}</div>` : ''}
       <div class="dndSkillCardAssigned">${assignedText}</div>
       <div class="dndSkillCardBtns"></div>`;
     const btnRow = card.querySelector('.dndSkillCardBtns');
     const canUse = dndYou && !skill.locked && !amIDead() && (dndYou.isDM || skill.classSkill || assignedNames.length === 0 || (skill.assignedIds || []).includes(dndYou.id));
+    const me = myDndEntry();
+    const mySp = (me && me.character && me.character.sp != null) ? Number(me.character.sp) : 0;
+    const notEnoughSp = dndYou && !dndYou.isDM && skill.spCost > 0 && mySp < skill.spCost;
     const useBtn = document.createElement('button');
     useBtn.type = 'button';
     useBtn.className = 'dndSkillUseBtn';
@@ -1382,11 +1511,15 @@ function renderDndSkillList() {
       useBtn.textContent = '💀 หมดสติอยู่';
       useBtn.disabled = true;
       useBtn.classList.add('dndSkillLockedBtn');
+    } else if (canUse && notEnoughSp) {
+      useBtn.textContent = `🔵 SP ไม่พอ (ต้องใช้ ${skill.spCost})`;
+      useBtn.disabled = true;
+      useBtn.classList.add('dndSkillLockedBtn');
     } else if (canUse) {
       useBtn.textContent = '🎲 ใช้สกิล';
       useBtn.dataset.readyAt = (dndYou && !dndYou.isDM && skill.readyAt) ? String(skill.readyAt) : '0';
       useBtn.dataset.usesLeft = (dndYou && !dndYou.isDM && skill.maxUses > 0) ? String(skill.usesLeft) : 'inf';
-      useBtn.onclick = (ev) => { flashBtn(ev.currentTarget); openDndTargetPicker({ mode: 'skill', skillId: skill.id, isHeal: !!skill.healDie || !!skill.cleanseEnabled, isCleanse: !!skill.cleanseEnabled && !skill.healDie, title: `เลือกเป้าหมายสำหรับ ${skill.name}` }); };
+      useBtn.onclick = (ev) => { flashBtn(ev.currentTarget); openDndTargetPicker({ mode: 'skill', skillId: skill.id, targetMode: dndSkillTargetModeOf(skill), isHeal: !!skill.healDie || !!skill.cleanseEnabled || !!skill.buffAlly, isRevive: !!skill.healDie && !!skill.healRevive, isCleanse: !!skill.cleanseEnabled && !skill.healDie, isBuff: !!skill.buffAlly && !skill.healDie && !skill.cleanseEnabled, title: `เลือกเป้าหมายสำหรับ ${skill.name}` }); };
     } else {
       useBtn.textContent = '🔒 ไม่มีสิทธิ์ใช้';
       useBtn.disabled = true;
@@ -1587,13 +1720,21 @@ function renderDndSkillEditAssignBox() {
     };
   });
 }
+// เป้าหมายที่สกิลนี้เลือกได้: 'monster' / 'player' / 'both' — สกิลเก่าที่ยังไม่มีช่องนี้จะ fallback ตามกฎเดิม (ตรงกับฝั่งเซิร์ฟเวอร์)
+function dndSkillTargetModeOf(skill) {
+  if (skill.targetMode === 'monster' || skill.targetMode === 'player' || skill.targetMode === 'both') return skill.targetMode;
+  return (skill.buffAlly || skill.healDie || skill.cleanseEnabled) ? 'player' : 'monster';
+}
 function openDndSkillEdit(skillId) {
   const skill = dndSkills.find(s => s.id === skillId);
   if (!skill) return;
   dndSkillEditTargetId = skillId;
   document.getElementById('dndSkillEditTitle').textContent = `แก้ไขสกิล (DM) — ${skill.name}`;
   document.getElementById('dndSkillEditName').value = skill.name || '';
+  document.getElementById('dndSkillEditIcon').value = skill.icon || '';
+  document.getElementById('dndSkillEditColor').value = skill.color || '#7ee8fa';
   document.getElementById('dndSkillEditStat').value = skill.stat || '';
+  document.getElementById('dndSkillEditGuaranteedHit').checked = !!skill.guaranteedHit;
   document.getElementById('dndSkillEditDesc').value = skill.desc || '';
   document.getElementById('dndSkillEditDmgDie').value = String(skill.dmgDie || 0);
   document.getElementById('dndSkillEditDmgCount').value = skill.dmgCount || 1;
@@ -1601,13 +1742,27 @@ function openDndSkillEdit(skillId) {
   document.getElementById('dndSkillEditHealDie').value = String(skill.healDie || 0);
   document.getElementById('dndSkillEditHealCount').value = skill.healCount || 1;
   document.getElementById('dndSkillEditHealMod').value = skill.healMod || 0;
+  document.getElementById('dndSkillEditHealRevive').value = skill.healRevive ? '1' : '0';
   document.getElementById('dndSkillEditStatusName').value = skill.statusName || '';
   document.getElementById('dndSkillEditStatusNote').value = skill.statusNote || '';
+  document.getElementById('dndSkillEditStatusIcon').value = skill.statusIcon || '';
+  document.getElementById('dndSkillEditStatusColor').value = skill.statusColor || '#ff6b6b';
+  document.getElementById('dndSkillEditBuffAlly').checked = !!skill.buffAlly;
+  document.getElementById('dndSkillEditTargetMode').value = dndSkillTargetModeOf(skill);
+  document.getElementById('dndSkillEditStatusChance').value = skill.statusChance || 100;
+  document.getElementById('dndSkillEditStatusDuration').value = skill.statusDurationSec || 0;
+  document.getElementById('dndSkillEditStatusAtkMod').value = skill.statusAtkMod || 0;
+  document.getElementById('dndSkillEditStatusDmgMod').value = skill.statusDmgMod || 0;
+  document.getElementById('dndSkillEditStatusDefMod').value = skill.statusDefMod || 0;
+  document.getElementById('dndSkillEditStatusTick').value = skill.statusTickValue || 0;
+  document.getElementById('dndSkillEditStatusTickInterval').value = skill.statusTickIntervalSec || 6;
   document.getElementById('dndSkillEditAoeRadius').value = skill.aoeRadius || 0;
+  document.getElementById('dndSkillEditRange').value = skill.range || 0;
   document.getElementById('dndSkillEditCleanseEnabled').checked = !!skill.cleanseEnabled;
   document.getElementById('dndSkillEditCleanseName').value = skill.cleanseName || '';
   document.getElementById('dndSkillEditCooldown').value = skill.cooldownSec || 0;
   document.getElementById('dndSkillEditMaxUses').value = skill.maxUses || 0;
+  document.getElementById('dndSkillEditSpCost').value = skill.spCost || 0;
   dndSkillEditAssignSelected = new Set(skill.assignedIds || []);
   renderDndSkillEditAssignBox();
   document.getElementById('dndSkillEditError').textContent = '';
@@ -1627,8 +1782,11 @@ document.getElementById('dndSkillEditSaveBtn').onclick = (ev) => {
     skillId: dndSkillEditTargetId,
     skill: {
       name,
+      icon: document.getElementById('dndSkillEditIcon').value,
+      color: document.getElementById('dndSkillEditColor').value,
       stat: document.getElementById('dndSkillEditStat').value,
       desc: document.getElementById('dndSkillEditDesc').value,
+      guaranteedHit: document.getElementById('dndSkillEditGuaranteedHit').checked,
       damage: {
         die: document.getElementById('dndSkillEditDmgDie').value,
         count: document.getElementById('dndSkillEditDmgCount').value,
@@ -1638,20 +1796,34 @@ document.getElementById('dndSkillEditSaveBtn').onclick = (ev) => {
         die: document.getElementById('dndSkillEditHealDie').value,
         count: document.getElementById('dndSkillEditHealCount').value,
         mod: document.getElementById('dndSkillEditHealMod').value,
+        revive: document.getElementById('dndSkillEditHealRevive').value === '1',
       },
       status: {
         name: document.getElementById('dndSkillEditStatusName').value,
         note: document.getElementById('dndSkillEditStatusNote').value,
+        chance: document.getElementById('dndSkillEditStatusChance').value,
+        durationSec: document.getElementById('dndSkillEditStatusDuration').value,
+        atkMod: document.getElementById('dndSkillEditStatusAtkMod').value,
+        dmgMod: document.getElementById('dndSkillEditStatusDmgMod').value,
+        defMod: document.getElementById('dndSkillEditStatusDefMod').value,
+        tickValue: document.getElementById('dndSkillEditStatusTick').value,
+        tickIntervalSec: document.getElementById('dndSkillEditStatusTickInterval').value,
+        icon: document.getElementById('dndSkillEditStatusIcon').value,
+        color: document.getElementById('dndSkillEditStatusColor').value,
       },
+      buffAlly: document.getElementById('dndSkillEditBuffAlly').checked,
+      targetMode: document.getElementById('dndSkillEditTargetMode').value,
       aoe: {
         radius: document.getElementById('dndSkillEditAoeRadius').value,
       },
+      range: document.getElementById('dndSkillEditRange').value,
       cleanse: {
         enabled: document.getElementById('dndSkillEditCleanseEnabled').checked,
         name: document.getElementById('dndSkillEditCleanseName').value,
       },
       cooldownSec: document.getElementById('dndSkillEditCooldown').value,
       maxUses: document.getElementById('dndSkillEditMaxUses').value,
+      spCost: document.getElementById('dndSkillEditSpCost').value,
       assignedIds: Array.from(dndSkillEditAssignSelected),
     },
   });
@@ -1784,116 +1956,11 @@ function playDndAttackAnim(data) {
   }
 }
 
+// (แอนิเมชันโจมตีบนแผนที่ / playDndMapAttackAnim() ถูกย้ายไปที่ public/js/dnd-map.js)
 function myDndEntry() {
   return dndPlayersList.find(p => dndYou && p.id === dndYou.id);
 }
 
-// ---- แอนิเมชันโจมตีบนแผนที่ (ทั้งผู้เล่นและมอนสเตอร์): กระสุนพุ่งจากผู้โจมตีไปเป้าหมาย + เอฟเฟกต์กระทบ/สั่นเมื่อโดน ----
-// ใช้พิกัด token เดียวกับที่วาดบนแผนที่ (หน่วย % 0-100) จึงไม่ต้องคำนวณพิกเซลใด ๆ เลย ทำงานได้แม้แผนที่ยังไม่แสดงผลบนจอ
-function dndGetMapFxLayer() {
-  const canvas = document.getElementById('dndMapCanvas');
-  if (!canvas) return null;
-  let layer = document.getElementById('dndMapFxLayer');
-  if (!layer || layer.parentElement !== canvas) {
-    layer = document.createElement('div');
-    layer.id = 'dndMapFxLayer';
-    canvas.appendChild(layer);
-  }
-  return layer;
-}
-function dndTokenPosPct(tokenId) {
-  if (tokenId == null) return null;
-  const t = dndTokens.find(tt => tt.id === Number(tokenId));
-  return t ? { x: t.x, y: t.y } : null;
-}
-function dndFlashToken(tokenId, cls, ms) {
-  const el = dndTokenEls[tokenId];
-  if (!el) return;
-  el.classList.remove(cls);
-  void el.offsetWidth; // รีสตาร์ท animation ให้เล่นใหม่ทุกครั้งแม้จะเป็นคลาสเดิม
-  el.classList.add(cls);
-  setTimeout(() => el.classList.remove(cls), ms || 500);
-}
-function dndSpawnFloatNum(layer, pos, text, extraClass) {
-  const el = document.createElement('div');
-  el.className = 'dndAtkFloatNum' + (extraClass ? ' ' + extraClass : '');
-  el.style.left = pos.x + '%';
-  el.style.top = pos.y + '%';
-  el.textContent = text;
-  layer.appendChild(el);
-  requestAnimationFrame(() => el.classList.add('dndFxFloat'));
-  setTimeout(() => el.remove(), 950);
-}
-function playDndMapAttackAnim(data) {
-  const layer = dndGetMapFxLayer();
-  if (!layer) return;
-  const atkPos = dndTokenPosPct(data.atkTokenId);
-  const tgtPos = dndTokenPosPct(data.tgtTokenId);
-
-  // ผู้โจมตี (ผู้เล่นหรือมอนสเตอร์) เด้งตัวตอนออกท่า — เห็นได้ชัดว่าใครเป็นคนลงมือ
-  if (data.atkTokenId != null) dndFlashToken(data.atkTokenId, 'dndFxAttacking', 320);
-
-  // ยิงเส้นแสง/กระสุนจากผู้โจมตีไปยังเป้าหมาย ถ้ารู้ตำแหน่งทั้งคู่บนแผนที่ปัจจุบัน
-  if (atkPos && tgtPos && data.atkTokenId !== data.tgtTokenId) {
-    const proj = document.createElement('div');
-    proj.className = 'dndAtkProjectile';
-    proj.style.left = atkPos.x + '%';
-    proj.style.top = atkPos.y + '%';
-    layer.appendChild(proj);
-    requestAnimationFrame(() => {
-      proj.style.transition = 'left 0.34s ease-out, top 0.34s ease-out';
-      proj.classList.add('dndFxFly');
-      proj.style.left = tgtPos.x + '%';
-      proj.style.top = tgtPos.y + '%';
-    });
-    setTimeout(() => proj.remove(), 420);
-  }
-
-  const impactDelay = (atkPos && tgtPos) ? 360 : 0;
-  setTimeout(() => {
-    if (!tgtPos || data.tgtTokenId == null) return;
-    const burst = document.createElement('div');
-    burst.className = 'dndAtkBurst dndFxBurst' + ((data.fumble || data.hit === false) ? ' dndFxBurstMiss' : (data.crit ? ' dndFxBurstCrit' : ''));
-    burst.style.left = tgtPos.x + '%';
-    burst.style.top = tgtPos.y + '%';
-    layer.appendChild(burst);
-    setTimeout(() => burst.remove(), 450);
-
-    if (data.fumble || data.hit === false) {
-      dndFlashToken(data.tgtTokenId, 'dndFxMiss', 380);
-      dndSpawnFloatNum(layer, tgtPos, data.fumble ? '💨 พลาดสุด ๆ' : '🛡️ หลบ!', 'dndFxFloatMiss');
-    } else if (data.damage != null) {
-      dndFlashToken(data.tgtTokenId, 'dndFxHit', 420);
-      dndSpawnFloatNum(layer, tgtPos, (data.crit ? '💥 -' : '-') + data.damage, data.crit ? 'dndFxFloatCrit' : '');
-    } else if (data.hit === true) {
-      dndFlashToken(data.tgtTokenId, 'dndFxHit', 420);
-    }
-
-    // ---- AOE: ขยายวงแหวนตามรัศมีที่ตั้งไว้ (ประมาณสัดส่วนคร่าว ๆ จากความกว้างแผนที่) + กระพริบ/เด้งตัวเลขให้ทุกเป้าหมายที่โดนลูกหลง ----
-    if (data.aoeRadius > 0) {
-      const ring = document.createElement('div');
-      ring.className = 'dndAtkAoeRing dndFxAoeRing';
-      const canvas = document.getElementById('dndMapCanvas');
-      const wpx = canvas ? canvas.clientWidth : 600;
-      const sizePx = Math.max(20, (data.aoeRadius / 100) * wpx * 2);
-      ring.style.width = sizePx + 'px';
-      ring.style.height = sizePx + 'px';
-      ring.style.left = tgtPos.x + '%';
-      ring.style.top = tgtPos.y + '%';
-      layer.appendChild(ring);
-      setTimeout(() => ring.remove(), 600);
-
-      (data.aoeHits || []).forEach(hitInfo => {
-        const pos = dndTokenPosPct(hitInfo.tokenId);
-        if (!pos) return;
-        setTimeout(() => {
-          dndFlashToken(hitInfo.tokenId, 'dndFxHit', 400);
-          dndSpawnFloatNum(layer, pos, '-' + hitInfo.damage, 'dndFxFloatAoe');
-        }, 120);
-      });
-    }
-  }, impactDelay);
-}
 
 // ---- shared ability-score math (mirrors server.js so the UI can show live ranges before saving) ----
 function dndAbilityMod(score) { return Math.floor((score - 10) / 2); }
@@ -2098,26 +2165,28 @@ function renderStatAllocGrid() {
   const finalStats = dndCreateFinalStats();
   const race = dndCreateSelectedRace ? dndRaceByKey(dndCreateSelectedRace) : null;
   const cls = dndCreateSelectedClass ? dndClassByKey(dndCreateSelectedClass) : null;
-  const spent = Object.values(dndCreateAlloc).reduce((sum, v) => sum + dndPointBuyCostOf(v), 0);
+  const bonusOf = (k) => ((race && race.bonus[k]) || 0) + ((cls && cls.bonus[k]) || 0);
+  const spent = Object.keys(DND_STAT_LABELS).reduce((sum, k) => sum + dndPointBuyCostForRaw(dndCreateAlloc[k], bonusOf(k)), 0);
   const left = dndPointBuyBudget - spent;
   Object.keys(DND_STAT_LABELS).forEach(k => {
     const row = document.createElement('div');
     row.className = 'dndStatAllocRow';
     const rb = (race && race.bonus[k]) || 0;
     const cb = (cls && cls.bonus[k]) || 0;
-    const nextStepCost = dndPointBuyStepCost(dndCreateAlloc[k]);
+    const bonus = rb + cb;
+    const nextStepCost = dndPointBuyStepCost(dndCreateAlloc[k], bonus);
     row.innerHTML = `
       <span class="dndStatAllocLabel">${DND_STAT_LABELS[k]}</span>
       <button type="button" data-act="minus">−</button>
       <span class="dndStatAllocVal">${finalStats[k]}</span>
       <button type="button" data-act="plus">+</button>
-      <span class="dndStatAllocBreakdown">${dndCreateAlloc[k]} แต้ม (ใช้ ${dndPointBuyCostOf(dndCreateAlloc[k])} พอย)${rb ? ' + ' + rb + ' เผ่า' : ''}${cb ? ' + ' + cb + ' คลาส' : ''}${left >= nextStepCost ? ` · เพิ่มอีก 1 ใช้ ${nextStepCost} พอย` : ''}</span>`;
+      <span class="dndStatAllocBreakdown">${dndCreateAlloc[k]} แต้ม (ใช้ ${dndPointBuyCostForRaw(dndCreateAlloc[k], bonus)} พอย)${rb ? ' + ' + rb + ' เผ่า' : ''}${cb ? ' + ' + cb + ' คลาส' : ''}${left >= nextStepCost ? ` · เพิ่มอีก 1 ใช้ ${nextStepCost} พอย` : ''}</span>`;
     row.querySelector('[data-act="minus"]').disabled = dndCreateAlloc[k] <= dndPointBuyMin;
     row.querySelector('[data-act="plus"]').disabled = left < nextStepCost;
     dndBindHoldRepeat(row.querySelector('[data-act="minus"]'), () => { dndCreateAlloc[k] = Math.max(dndPointBuyMin, dndCreateAlloc[k] - 1); renderStatAllocGrid(); updateCreateHints(); validateCreateForm(); });
     dndBindHoldRepeat(row.querySelector('[data-act="plus"]'), () => {
-      const stepCost = dndPointBuyStepCost(dndCreateAlloc[k]);
-      const curSpent = Object.values(dndCreateAlloc).reduce((sum, v) => sum + dndPointBuyCostOf(v), 0);
+      const stepCost = dndPointBuyStepCost(dndCreateAlloc[k], bonusOf(k));
+      const curSpent = Object.keys(DND_STAT_LABELS).reduce((sum, kk) => sum + dndPointBuyCostForRaw(dndCreateAlloc[kk], bonusOf(kk)), 0);
       if (dndPointBuyBudget - curSpent >= stepCost) dndCreateAlloc[k] += 1;
       renderStatAllocGrid(); updateCreateHints(); validateCreateForm();
     });
@@ -2203,7 +2272,12 @@ function showDndErrorToast(msg) {
 
 function validateCreateForm() {
   const name = document.getElementById('dndCreateName').value.trim();
-  const spent = Object.values(dndCreateAlloc).reduce((sum, v) => sum + dndPointBuyCostOf(v), 0);
+  const race = dndCreateSelectedRace ? dndRaceByKey(dndCreateSelectedRace) : null;
+  const cls = dndCreateSelectedClass ? dndClassByKey(dndCreateSelectedClass) : null;
+  const spent = Object.keys(DND_STAT_LABELS).reduce((sum, k) => {
+    const bonus = ((race && race.bonus[k]) || 0) + ((cls && cls.bonus[k]) || 0);
+    return sum + dndPointBuyCostForRaw(dndCreateAlloc[k], bonus);
+  }, 0);
   const ok = !!name && !!dndCreateSelectedRace && !!dndCreateSelectedPassive && !!dndCreateSelectedClass && spent === dndPointBuyBudget;
   document.getElementById('dndCreateSaveBtn').disabled = !ok;
   return ok;
@@ -2343,6 +2417,7 @@ function renderMySheetView() {
     ['Level', `Lv.${c.level} · ${dndExpProgressText(c.exp || 0)}`],
     ['AC', c.ac],
     ['HP', `${c.hp} / ${c.maxHp}`],
+    ['SP', `${c.sp != null ? c.sp : 0} / ${c.maxSp != null ? c.maxSp : 0}`],
     ['EXP', c.exp || 0],
     ['ทอง', c.gold || 0],
     ['แต้มสเตตัส (จากเลเวลอัพ)', statPoints],
@@ -2350,10 +2425,10 @@ function renderMySheetView() {
   box.innerHTML = `<div class="dndAvatarWrap">${dndBuildAvatarSVG(c, 120, 160)}</div>`
     + rows.map(([k, v]) => `<div class="dndSheetViewRow"><span>${escapeHtml(k)}</span><span>${escapeHtml(String(v))}</span></div>`).join('')
     + `<div class="dndSheetStatRow">${Object.keys(DND_STAT_LABELS).map(k => {
-      // สำคัญ: ต้องคิดต้นทุนจากค่า point-buy ดิบ (c.pointBuy[k]) ไม่ใช่ค่าสเตตัสสุดท้าย c[k]
-      // เพราะ c[k] อาจถูกบวกโบนัสเผ่าพันธุ์/คลาสไปแล้ว ถ้าเอามาคิดต้นทุนราคาจะผิดเพี้ยนได้
+      // ต้นทุนต้องอิงค่ารวม (ดิบ+โบนัสเผ่า/คลาส) ไม่ใช่ค่าดิบเฉยๆ — ให้ตรงกับตำแหน่งค่ารวมจริงที่สเตตัสยืนอยู่
       const rawScore = (c.pointBuy && c.pointBuy[k] != null) ? c.pointBuy[k] : c[k];
-      const stepCost = dndPointBuyStepCost(rawScore);
+      const statBonus = ((raceInfo && raceInfo.bonus && raceInfo.bonus[k]) || 0) + ((clsInfo && clsInfo.bonus && clsInfo.bonus[k]) || 0);
+      const stepCost = dndPointBuyStepCost(rawScore, statBonus);
       const btn = statPoints > 0
         ? `<button type="button" class="dndStatPlusBtn" ${statPoints >= stepCost ? '' : 'disabled'} title="เพิ่มอีก 1 ใช้แต้มสเตตัส ${stepCost} แต้ม" onclick="dndSpendStatPointClick('${k}')">+${stepCost}</button>`
         : '';
@@ -2391,6 +2466,41 @@ function fillPassiveSelectOptions(raceKey, selectedPassiveKey) {
 }
 // ค่าอ้างอิงตอนเปิดหน้าต่างแก้ไข — ใช้เทียบตัวปรับ CON เดิม/ใหม่ เพื่อพรีวิว HP ที่จะเปลี่ยนก่อน DM กดบันทึกจริง (เซิร์ฟเวอร์คำนวณจริงอีกที ค่านี้แค่โชว์พรีวิว)
 let dndDmEditBaseline = { con: 10, maxHp: 20, hp: 20 };
+// โบนัส AC/HP ของสกิลติดตัวที่ตัวละครมีอยู่ "ตอนเปิดฟอร์มแก้ไข" — ใช้เทียบกับพาสซีพที่ DM เลือกใหม่ในฟอร์ม เพื่อโชว์ข้อความพรีวิวส่วนต่าง AC/HP ก่อนกดบันทึกจริง
+let dndDmEditPassiveBaseline = { ac: 0, hp: 0 };
+// เมื่อ DM เปลี่ยนตัวเลือกสกิลติดตัวในฟอร์มแก้ไข — โชว์ "ข้อความ" บอกส่วนต่าง AC/HP ที่จะเกิดขึ้นเท่านั้น (เหมือนช่อง CON hint)
+// ห้ามไปแก้ค่าในช่อง AC/HP/MaxHP ตรงๆ เด็ดขาด เพราะเซิร์ฟเวอร์เป็นคนคำนวณส่วนต่างจริงจากค่าดิบในฟอร์มอยู่แล้ว
+// ถ้าฝั่งนี้ไปบวกเข้าช่องเองด้วย พอกดบันทึกจะโดนบวกซ้ำสองชั้น (ค่าที่ฟอร์มส่งไปแล้ว + เซิร์ฟเวอร์บวกซ้ำอีกที) ทำให้ AC/HP เพี้ยนเป็นสองเท่า
+function dndPreviewPassiveAcHpChange() {
+  const raceKey = document.getElementById('dndEditRace').value;
+  const passiveKey = document.getElementById('dndEditPassive').value;
+  const passive = dndPassiveByKey(raceKey, passiveKey);
+  const newEff = (passive && passive.effect) || { ac: 0, hp: 0 };
+  const acDelta = (newEff.ac || 0) - (dndDmEditPassiveBaseline.ac || 0);
+  const hpDelta = (newEff.hp || 0) - (dndDmEditPassiveBaseline.hp || 0);
+  const hint = document.getElementById('dndEditPassiveHint');
+  const parts = [];
+  if (acDelta) parts.push(`AC ${acDelta > 0 ? '+' : ''}${acDelta}`);
+  if (hpDelta) parts.push(`HP สูงสุด ${hpDelta > 0 ? '+' : ''}${hpDelta}`);
+  hint.textContent = parts.length ? `⚙️ บันทึกแล้วจะได้ ${parts.join(', ')} (อิงสกิลติดตัวที่เลือก)` : '';
+}
+// คะแนน point-buy ดิบ (ไม่รวมโบนัสเผ่า/คลาส) ของตัวละครที่กำลังแก้ไขอยู่ — ใช้คิดสเตตัสใหม่ทันทีที่ DM เปลี่ยนเผ่า/คลาสในฟอร์ม ก่อนกดบันทึกจริง
+let dndDmEditPointBuy = null;
+// เมื่อ DM เปลี่ยนเผ่าพันธุ์หรือคลาสในฟอร์มแก้ไข — คิดสเตตัสหลักใหม่ทันที (point-buy ดิบ + โบนัสเผ่า/คลาสล่าสุด) ไม่ให้ค่าที่โชว์ค้างเป็นของเผ่า/คลาสเดิม
+function dndRecomputeEditStatsFromRaceClass() {
+  if (!dndDmEditPointBuy) return; // ตัวละครเก่าที่ไม่มีข้อมูล point-buy เก็บไว้ (สร้างก่อนระบบนี้) — ให้ DM แก้ตัวเลขสเตตัสเองตรงๆ แทน
+  const race = dndRaceByKey(document.getElementById('dndEditRace').value);
+  const cls = dndClassByKey(document.getElementById('dndEditClass').value);
+  const fieldIds = { str: 'dndEditStr', dex: 'dndEditDex', con: 'dndEditCon', int: 'dndEditInt', wis: 'dndEditWis', cha: 'dndEditCha' };
+  Object.keys(fieldIds).forEach(k => {
+    const rb = (race && race.bonus && race.bonus[k]) || 0;
+    const cb = (cls && cls.bonus && cls.bonus[k]) || 0;
+    let base = Math.round(Number(dndDmEditPointBuy[k]));
+    if (!Number.isFinite(base) || base < dndPointBuyMin) base = dndPointBuyMin;
+    document.getElementById(fieldIds[k]).value = base + rb + cb;
+  });
+  dndUpdateEditStatMods();
+}
 function dndUpdateEditStatMods() {
   document.getElementById('dndEditStrMod').textContent = `(${dndAbilityModText(document.getElementById('dndEditStr').value)})`;
   document.getElementById('dndEditDexMod').textContent = `(${dndAbilityModText(document.getElementById('dndEditDex').value)})`;
@@ -2428,12 +2538,21 @@ function openDmEdit(targetId) {
   fillSelectOptions(document.getElementById('dndEditRace'), dndRaces, c.raceKey);
   fillSelectOptions(document.getElementById('dndEditClass'), dndClasses, c.classKey);
   fillPassiveSelectOptions(c.raceKey, c.passiveKey);
-  document.getElementById('dndEditRace').onchange = (ev) => fillPassiveSelectOptions(ev.target.value, null);
+  dndDmEditPointBuy = (c.pointBuy && typeof c.pointBuy === 'object') ? c.pointBuy : null;
+  // จำโบนัส AC/HP ของสกิลติดตัว "ตอนเปิดฟอร์ม" ไว้ — ใช้เทียบตอนเปลี่ยนตัวเลือกพาสซีพในฟอร์ม เพื่อพรีวิวค่า AC/HP ใหม่ให้ตรงกับที่เซิร์ฟเวอร์จะคำนวณจริงตอนบันทึก
+  const basePassive = dndPassiveByKey(c.raceKey, c.passiveKey);
+  dndDmEditPassiveBaseline = (basePassive && basePassive.effect) || { ac: 0, hp: 0 };
+  document.getElementById('dndEditPassiveHint').textContent = '';
+  document.getElementById('dndEditRace').onchange = (ev) => { fillPassiveSelectOptions(ev.target.value, null); dndRecomputeEditStatsFromRaceClass(); dndPreviewPassiveAcHpChange(); };
+  document.getElementById('dndEditClass').onchange = () => dndRecomputeEditStatsFromRaceClass();
+  document.getElementById('dndEditPassive').onchange = () => dndPreviewPassiveAcHpChange();
   document.getElementById('dndEditLevel').value = dndLevelFromExpClient(c.exp || 0);
   document.getElementById('dndEditLevelHint').textContent = `Lv.${dndLevelFromExpClient(c.exp || 0)} · ${dndExpProgressText(c.exp || 0)}`;
   document.getElementById('dndEditAc').value = c.ac;
   document.getElementById('dndEditHp').value = c.hp;
   document.getElementById('dndEditMaxHp').value = c.maxHp;
+  document.getElementById('dndEditSp').value = c.sp != null ? c.sp : 0;
+  document.getElementById('dndEditMaxSp').value = c.maxSp != null ? c.maxSp : 0;
   document.getElementById('dndEditStr').value = c.str;
   document.getElementById('dndEditDex').value = c.dex;
   document.getElementById('dndEditCon').value = c.con;
@@ -2445,7 +2564,13 @@ function openDmEdit(targetId) {
   document.getElementById('dndEditExp').value = c.exp || 0;
   document.getElementById('dndEditGold').value = c.gold || 0;
   renderEquipGrid('dndEditEquipGrid', c.equipment);
+  applyNormalAttackToEditForm(c.normalAttack);
   document.getElementById('dndEditLocked').checked = !!c.locked;
+  {
+    const tok = dndTokens.find(tt => tt.kind === 'pc' && tt.ownerId === targetId);
+    document.getElementById('dndEditVisionType').value = (tok && tok.visionType) || 'normal';
+    document.getElementById('dndEditVisionRadius').value = (tok && tok.visionRadiusOverride != null) ? tok.visionRadiusOverride : '';
+  }
   renderDndStatusChips('dndEditStatusList', c.statuses || [], 'player', targetId);
   renderDmEditSkills(p);
   dndDmEditBaseline = { con: Number(c.con) || 10, maxHp: Number(c.maxHp) || 20, hp: Number(c.hp) || 20 };
@@ -2462,7 +2587,7 @@ function renderDmEditSkills(p) {
     `<span class="dndSkillChip dndEditableSkillChip" data-class-skill-id="${s.id}" title="${escapeHtml(s.desc || '')}\nคลิกเพื่อแก้ไขสกิลนี้ (เฉพาะผู้เล่นคนนี้คนเดียว)">🎓 ${escapeHtml(s.name)}${s.locked ? ` (ปลดล็อก Lv.${s.level})` : ''}${s.overridden ? ' ✏️' : ''}</span>`
   ).join('');
   const customChips = (p.assignedSkills || []).map(s =>
-    `<span class="dndSkillChip dndEditableSkillChip" data-skill-id="${s.id}" title="คลิกเพื่อแก้ไขสกิลนี้">✨ ${escapeHtml(s.name)} ✏️</span>`
+    `<span class="dndSkillChip dndEditableSkillChip"${s.color ? ` style="border-color:${s.color}; color:${s.color};"` : ''} data-skill-id="${s.id}" title="คลิกเพื่อแก้ไขสกิลนี้">${escapeHtml(s.icon || '✨')} ${escapeHtml(s.name)} ✏️</span>`
   ).join('');
   box.innerHTML = (classChips + customChips) || '<div class="dndRangeHint">ยังไม่มีสกิล</div>';
   box.querySelectorAll('[data-skill-id]').forEach(chip => {
@@ -2486,6 +2611,7 @@ function openDndClassSkillEdit(playerId, skillId) {
   document.getElementById('dndClassSkillEditTitle').textContent = `แก้ไขสกิลประจำคลาส (DM) — ${skill.name} · เฉพาะ ${p.character.charName || p.name}`;
   document.getElementById('dndClassSkillEditName').value = skill.name || '';
   document.getElementById('dndClassSkillEditStat').value = skill.stat || '';
+  document.getElementById('dndClassSkillEditGuaranteedHit').checked = !!skill.guaranteedHit;
   document.getElementById('dndClassSkillEditDesc').value = skill.desc || '';
   document.getElementById('dndClassSkillEditDmgDie').value = String(skill.dmgDie || 0);
   document.getElementById('dndClassSkillEditDmgCount').value = skill.dmgCount || 1;
@@ -2493,13 +2619,27 @@ function openDndClassSkillEdit(playerId, skillId) {
   document.getElementById('dndClassSkillEditHealDie').value = String(skill.healDie || 0);
   document.getElementById('dndClassSkillEditHealCount').value = skill.healCount || 1;
   document.getElementById('dndClassSkillEditHealMod').value = skill.healMod || 0;
+  document.getElementById('dndClassSkillEditHealRevive').value = skill.healRevive ? '1' : '0';
   document.getElementById('dndClassSkillEditStatusName').value = skill.statusName || '';
   document.getElementById('dndClassSkillEditStatusNote').value = skill.statusNote || '';
+  document.getElementById('dndClassSkillEditStatusIcon').value = skill.statusIcon || '';
+  document.getElementById('dndClassSkillEditStatusColor').value = skill.statusColor || '#ff6b6b';
+  document.getElementById('dndClassSkillEditBuffAlly').checked = !!skill.buffAlly;
+  document.getElementById('dndClassSkillEditTargetMode').value = dndSkillTargetModeOf(skill);
+  document.getElementById('dndClassSkillEditStatusChance').value = skill.statusChance || 100;
+  document.getElementById('dndClassSkillEditStatusDuration').value = skill.statusDurationSec || 0;
+  document.getElementById('dndClassSkillEditStatusAtkMod').value = skill.statusAtkMod || 0;
+  document.getElementById('dndClassSkillEditStatusDmgMod').value = skill.statusDmgMod || 0;
+  document.getElementById('dndClassSkillEditStatusDefMod').value = skill.statusDefMod || 0;
+  document.getElementById('dndClassSkillEditStatusTick').value = skill.statusTickValue || 0;
+  document.getElementById('dndClassSkillEditStatusTickInterval').value = skill.statusTickIntervalSec || 6;
   document.getElementById('dndClassSkillEditAoeRadius').value = skill.aoeRadius || 0;
+  document.getElementById('dndClassSkillEditRange').value = skill.range || 0;
   document.getElementById('dndClassSkillEditCleanseEnabled').checked = !!skill.cleanseEnabled;
   document.getElementById('dndClassSkillEditCleanseName').value = skill.cleanseName || '';
   document.getElementById('dndClassSkillEditCooldown').value = skill.cooldownSec || 0;
   document.getElementById('dndClassSkillEditMaxUses').value = skill.maxUses || 0;
+  document.getElementById('dndClassSkillEditSpCost').value = skill.spCost || 0;
   document.getElementById('dndClassSkillEditError').textContent = '';
   document.getElementById('dndClassSkillEditResetBtn').style.display = skill.overridden ? 'inline-block' : 'none';
   document.getElementById('dndClassSkillEditOverlay').style.display = 'flex';
@@ -2522,6 +2662,7 @@ document.getElementById('dndClassSkillEditSaveBtn').onclick = (ev) => {
       name,
       stat: document.getElementById('dndClassSkillEditStat').value,
       desc: document.getElementById('dndClassSkillEditDesc').value,
+      guaranteedHit: document.getElementById('dndClassSkillEditGuaranteedHit').checked,
       damage: {
         die: document.getElementById('dndClassSkillEditDmgDie').value,
         count: document.getElementById('dndClassSkillEditDmgCount').value,
@@ -2531,20 +2672,34 @@ document.getElementById('dndClassSkillEditSaveBtn').onclick = (ev) => {
         die: document.getElementById('dndClassSkillEditHealDie').value,
         count: document.getElementById('dndClassSkillEditHealCount').value,
         mod: document.getElementById('dndClassSkillEditHealMod').value,
+        revive: document.getElementById('dndClassSkillEditHealRevive').value === '1',
       },
       status: {
         name: document.getElementById('dndClassSkillEditStatusName').value,
         note: document.getElementById('dndClassSkillEditStatusNote').value,
+        chance: document.getElementById('dndClassSkillEditStatusChance').value,
+        durationSec: document.getElementById('dndClassSkillEditStatusDuration').value,
+        atkMod: document.getElementById('dndClassSkillEditStatusAtkMod').value,
+        dmgMod: document.getElementById('dndClassSkillEditStatusDmgMod').value,
+        defMod: document.getElementById('dndClassSkillEditStatusDefMod').value,
+        tickValue: document.getElementById('dndClassSkillEditStatusTick').value,
+        tickIntervalSec: document.getElementById('dndClassSkillEditStatusTickInterval').value,
+        icon: document.getElementById('dndClassSkillEditStatusIcon').value,
+        color: document.getElementById('dndClassSkillEditStatusColor').value,
       },
+      buffAlly: document.getElementById('dndClassSkillEditBuffAlly').checked,
+      targetMode: document.getElementById('dndClassSkillEditTargetMode').value,
       aoe: {
         radius: document.getElementById('dndClassSkillEditAoeRadius').value,
       },
+      range: document.getElementById('dndClassSkillEditRange').value,
       cleanse: {
         enabled: document.getElementById('dndClassSkillEditCleanseEnabled').checked,
         name: document.getElementById('dndClassSkillEditCleanseName').value,
       },
       cooldownSec: document.getElementById('dndClassSkillEditCooldown').value,
       maxUses: document.getElementById('dndClassSkillEditMaxUses').value,
+      spCost: document.getElementById('dndClassSkillEditSpCost').value,
     },
   });
   document.getElementById('dndClassSkillEditOverlay').style.display = 'none';
@@ -2599,7 +2754,13 @@ function renderDndStatusChips(elId, statuses, targetType, targetId) {
         if (tickIntervalInput === null) return;
         tickIntervalSec = Math.max(1, Math.min(3600, Math.round(Number(tickIntervalInput) || 0) || 6));
       }
-      send({ type: 'dndStatusEdit', status: { targetType, targetId, statusId: cur.id, name: trimmedName, note, durationSec, atkMod, dmgMod, defMod, tickValue, tickIntervalSec } });
+      const iconInput = prompt('ไอคอน/อีโมจิของสถานะนี้ (ปล่อยว่าง = ☠️)', cur.icon || '☠️');
+      if (iconInput === null) return;
+      const icon = iconInput.trim().slice(0, 4);
+      const colorInput = prompt('สีของสถานะนี้ (รหัสสี hex เช่น #ff6b6b, ปล่อยว่าง = สีเริ่มต้น)', cur.color || '');
+      if (colorInput === null) return;
+      const color = colorInput.trim();
+      send({ type: 'dndStatusEdit', status: { targetType, targetId, statusId: cur.id, name: trimmedName, note, durationSec, atkMod, dmgMod, defMod, tickValue, tickIntervalSec, icon, color } });
     };
   });
 }
@@ -2614,7 +2775,9 @@ document.getElementById('dndEditStatusAddBtn').onclick = (ev) => {
   const defMod = Number(document.getElementById('dndEditStatusDef').value) || 0;
   const tickValue = Number(document.getElementById('dndEditStatusTick').value) || 0;
   const tickIntervalSec = Number(document.getElementById('dndEditStatusTickInterval').value) || 0;
-  send({ type: 'dndStatusApply', status: { targetType: 'player', targetId: dndDmEditTargetId, name, note: document.getElementById('dndEditStatusNote').value, durationSec, atkMod, dmgMod, defMod, tickValue, tickIntervalSec } });
+  const icon = document.getElementById('dndEditStatusIcon').value;
+  const color = document.getElementById('dndEditStatusColor').value;
+  send({ type: 'dndStatusApply', status: { targetType: 'player', targetId: dndDmEditTargetId, name, note: document.getElementById('dndEditStatusNote').value, durationSec, atkMod, dmgMod, defMod, tickValue, tickIntervalSec, icon, color } });
   document.getElementById('dndEditStatusName').value = '';
   document.getElementById('dndEditStatusNote').value = '';
   document.getElementById('dndEditStatusDuration').value = '';
@@ -2623,6 +2786,8 @@ document.getElementById('dndEditStatusAddBtn').onclick = (ev) => {
   document.getElementById('dndEditStatusDef').value = '';
   document.getElementById('dndEditStatusTick').value = '';
   document.getElementById('dndEditStatusTickInterval').value = '';
+  document.getElementById('dndEditStatusIcon').value = '';
+  document.getElementById('dndEditStatusColor').value = '#ff6b6b';
 };
 function closeDndModals() {
   document.getElementById('dndDmEditOverlay').style.display = 'none';
@@ -2653,6 +2818,8 @@ document.getElementById('dndDmEditSaveBtn').onclick = (ev) => {
       ac: document.getElementById('dndEditAc').value,
       hp: document.getElementById('dndEditHp').value,
       maxHp: document.getElementById('dndEditMaxHp').value,
+      sp: document.getElementById('dndEditSp').value,
+      maxSp: document.getElementById('dndEditMaxSp').value,
       str: document.getElementById('dndEditStr').value,
       dex: document.getElementById('dndEditDex').value,
       con: document.getElementById('dndEditCon').value,
@@ -2665,8 +2832,30 @@ document.getElementById('dndDmEditSaveBtn').onclick = (ev) => {
       gold: document.getElementById('dndEditGold').value,
       equipment: readEquipGrid('dndEditEquipGrid'),
       locked: document.getElementById('dndEditLocked').checked,
+      normalAttack: {
+        name: document.getElementById('dndEditNaName').value,
+        stat: document.getElementById('dndEditNaStat').value,
+        dmgDie: document.getElementById('dndEditNaDmgDie').value,
+        dmgCount: document.getElementById('dndEditNaDmgCount').value,
+        atkBonus: document.getElementById('dndEditNaAtkBonus').value,
+        dmgBonus: document.getElementById('dndEditNaDmgBonus').value,
+      },
     },
   });
+  {
+    const tok = dndTokens.find(tt => tt.kind === 'pc' && tt.ownerId === dndDmEditTargetId);
+    if (tok) {
+      const radiusRaw = document.getElementById('dndEditVisionRadius').value;
+      send({
+        type: 'dndTokenEdit',
+        id: tok.id,
+        updates: {
+          visionType: document.getElementById('dndEditVisionType').value,
+          visionRadius: radiusRaw === '' ? null : Number(radiusRaw),
+        },
+      });
+    }
+  }
   closeDndModals();
 };
 
@@ -2699,14 +2888,21 @@ function renderDndParty() {
 
     const c = p.character;
     const pct = c.maxHp > 0 ? Math.max(0, Math.min(100, Math.round(c.hp / c.maxHp * 100))) : 0;
+    const spMax = Number(c.maxSp) || 0;
+    const spCur = Number(c.sp) || 0;
+    const spPct = spMax > 0 ? Math.max(0, Math.min(100, Math.round(spCur / spMax * 100))) : 0;
     const raceInfo = dndRaceByKey(c.raceKey);
     const clsInfo = dndClassByKey(c.classKey);
     const passiveInfo = c.locked ? dndPassiveByKey(c.raceKey, c.passiveKey) : null;
     const raceClsText = c.locked ? `${(raceInfo ? raceInfo.icon + ' ' : '')}${escapeHtml(c.race || '-')} · ${(clsInfo ? clsInfo.icon + ' ' : '')}${escapeHtml(c.cls || '-')}${passiveInfo ? ` · ${passiveInfo.icon || '✨'} ${escapeHtml(passiveInfo.name)}` : ''}` : 'ยังไม่ได้สร้างตัวละคร';
     const skillsHtml = (p.assignedSkills && p.assignedSkills.length)
-      ? `<div class="dndPCardSkills">${p.assignedSkills.map(s => `<span class="dndSkillChip">✨ ${escapeHtml(s.name)}</span>`).join('')}</div>` : '';
+      ? `<div class="dndPCardSkills">${p.assignedSkills.map(s => `<span class="dndSkillChip"${s.color ? ` style="border-color:${s.color}; color:${s.color};"` : ''}>${escapeHtml(s.icon || '✨')} ${escapeHtml(s.name)}</span>`).join('')}</div>` : '';
     const statusesHtml = (c.statuses && c.statuses.length)
       ? `<div class="dndPCardSkills">${c.statuses.map(s => dndStatusChipHtml(s)).join('')}</div>` : '';
+    // DM เท่านั้นที่เห็นแถวสเตตัส (STR/DEX/CON/INT/WIS/CHA) ตรงบนการ์ดเลย ไม่ต้องกด "แก้ไข" เข้าไปดูทีละคน
+    const dmStatsHtml = (dndYou && dndYou.isDM && c.locked)
+      ? `<div class="dndPCardStats">${Object.keys(DND_STAT_LABELS).map(k => `<span class="dndPCardStatChip dndStatTip" ${dndStatTipHtml(k)}>${DND_STAT_LABELS[k]} ${c[k]} <span class="dndStatModBadge">(${dndAbilityModText(c[k])})</span></span>`).join('')}</div>`
+      : '';
     div.innerHTML = `
       <div class="dndPCardBody">
         <div class="dndAvatarMini">${dndBuildAvatarSVG(c, 44, 58)}</div>
@@ -2717,9 +2913,14 @@ function renderDndParty() {
             ${isDead ? '<span class="dndDeadBadge">💀 หมดสติ</span>' : ''}
           </div>
           <div class="dndPCardMeta">${raceClsText} · Lv.${c.level} · ${dndExpProgressText(c.exp || 0)} · AC ${c.ac} · <span class="dndTotalDefBadge">ป้องกัน ${dndTotalDefenseClient(c.equipment || {})}</span>${p.connected ? '' : ' · หลุดการเชื่อมต่อ'}</div>
+          ${dmStatsHtml}
           <div class="dndHpRow">
             <div class="dndHpBarWrap"><div class="dndHpBar${pct <= 25 ? ' low' : ''}" style="width:${pct}%;"></div></div>
             <div class="dndHpText">${c.hp}/${c.maxHp} HP</div>
+          </div>
+          <div class="dndSpRow">
+            <div class="dndSpBarWrap"><div class="dndSpBar" style="width:${spPct}%;"></div></div>
+            <div class="dndSpText">${spCur}/${spMax} SP</div>
           </div>
           ${skillsHtml}
           ${statusesHtml}
@@ -2769,10 +2970,10 @@ function renderDmSkillsOverview() {
       ? `${(raceInfo ? raceInfo.icon + ' ' : '')}${escapeHtml(c.race || '-')} · ${(clsInfo ? clsInfo.icon + ' ' : '')}${escapeHtml(c.cls || '-')} · Lv.${c.level || 1}`
       : 'ยังไม่ได้สร้างตัวละคร';
     const classChips = (p.classSkills || []).map(s =>
-      `<span class="dndSkillChip${s.locked ? ' dndSkillChipLocked' : ''}" title="${escapeHtml(s.desc || '')}">🎓 ${escapeHtml(s.name)}${s.locked ? ` (ปลดล็อก Lv.${s.level})` : ''}</span>`
+      `<span class="dndSkillChip${s.locked ? ' dndSkillChipLocked' : ''} dndEditableSkillChip" data-class-skill-id="${s.id}" title="${escapeHtml(s.desc || '')}\nคลิกเพื่อแก้ไขสกิลนี้ (เฉพาะผู้เล่นคนนี้คนเดียว)">🎓 ${escapeHtml(s.name)}${s.locked ? ` (ปลดล็อก Lv.${s.level})` : ''}${s.overridden ? ' ✏️' : ''}</span>`
     ).join('');
     const customChips = (p.assignedSkills || []).map(s =>
-      `<span class="dndSkillChip" title="${escapeHtml(s.desc || '')}">✨ ${escapeHtml(s.name)}</span>`
+      `<span class="dndSkillChip dndEditableSkillChip" data-skill-id="${s.id}" title="${escapeHtml(s.desc || '')}\nคลิกเพื่อแก้ไขสกิลนี้">✨ ${escapeHtml(s.name)} ✏️</span>`
     ).join('');
     const skillsHtml = (classChips + customChips) || '<span class="dndRangeHint">ยังไม่มีสกิล</span>';
     return `
@@ -2785,6 +2986,14 @@ function renderDmSkillsOverview() {
     row.style.cursor = 'pointer';
     row.title = 'คลิกเพื่อแก้ไขตัวละครคนนี้';
     row.onclick = () => openDmEdit(Number(row.dataset.pid));
+    // สกิลแต่ละอันคลิกแล้วไปหน้าต่างแก้ไขสกิลนั้นตรงๆ ทันที ไม่ต้องเปิดหน้าต่างแก้ตัวละครทั้งใบก่อน
+    // ต้องกัน event ไม่ให้ลอยขึ้นไปโดน onclick ของทั้งแถวด้านบน (ซึ่งเปิดหน้าต่างแก้ตัวละครแทน)
+    row.querySelectorAll('[data-skill-id]').forEach(chip => {
+      chip.onclick = (ev) => { ev.stopPropagation(); openDndSkillEdit(Number(chip.dataset.skillId)); };
+    });
+    row.querySelectorAll('[data-class-skill-id]').forEach(chip => {
+      chip.onclick = (ev) => { ev.stopPropagation(); openDndClassSkillEdit(Number(row.dataset.pid), Number(chip.dataset.classSkillId)); };
+    });
   });
 }
 
@@ -2805,7 +3014,12 @@ function renderDndState(state) {
   dndStatPointsPerLevel = state.statPointsPerLevel || dndStatPointsPerLevel;
   dndEquipSlots = state.equipSlots || dndEquipSlots;
   dndEquipSlotLabels = state.equipSlotLabels || dndEquipSlotLabels;
+  dndBagCapacity = state.bagCapacity || dndBagCapacity;
   dndTokens = state.tokens || dndTokens;
+  dndWalls = state.walls || [];
+  dndVisionEnabled = !!state.visionEnabled;
+  dndVisionTypeLabels = state.visionTypeLabels || dndVisionTypeLabels;
+  dndVisionDefaults = state.visionDefaults || dndVisionDefaults;
   dndShops = state.shops || dndShops;
   dndForgeFailPolicyLabels = state.forgeFailPolicyLabels || dndForgeFailPolicyLabels;
   dndItemEffects = state.itemEffects || [];
@@ -2880,6 +3094,10 @@ function renderDndState(state) {
   renderDndPassiveManageList();
   document.getElementById('dndMapMyTokenBox').style.display = (!isDM && dndYou && dndYou.locked) ? 'block' : 'none';
   document.getElementById('dndMapNpcAddBox').style.display = isDM ? 'block' : 'none';
+  document.getElementById('dndVisionDmRow').style.display = isDM ? 'block' : 'none';
+  document.getElementById('dndWallDmRow').style.display = isDM ? 'flex' : 'none';
+  const visionToggleEl = document.getElementById('dndVisionEnabledToggle');
+  if (visionToggleEl && document.activeElement !== visionToggleEl) visionToggleEl.checked = dndVisionEnabled;
   document.getElementById('dndShopDmForm').style.display = isDM ? 'block' : 'none';
   renderDndShops();
   renderDndMap();
@@ -2935,21 +3153,53 @@ function renderDndShops() {
     return `
     <div class="dndShopCard" data-shop="${shop.id}">
       <div class="dndShopCardHead">
-        <h4>${isForge ? '⚒️' : '🛍️'} ${escapeHtml(shop.name)}</h4>
-        ${isDM ? `<button type="button" class="dndShopDelBtn" data-shopdel="${shop.id}">ปิดร้าน</button>` : ''}
+        <h4>${isForge ? '⚒️' : '🛍️'} ${escapeHtml(shop.name)}${(isDM && shop.closed) ? ' <span class="dndPCardTag">ปิดอยู่</span>' : ''}</h4>
+        ${isDM ? `
+          <button type="button" class="dndShopDelBtn" data-shopclose="${shop.id}">${shop.closed ? 'เปิดร้าน' : 'ปิดร้านชั่วคราว'}</button>
+          <button type="button" class="dndShopDelBtn dndKickBtn" data-shopdel="${shop.id}">ลบร้านถาวร</button>
+        ` : ''}
       </div>
       ${bodyHtml}
     </div>
   `;
   }).join('');
 
+  box.querySelectorAll('button[data-shopclose]').forEach(btn => {
+    btn.onclick = () => send({ type: 'dndShopToggleClosed', shopId: Number(btn.dataset.shopclose) });
+  });
   box.querySelectorAll('button[data-shopdel]').forEach(btn => {
-    btn.onclick = () => { if (confirm('ปิดร้านนี้เลยไหม?')) send({ type: 'dndShopDelete', shopId: Number(btn.dataset.shopdel) }); };
+    btn.onclick = () => { if (confirm('ลบร้านนี้ถาวรเลยไหม? ไอเทมทั้งหมดในร้านจะหายไปด้วย กู้คืนไม่ได้ (ถ้าแค่อยากปิดร้านชั่วคราว ให้ใช้ปุ่ม "ปิดร้านชั่วคราว" แทน)')) send({ type: 'dndShopDelete', shopId: Number(btn.dataset.shopdel) }); };
   });
   box.querySelectorAll('button[data-itemdel]').forEach(btn => {
     btn.onclick = () => {
       const [shopId, itemId] = btn.dataset.itemdel.split(':').map(Number);
       send({ type: 'dndShopItemDelete', shopId, itemId });
+    };
+  });
+  box.querySelectorAll('button[data-itemeditopen]').forEach(btn => {
+    btn.onclick = () => { dndShopEditKey = btn.dataset.itemeditopen; renderDndShops(); };
+  });
+  box.querySelectorAll('button[data-itemeditcancel]').forEach(btn => {
+    btn.onclick = () => { dndShopEditKey = null; renderDndShops(); };
+  });
+  box.querySelectorAll('button[data-itemeditsave]').forEach(btn => {
+    btn.onclick = (ev) => {
+      const key = btn.dataset.itemeditsave;
+      const [shopId, itemId] = key.split(':').map(Number);
+      const name = box.querySelector(`input[data-editname="${key}"]`).value.trim();
+      if (!name) return;
+      flashBtn(ev.currentTarget);
+      send({
+        type: 'dndShopItemEdit',
+        shopId, itemId,
+        item: {
+          name,
+          price: box.querySelector(`input[data-editprice="${key}"]`).value,
+          stock: box.querySelector(`input[data-editstock="${key}"]`).value,
+          desc: box.querySelector(`input[data-editdesc="${key}"]`).value,
+        },
+      });
+      dndShopEditKey = null;
     };
   });
   box.querySelectorAll('button[data-buy]').forEach(btn => {
@@ -3018,6 +3268,20 @@ function dndRenderItemShopBody(shop, isDM, myGold) {
     const have = dndBagQty(it.name);
     const canBuy = !isDM && (it.stock === null || it.stock > 0) && myGold >= it.price;
     const canSell = !isDM && have > 0;
+    const editKey = `${shop.id}:${it.id}`;
+    if (isDM && dndShopEditKey === editKey) {
+      return `
+    <div class="dndShopItemRow">
+      <div class="dndShopAddItemRow">
+        <input type="text" placeholder="ชื่อไอเทม" data-editname="${editKey}" maxlength="40" value="${escapeHtml(it.name)}">
+        <input type="number" placeholder="ราคา" data-editprice="${editKey}" min="0" style="max-width:70px;" value="${it.price}">
+        <input type="number" placeholder="สต็อก (ว่าง=ไม่จำกัด)" data-editstock="${editKey}" min="0" style="max-width:120px;" value="${it.stock === null ? '' : it.stock}">
+        <input type="text" placeholder="คำอธิบาย (ไม่บังคับ)" data-editdesc="${editKey}" maxlength="150" value="${escapeHtml(it.desc || '')}">
+        <button type="button" data-itemeditsave="${editKey}">💾 บันทึก</button>
+        <button type="button" data-itemeditcancel="${editKey}">ยกเลิก</button>
+      </div>
+    </div>`;
+    }
     return `
     <div class="dndShopItemRow">
       <div class="dndShopItemInfo">
@@ -3026,7 +3290,8 @@ function dndRenderItemShopBody(shop, isDM, myGold) {
         ${it.desc ? `<div class="dndShopItemDesc">${escapeHtml(it.desc)}</div>` : ''}
       </div>
       ${isDM
-        ? `<button type="button" class="dndShopItemDelBtn" data-itemdel="${shop.id}:${it.id}">ลบ</button>`
+        ? `<button type="button" class="dndShopItemDelBtn" data-itemeditopen="${editKey}">✏️ แก้ไข</button>
+           <button type="button" class="dndShopItemDelBtn" data-itemdel="${shop.id}:${it.id}">ลบ</button>`
         : `<button type="button" class="dndShopBuyBtn" data-buy="${shop.id}:${it.id}" ${canBuy ? '' : 'disabled'}>ซื้อ</button>
            <button type="button" class="dndShopSellBtn" data-sell="${shop.id}:${it.id}" ${canSell ? '' : 'disabled'}>ขาย (${Math.floor(it.price / 2)})</button>`}
     </div>`;
@@ -3280,6 +3545,11 @@ function renderDndBag() {
     const bag = (me && me.character && me.character.bag) || [];
     const gold = (me && me.character && me.character.gold) || 0;
     document.getElementById('dndBagGoldVal').textContent = gold;
+    const capEl = document.getElementById('dndBagCapacityVal');
+    if (capEl) {
+      capEl.textContent = `${bag.length}/${dndBagCapacity}`;
+      capEl.classList.toggle('dndBagCapacityFull', bag.length >= dndBagCapacity);
+    }
     const bagListEl = document.getElementById('dndMyBagList');
     const iAmDead = amIDead();
     bagListEl.innerHTML = bag.length
@@ -3419,589 +3689,52 @@ document.getElementById('dndGiveEquipBtn').onclick = (ev) => {
   dndGiveEquipIconData = '';
 };
 
-// รายการลำดับเทิร์นที่ DM จัดเรียงเอง — ถ้ายังไม่เคยตั้งลำดับ ให้เริ่มจากลำดับที่ทุกคนเข้าห้องมาก่อน
+// รายการลำดับเทิร์นที่ DM จัดเรียงเอง (ผู้เล่น + มอนสเตอร์บนแผนที่ปัจจุบัน) — ถ้ายังไม่เคยตั้งลำดับ ให้พรีวิวจากผู้เล่นทุกคน + มอนสเตอร์บนแผนที่นี้ทั้งหมดไปก่อน
+// แต่ละ entry คือ { kind: 'pc'|'npc', id, name } — name มาจากเซิร์ฟเวอร์เสมอเมื่อมีลำดับเทิร์นจริงแล้ว (กันปัญหาชื่อไม่ตรงถ้า DM สลับแผนที่ระหว่างนับเทิร์นอยู่)
 function dndTurnOrderIds() {
   if (dndTurnOrderClient.length) return dndTurnOrderClient;
-  return dndPlayersList.filter(p => !p.isDM).map(p => p.id);
+  const playerEntries = dndPlayersList.filter(p => !p.isDM).map(p => ({ kind: 'pc', id: p.id, name: p.character.charName || p.name }));
+  const npcEntries = dndTokens.filter(t => t.kind === 'npc').map(t => ({ kind: 'npc', id: t.id, name: t.name }));
+  return [...playerEntries, ...npcEntries];
 }
 function renderDndTurnBox() {
   const box = document.getElementById('dndTurnOrderList');
   if (!box) return;
-  const ids = dndTurnOrderIds();
-  const byId = {};
-  dndPlayersList.forEach(p => { byId[p.id] = p; });
-  if (!ids.length) { box.innerHTML = `<div class="dndRangeHint">ยังไม่มีผู้เล่นในปาร์ตี้</div>`; return; }
+  const entries = dndTurnOrderIds();
+  if (!entries.length) { box.innerHTML = `<div class="dndRangeHint">ยังไม่มีผู้เล่นหรือมอนสเตอร์บนแผนที่นี้</div>`; return; }
   box.innerHTML = '';
-  ids.forEach((id, idx) => {
-    const p = byId[id];
-    if (!p) return;
+  entries.forEach((entry, idx) => {
+    const isNpc = entry.kind === 'npc';
     const row = document.createElement('div');
-    const isCurrent = dndTurnIndexClient >= 0 && dndCurrentTurnPlayerId === id;
+    // ใช้ตำแหน่ง index เทียบกับ turnIndex ตรงๆ แทนการเทียบ id เฉยๆ เพราะ id ของผู้เล่นกับมอนสเตอร์อาจซ้ำกันได้ (คนละชุดเลข)
+    const isCurrent = dndTurnIndexClient >= 0 && dndTurnIndexClient === idx && dndTurnOrderClient.length > 0;
     row.className = 'dndTurnRow' + (isCurrent ? ' current' : '');
     row.innerHTML = `
-      <span class="dndTurnRowName">${isCurrent ? '🎯 ' : ''}${escapeHtml(p.character.charName || p.name)}</span>
+      <span class="dndTurnRowName">${isCurrent ? '🎯 ' : ''}${isNpc ? '👹 ' : ''}${escapeHtml(entry.name || '???')}</span>
       <button type="button" data-act="up">↑</button>
       <button type="button" data-act="down">↓</button>`;
     row.querySelector('[data-act="up"]').disabled = idx === 0;
-    row.querySelector('[data-act="down"]').disabled = idx === ids.length - 1;
+    row.querySelector('[data-act="down"]').disabled = idx === entries.length - 1;
     row.querySelector('[data-act="up"]').onclick = () => dndTurnReorder(idx, idx - 1);
     row.querySelector('[data-act="down"]').onclick = () => dndTurnReorder(idx, idx + 1);
     box.appendChild(row);
   });
 }
 function dndTurnReorder(from, to) {
-  const ids = dndTurnOrderIds().slice();
-  if (to < 0 || to >= ids.length) return;
-  const [moved] = ids.splice(from, 1);
-  ids.splice(to, 0, moved);
-  send({ type: 'dndTurnSetOrder', order: ids });
+  const entries = dndTurnOrderIds().slice();
+  if (to < 0 || to >= entries.length) return;
+  const [moved] = entries.splice(from, 1);
+  entries.splice(to, 0, moved);
+  send({ type: 'dndTurnSetOrder', order: entries.map(e => ({ kind: e.kind, id: e.id })) });
 }
 document.getElementById('dndTurnStartBtn').onclick = () => send({ type: 'dndTurnStart' });
 document.getElementById('dndTurnNextBtn').onclick = () => send({ type: 'dndTurnNext' });
 document.getElementById('dndTurnStopBtn').onclick = () => send({ type: 'dndTurnStop' });
 
-// ================== แผนที่การต่อสู้ (Battle Map) ==================
-function dndMyToken() {
-  if (!dndYou) return null;
-  return dndTokens.find(t => t.kind === 'pc' && t.ownerId === dndYou.id) || null;
-}
-function dndCanDragToken(t) {
-  if (!dndYou) return false;
-  if (dndYou.isDM) return true;
-  if (t.kind === 'pc' && t.ownerId === dndYou.id && Number(t.hp) <= 0) return false; // หมดสติ ลาก token ตัวเองไม่ได้
-  return t.kind === 'pc' && t.ownerId === dndYou.id;
-}
-function dndTokenInitials(name) {
-  return (name || '?').trim().slice(0, 2).toUpperCase();
-}
-function dndTokenBgStyle(t) {
-  return t.image ? `background-image:url('${t.image}'); background-color:transparent;` : `background-color:${t.color || '#6fd3ff'};`;
-}
-let dndMapMoveThrottle = {}; // id -> last-sent timestamp, ป้องกันยิง WS ถี่เกินระหว่างลาก
-function dndSendTokenMove(id, x, y, force) {
-  const now = Date.now();
-  if (!force && dndMapMoveThrottle[id] && now - dndMapMoveThrottle[id] < 100) return;
-  dndMapMoveThrottle[id] = now;
-  send({ type: 'dndTokenMove', id, x, y });
-}
-function dndAttachTokenDrag(el, tokenId) {
-  el.addEventListener('pointerdown', ev => {
-    const t = dndTokens.find(tt => tt.id === tokenId);
-    if (!t || !dndCanDragToken(t)) return;
-    ev.preventDefault();
-    const canvas = document.getElementById('dndMapCanvas');
-    dndDraggingId = tokenId;
-    el.classList.add('dndTokenDragging');
-    el.setPointerCapture(ev.pointerId);
-    const move = (mev) => {
-      const rect = canvas.getBoundingClientRect();
-      let x = ((mev.clientX - rect.left) / rect.width) * 100;
-      let y = ((mev.clientY - rect.top) / rect.height) * 100;
-      x = Math.max(0, Math.min(100, x));
-      y = Math.max(0, Math.min(100, y));
-      el.style.left = x + '%';
-      el.style.top = y + '%';
-      dndSendTokenMove(tokenId, x, y, false);
-    };
-    const up = (uev) => {
-      el.classList.remove('dndTokenDragging');
-      el.removeEventListener('pointermove', move);
-      el.removeEventListener('pointerup', up);
-      el.removeEventListener('pointercancel', up);
-      const rect = canvas.getBoundingClientRect();
-      let x = ((uev.clientX - rect.left) / rect.width) * 100;
-      let y = ((uev.clientY - rect.top) / rect.height) * 100;
-      x = Math.max(0, Math.min(100, x));
-      y = Math.max(0, Math.min(100, y));
-      dndSendTokenMove(tokenId, x, y, true); // ส่งตำแหน่งสุดท้ายเสมอตอนปล่อยมือ
-      dndDraggingId = null;
-    };
-    el.addEventListener('pointermove', move);
-    el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', up);
-  });
-}
-function renderDndMapTabs() {
-  const row = document.getElementById('dndMapTabsRow');
-  const label = document.getElementById('dndMapCurrentLabel');
-  if (!row) return;
-  const isDM = !!(dndYou && dndYou.isDM);
-  const current = dndMaps.find(m => m.id === dndCurrentMapId);
-  if (!isDM) {
-    row.innerHTML = '';
-    row.style.display = 'none';
-    if (label) {
-      label.style.display = dndMaps.length > 1 ? 'block' : 'none';
-      label.textContent = current ? `📍 แผนที่: ${current.name}` : '';
-    }
-    return;
-  }
-  row.style.display = 'flex';
-  if (label) label.style.display = 'none';
-  row.innerHTML = dndMaps.map(m => `
-    <div class="dndMapTab${m.id === dndCurrentMapId ? ' active' : ''}" data-switch="${m.id}" title="ดับเบิลคลิกเพื่อเปลี่ยนชื่อ">
-      ${escapeHtml(m.name)}
-      <span class="dndMapTabDel" data-mapdel="${m.id}" title="ลบแผนที่นี้">✕</span>
-    </div>
-  `).join('') + '<button type="button" id="dndMapAddBtn">+ สร้างแผนที่ใหม่</button>';
-  row.querySelectorAll('.dndMapTab').forEach(el => {
-    el.addEventListener('click', (ev) => {
-      if (ev.target.closest('[data-mapdel]')) return;
-      send({ type: 'dndMapSwitch', mapId: Number(el.dataset.switch) });
-    });
-    el.addEventListener('dblclick', (ev) => {
-      ev.stopPropagation();
-      const map = dndMaps.find(mm => mm.id === Number(el.dataset.switch));
-      const newName = prompt('เปลี่ยนชื่อแผนที่:', map ? map.name : '');
-      if (newName === null || !newName.trim()) return;
-      send({ type: 'dndMapRename', mapId: Number(el.dataset.switch), name: newName });
-    });
-  });
-  row.querySelectorAll('[data-mapdel]').forEach(el => {
-    el.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      if (dndMaps.length <= 1) { alert('ต้องมีอย่างน้อย 1 แผนที่เสมอ ลบแผนที่สุดท้ายไม่ได้'); return; }
-      if (confirm('ลบแผนที่นี้? มอนสเตอร์ทั้งหมดบนแผนที่นี้จะหายไปด้วย')) {
-        send({ type: 'dndMapDelete', mapId: Number(el.dataset.mapdel) });
-      }
-    });
-  });
-  const addBtn = document.getElementById('dndMapAddBtn');
-  if (addBtn) addBtn.onclick = () => {
-    const name = prompt('ตั้งชื่อแผนที่ใหม่:', `แผนที่ ${dndMaps.length + 1}`);
-    if (name === null) return;
-    send({ type: 'dndMapCreate', name });
-  };
-  const heading = document.getElementById('dndMapBgHeading');
-  if (heading) heading.textContent = `🖼️ พื้นหลังแผนที่ "${current ? current.name : ''}" (DM)`;
-}
-function renderDndMapBackground() {
-  const canvas = document.getElementById('dndMapCanvas');
-  if (!canvas) return;
-  if (dndMapBackground) {
-    canvas.style.backgroundImage = `linear-gradient(to right, rgba(255,255,255,0.07) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.07) 1px, transparent 1px), url("${dndMapBackground}")`;
-    canvas.style.backgroundSize = '10% 10%, 10% 10%, cover';
-    canvas.style.backgroundPosition = '0 0, 0 0, center';
-    canvas.style.backgroundRepeat = 'repeat, repeat, no-repeat';
-  } else {
-    canvas.style.backgroundImage = 'linear-gradient(to right, rgba(255,255,255,0.07) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.07) 1px, transparent 1px)';
-    canvas.style.backgroundSize = '10% 10%';
-    canvas.style.backgroundPosition = '0 0';
-    canvas.style.backgroundRepeat = 'repeat';
-  }
-}
-function renderDndMap() {
-  const canvas = document.getElementById('dndMapCanvas');
-  renderDndMapBackground();
-  if (!canvas) return;
-  const seenIds = new Set();
-  for (const t of dndTokens) {
-    seenIds.add(t.id);
-    let el = dndTokenEls[t.id];
-    if (!el) {
-      el = document.createElement('div');
-      el.className = 'dndToken';
-      el.innerHTML = '<span class="dndTokenInner"></span><span class="dndTokenLabel"></span><span class="dndTokenAcBadge"></span><span class="dndTokenStatusRow"></span><span class="dndTokenHpWrap"><span class="dndTokenHpBarFill"></span></span>';
-      canvas.appendChild(el);
-      dndTokenEls[t.id] = el;
-      dndAttachTokenDrag(el, t.id);
-    }
-    const canDrag = dndCanDragToken(t);
-    el.classList.toggle('dndTokenMine', canDrag && !(dndYou && dndYou.isDM));
-    el.classList.toggle('dndTokenDm', canDrag && !!(dndYou && dndYou.isDM));
-    if (dndDraggingId !== t.id) {
-      el.style.left = t.x + '%';
-      el.style.top = t.y + '%';
-    }
-    if (t.image) {
-      el.style.backgroundImage = `url('${t.image}')`;
-      el.style.backgroundColor = 'transparent';
-    } else {
-      el.style.backgroundImage = 'none';
-      el.style.backgroundColor = t.color || '#6fd3ff';
-    }
-    const inner = el.querySelector('.dndTokenInner');
-    inner.textContent = t.image ? '' : dndTokenInitials(t.name);
-    el.querySelector('.dndTokenLabel').textContent = t.name;
-    el.title = t.name + (t.kind === 'npc' ? ' (NPC)' : '');
-    el.querySelector('.dndTokenAcBadge').textContent = '🛡' + (t.ac != null ? t.ac : '-');
-    const maxHp = t.maxHp || 0;
-    const pct = maxHp > 0 ? Math.max(0, Math.min(100, Math.round((t.hp / maxHp) * 100))) : 0;
-    const fill = el.querySelector('.dndTokenHpBarFill');
-    const hpWrap = el.querySelector('.dndTokenHpWrap');
-    // ไม่บอกเลือดที่เหลือของมอนสเตอร์ (npc) บนแผนที่ให้ผู้เล่นเห็น — DM เท่านั้นที่เห็น
-    const hideHp = t.kind === 'npc' && !(dndYou && dndYou.isDM);
-    hpWrap.style.display = hideHp ? 'none' : '';
-    if (!hideHp) {
-      fill.style.width = pct + '%';
-      fill.className = 'dndTokenHpBarFill' + (pct <= 25 ? ' low' : pct <= 60 ? ' mid' : '');
-      hpWrap.title = `${t.hp}/${maxHp} HP`;
-    }
-    const statusRow = el.querySelector('.dndTokenStatusRow');
-    const statuses = t.statuses || [];
-    statusRow.innerHTML = statuses.map(s => {
-      const remainSec = s.expiresAt ? Math.max(0, Math.ceil((s.expiresAt - Date.now()) / 1000)) : 0;
-      return `<span class="dndTokenStatusDot" title="☠️ ${escapeHtml(s.name)}${s.note ? ' — ' + escapeHtml(s.note) : ''}${s.expiresAt ? ` (คูลดาวน์เหลือ ${remainSec}วิ)` : ''}"></span>`;
-    }).join('');
-    el.classList.toggle('dndTokenDead', Number(t.hp) <= 0);
-    el.classList.toggle('dndTokenLarge', t.size === 'large');
-    el.classList.toggle('dndTokenHuge', t.size === 'huge');
-  }
-  for (const id of Object.keys(dndTokenEls)) {
-    if (!seenIds.has(Number(id))) {
-      dndTokenEls[id].remove();
-      delete dndTokenEls[id];
-    }
-  }
-  renderDndMyTokenColorRow();
-  renderDndNpcColorRow();
-  renderDndMapNpcList();
-  renderDndMapTabs();
-  refreshOpenDndModals();
-}
-// รีเฟรชรายการในหน้าต่างแก้ไขที่เปิดค้างอยู่ (สถานะ/ท่าโจมตี) เมื่อมี state ใหม่เข้ามา โดยไม่ไปรีเซ็ตช่องกรอกข้อความที่ผู้ใช้กำลังพิมพ์อยู่
-function refreshOpenDndModals() {
-  if (dndDmEditTargetId != null) {
-    const p = dndPlayersList.find(pp => pp.id === dndDmEditTargetId);
-    if (p) {
-      renderDndStatusChips('dndEditStatusList', p.character.statuses || [], 'player', dndDmEditTargetId);
-      renderDmEditSkills(p);
-    }
-  }
-  if (dndTokenEditTargetId != null) {
-    const t = dndTokens.find(tt => tt.id === dndTokenEditTargetId && tt.kind === 'npc');
-    if (t) {
-      renderTokenAttackList(t);
-      renderDndStatusChips('dndTokenStatusList', t.statuses || [], 'token', dndTokenEditTargetId);
-    }
-  }
-}
-function renderDndMyTokenColorRow() {
-  const row = document.getElementById('dndMyTokenColorRow');
-  const mine = dndMyToken();
-  if (!row || !mine) return;
-  if (dndMyTokenColor === null) dndMyTokenColor = mine.color;
-  row.innerHTML = DND_TOKEN_COLORS.map(c =>
-    `<div class="dndTokenColorSwatch${c === mine.color ? ' active' : ''}" style="background:${c};" data-color="${c}"></div>`
-  ).join('');
-  row.querySelectorAll('.dndTokenColorSwatch').forEach(sw => {
-    sw.onclick = () => send({ type: 'dndTokenEdit', id: mine.id, updates: { color: sw.dataset.color } });
-  });
-}
-function renderDndNpcColorRow() {
-  const row = document.getElementById('dndNpcColorRow');
-  if (!row) return;
-  row.innerHTML = DND_TOKEN_COLORS.map(c =>
-    `<div class="dndTokenColorSwatch${c === dndNpcFormColor ? ' active' : ''}" style="background:${c};" data-color="${c}"></div>`
-  ).join('');
-  row.querySelectorAll('.dndTokenColorSwatch').forEach(sw => {
-    sw.onclick = () => { dndNpcFormColor = sw.dataset.color; renderDndNpcColorRow(); };
-  });
-}
-function renderDndMapNpcList() {
-  const box = document.getElementById('dndMapNpcList');
-  if (!box || !dndYou || !dndYou.isDM) { if (box) box.innerHTML = ''; return; }
-  const npcs = dndTokens.filter(t => t.kind === 'npc');
-  if (!npcs.length) { box.innerHTML = '<div class="dndRangeHint">ยังไม่มี token NPC</div>'; return; }
-  box.innerHTML = npcs.map(t => `
-    <div class="dndNpcRow">
-      <div class="dndNpcSwatch" style="${dndTokenBgStyle(t)}"></div>
-      <div class="dndNpcName">${escapeHtml(t.name)} <span style="color:#9aa4b2;">(HP ${t.hp}/${t.maxHp} · AC ${t.ac})</span></div>
-      <button type="button" class="dndNpcEditBtn" data-edit="${t.id}">✏️ แก้ไข</button>
-      <button type="button" class="dndNpcRollBtn" data-roll="${t.id}">🎲 ทอย</button>
-      <button type="button" class="dndNpcCopyBtn" data-copy="${t.id}">📋 คัดลอก</button>
-      <button type="button" data-del="${t.id}">ลบ</button>
-    </div>
-  `).join('');
-  box.querySelectorAll('button[data-edit]').forEach(btn => {
-    btn.onclick = () => openTokenEdit(Number(btn.dataset.edit));
-  });
-  box.querySelectorAll('button[data-roll]').forEach(btn => {
-    btn.onclick = (ev) => { flashBtn(ev.currentTarget); dndOpenMonsterRoll(npcs.find(n => n.id === Number(btn.dataset.roll))); };
-  });
-  box.querySelectorAll('button[data-copy]').forEach(btn => {
-    btn.onclick = (ev) => { flashBtn(ev.currentTarget); send({ type: 'dndTokenDuplicate', id: Number(btn.dataset.copy) }); };
-  });
-  box.querySelectorAll('button[data-del]').forEach(btn => {
-    btn.onclick = () => send({ type: 'dndTokenDelete', id: Number(btn.dataset.del) });
-  });
-}
-function dndReadImageFile(file, cb) {
-  if (!file) { cb(null); return; }
-  if (file.size > DND_MAX_TOKEN_IMAGE_BYTES) {
-    alert('ไฟล์รูปใหญ่เกินไป (จำกัด ~300KB) กรุณาเลือกรูปที่เล็กกว่านี้');
-    cb(undefined);
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = () => cb(reader.result);
-  reader.readAsDataURL(file);
-}
-document.getElementById('dndMyTokenImgInput').addEventListener('change', (ev) => {
-  const mine = dndMyToken();
-  if (!mine) return;
-  dndReadImageFile(ev.target.files[0], (dataUrl) => {
-    if (dataUrl === undefined) { ev.target.value = ''; return; }
-    if (dataUrl) send({ type: 'dndTokenEdit', id: mine.id, updates: { image: dataUrl } });
-    ev.target.value = '';
-  });
-});
-document.getElementById('dndMyTokenImgClearBtn').onclick = () => {
-  const mine = dndMyToken();
-  if (!mine) return;
-  send({ type: 'dndTokenEdit', id: mine.id, updates: { image: null } });
-};
-document.getElementById('dndTokenEditImgInput').addEventListener('change', (ev) => {
-  if (dndTokenEditTargetId == null) { ev.target.value = ''; return; }
-  dndReadImageFile(ev.target.files[0], (dataUrl) => {
-    if (dataUrl === undefined) { ev.target.value = ''; return; }
-    if (dataUrl) send({ type: 'dndTokenEdit', id: dndTokenEditTargetId, updates: { image: dataUrl } });
-    ev.target.value = '';
-  });
-});
-document.getElementById('dndTokenEditImgClearBtn').onclick = () => {
-  if (dndTokenEditTargetId == null) return;
-  send({ type: 'dndTokenEdit', id: dndTokenEditTargetId, updates: { image: null } });
-};
-document.getElementById('dndNpcImgInput').addEventListener('change', (ev) => {
-  dndReadImageFile(ev.target.files[0], (dataUrl) => {
-    if (dataUrl === undefined) { ev.target.value = ''; return; }
-    dndNpcFormImage = dataUrl || null;
-  });
-});
-function dndRenderMonsterPresetPreview() {
-  const key = document.getElementById('dndMonsterPresetSelect').value;
-  const m = DND_MONSTER_PRESETS.find(mm => mm.key === key);
-  document.getElementById('dndMonsterPresetPreview').textContent = m ? dndMonsterPresetSummary(m) : '';
-}
-document.getElementById('dndMonsterPresetSelect').addEventListener('change', dndRenderMonsterPresetPreview);
-dndRefreshMonsterPresetSelect();
-document.getElementById('dndMonsterPresetAddBtn').onclick = (ev) => {
-  const key = document.getElementById('dndMonsterPresetSelect').value;
-  const m = DND_MONSTER_PRESETS.find(mm => mm.key === key);
-  if (!m) return;
-  flashBtn(ev.currentTarget);
-  send({
-    type: 'dndTokenCreate',
-    token: Object.assign(
-      { name: m.name, color: m.color, image: null, maxHp: m.maxHp, ac: m.ac, size: m.size,
-        attacks: m.attacks, expReward: m.expReward, goldReward: m.goldReward, loot: m.loot },
-      m.stats,
-    ),
-  });
-};
-document.getElementById('dndNpcAddBtn').onclick = (ev) => {
-  const name = document.getElementById('dndNpcNameInput').value.trim();
-  const errEl = document.getElementById('dndNpcAddError');
-  if (!name) { errEl.textContent = 'กรุณาตั้งชื่อ NPC'; return; }
-  errEl.textContent = '';
-  flashBtn(ev.currentTarget);
-  send({
-    type: 'dndTokenCreate',
-    token: {
-      name, color: dndNpcFormColor, image: dndNpcFormImage,
-      maxHp: document.getElementById('dndNpcMaxHpInput').value,
-      ac: document.getElementById('dndNpcAcInput').value,
-      size: document.getElementById('dndNpcSizeInput').value,
-    },
-  });
-  document.getElementById('dndNpcNameInput').value = '';
-  document.getElementById('dndNpcImgInput').value = '';
-  document.getElementById('dndNpcMaxHpInput').value = '20';
-  document.getElementById('dndNpcAcInput').value = '10';
-  document.getElementById('dndNpcSizeInput').value = 'normal';
-  dndNpcFormImage = null;
-};
-
-// ---- DM: หน้าต่างแก้ไข token NPC/มอนสเตอร์ (HP/AC, ท่าโจมตี, สถานะดีบัฟ) ----
-function openTokenEdit(tokenId) {
-  const t = dndTokens.find(tt => tt.id === tokenId && tt.kind === 'npc');
-  if (!t) return;
-  dndTokenEditTargetId = tokenId;
-  document.getElementById('dndTokenEditTitle').textContent = `แก้ไข Token (DM) — ${t.name}`;
-  document.getElementById('dndTokenEditName').value = t.name;
-  document.getElementById('dndTokenEditHp').value = t.hp;
-  document.getElementById('dndTokenEditMaxHp').value = t.maxHp;
-  document.getElementById('dndTokenEditAc').value = t.ac;
-  document.getElementById('dndTokenEditSize').value = t.size || 'normal';
-  Object.keys(DND_STAT_LABELS).forEach(k => { document.getElementById('dndTokenStat-' + k).value = t[k] != null ? t[k] : 10; });
-  dndUpdateTokenStatMods();
-  document.getElementById('dndTokenEditExp').value = t.expReward || 0;
-  document.getElementById('dndTokenEditGold').value = t.goldReward || 0;
-  document.getElementById('dndTokenEditLoot').value = (t.loot || []).map(item => `${item.name} x${item.qty}`).join('\n');
-  document.getElementById('dndTokenEditError').textContent = '';
-  renderTokenAttackList(t);
-  renderDndStatusChips('dndTokenStatusList', t.statuses || [], 'token', tokenId);
-  document.getElementById('dndTokenEditOverlay').style.display = 'flex';
-}
-function dndUpdateTokenStatMods() {
-  Object.keys(DND_STAT_LABELS).forEach(k => {
-    const input = document.getElementById('dndTokenStat-' + k);
-    const modEl = document.getElementById('dndTokenStatMod-' + k);
-    if (!input || !modEl) return;
-    const score = Number(input.value) || 10;
-    const mod = dndAbilityMod(score);
-    modEl.textContent = `(${mod >= 0 ? '+' : ''}${mod})`;
-  });
-}
-Object.keys(DND_STAT_LABELS).forEach(k => {
-  const input = document.getElementById('dndTokenStat-' + k);
-  if (input) input.addEventListener('input', dndUpdateTokenStatMods);
-});
-function renderTokenAttackList(t) {
-  const box = document.getElementById('dndTokenAttackList');
-  const attacks = t.attacks || [];
-  if (!attacks.length) { box.innerHTML = '<div class="dndRangeHint">ยังไม่มีท่าโจมตี</div>'; return; }
-  box.innerHTML = attacks.map(a => {
-    const abilityMod = a.stat ? dndAbilityMod(Number(t[a.stat]) || 10) : 0;
-    const totalHit = (a.toHit || 0) + abilityMod;
-    const totalDmgMod = (a.dmgMod || 0) + abilityMod;
-    const hitStr = totalHit ? (totalHit > 0 ? `+${totalHit}` : `${totalHit}`) : '+0';
-    const statTag = a.stat ? ` (${DND_STAT_LABELS[a.stat]})` : '';
-    const dmgStr = a.dmgDie ? `${a.dmgCount}d${a.dmgDie}${totalDmgMod ? (totalDmgMod > 0 ? '+' + totalDmgMod : totalDmgMod) : ''}` : 'ไม่มีดาเมจ';
-    const aoeTag = a.aoeRadius > 0 ? ` · 💥 AOE รัศมี ${a.aoeRadius}` : '';
-    return `
-    <div class="dndAttackRow">
-      <div class="dndAttackInfo">
-        <div class="dndAttackName">${escapeHtml(a.name)}${statTag}</div>
-        <div class="dndAttackDice">ทอยโจมตี 1d20${hitStr} · ดาเมจ ${dmgStr}${aoeTag}${a.desc ? ' · ' + escapeHtml(a.desc) : ''}</div>
-      </div>
-      <button type="button" class="dndAttackUseBtn" data-use="${a.id}">🎲 ทอย</button>
-      <button type="button" class="dndAttackDelBtn" data-adel="${a.id}">ลบ</button>
-    </div>`;
-  }).join('');
-  box.querySelectorAll('button[data-use]').forEach(btn => {
-    const attack = attacks.find(a => a.id === Number(btn.dataset.use));
-    btn.onclick = (ev) => {
-      flashBtn(ev.currentTarget);
-      openDndTargetPicker({
-        mode: 'npcAttack',
-        tokenId: t.id,
-        attackId: Number(btn.dataset.use),
-        title: `เลือกเป้าหมายสำหรับ ${t.name}${attack ? ` — ${attack.name}` : ''}`
-      });
-    };
-  });
-  box.querySelectorAll('button[data-adel]').forEach(btn => {
-    btn.onclick = () => send({ type: 'dndTokenAttackDelete', tokenId: t.id, attackId: Number(btn.dataset.adel) });
-  });
-}
-document.getElementById('dndTokenEditSaveBtn').onclick = (ev) => {
-  if (dndTokenEditTargetId == null) return;
-  const name = document.getElementById('dndTokenEditName').value.trim();
-  if (!name) { document.getElementById('dndTokenEditError').textContent = 'กรุณาตั้งชื่อ'; return; }
-  flashBtn(ev.currentTarget);
-  send({
-    type: 'dndTokenEdit',
-    id: dndTokenEditTargetId,
-    updates: {
-      name,
-      hp: document.getElementById('dndTokenEditHp').value,
-      maxHp: document.getElementById('dndTokenEditMaxHp').value,
-      ac: document.getElementById('dndTokenEditAc').value,
-      size: document.getElementById('dndTokenEditSize').value,
-      str: document.getElementById('dndTokenStat-str').value,
-      dex: document.getElementById('dndTokenStat-dex').value,
-      con: document.getElementById('dndTokenStat-con').value,
-      int: document.getElementById('dndTokenStat-int').value,
-      wis: document.getElementById('dndTokenStat-wis').value,
-      cha: document.getElementById('dndTokenStat-cha').value,
-      expReward: document.getElementById('dndTokenEditExp').value,
-      goldReward: document.getElementById('dndTokenEditGold').value,
-      loot: document.getElementById('dndTokenEditLoot').value.split('\n').map(line => {
-        const m = line.trim().match(/^(.*?)(?:\s+x(\d+))?$/i);
-        return m && m[1] ? { name: m[1].trim(), qty: Number(m[2] || 1) } : null;
-      }).filter(Boolean),
-    },
-  });
-};
-document.getElementById('dndTokenEditCloseBtn').onclick = () => closeDndModals();
-// DM: บันทึกมอนสเตอร์ (ที่สร้างเองแบบกำหนดค่าเอง ไม่ได้มาจากพรีเซ็ต) เข้าคลัง DND_MONSTER_PRESETS
-// เพื่อให้เลือกกดสร้างซ้ำได้จากลิสต์ "คลังมอนสเตอร์สำเร็จรูป" ในครั้งต่อไป
-document.getElementById('dndTokenSaveAsPresetBtn').onclick = (ev) => {
-  if (dndTokenEditTargetId == null) return;
-  const t = dndTokens.find(tt => tt.id === dndTokenEditTargetId && tt.kind === 'npc');
-  const msgEl = document.getElementById('dndTokenSaveAsPresetMsg');
-  const name = document.getElementById('dndTokenEditName').value.trim();
-  if (!name) { msgEl.style.color = '#ff8080'; msgEl.textContent = 'กรุณาตั้งชื่อก่อนบันทึกเข้าคลัง'; return; }
-  flashBtn(ev.currentTarget);
-  const emoji = (document.getElementById('dndTokenEditEmoji').value || '👾').trim().slice(0, 4) || '👾';
-  const stats = {};
-  Object.keys(DND_STAT_LABELS).forEach(k => { stats[k] = Number(document.getElementById('dndTokenStat-' + k).value) || 10; });
-  const loot = document.getElementById('dndTokenEditLoot').value.split('\n').map(line => {
-    const m = line.trim().match(/^(.*?)(?:\s+x(\d+))?$/i);
-    return m && m[1] ? { name: m[1].trim(), qty: Number(m[2] || 1) } : null;
-  }).filter(Boolean);
-  const preset = {
-    key: dndSlugifyMonsterName(name), name, emoji,
-    color: (t && t.color) || dndNpcFormColor, size: document.getElementById('dndTokenEditSize').value,
-    maxHp: Number(document.getElementById('dndTokenEditMaxHp').value) || 1,
-    ac: Number(document.getElementById('dndTokenEditAc').value) || 0,
-    stats,
-    attacks: (t && t.attacks ? t.attacks : []).map(a => ({
-      name: a.name, desc: a.desc, stat: a.stat, toHit: a.toHit, dmgDie: a.dmgDie, dmgCount: a.dmgCount, dmgMod: a.dmgMod, aoeRadius: a.aoeRadius || 0,
-    })),
-    expReward: Number(document.getElementById('dndTokenEditExp').value) || 0,
-    goldReward: Number(document.getElementById('dndTokenEditGold').value) || 0,
-    loot,
-  };
-  DND_MONSTER_PRESETS.push(preset);
-  dndSaveCustomPresetsToStorage();
-  dndRefreshMonsterPresetSelect();
-  document.getElementById('dndMonsterPresetSelect').value = preset.key;
-  dndRenderMonsterPresetPreview();
-  msgEl.style.color = '#7ee87e';
-  msgEl.textContent = `✅ เพิ่ม "${emoji} ${name}" เข้าคลังมอนสเตอร์แล้ว — เลือกจากลิสต์ด้านบนเพื่อกดสร้างซ้ำได้เลยครั้งหน้า`;
-};
-document.getElementById('dndAtkAddBtn').onclick = (ev) => {
-  if (dndTokenEditTargetId == null) return;
-  const name = document.getElementById('dndAtkNameInput').value.trim();
-  if (!name) return;
-  flashBtn(ev.currentTarget);
-  send({
-    type: 'dndTokenAttackAdd',
-    tokenId: dndTokenEditTargetId,
-    attack: {
-      name,
-      stat: document.getElementById('dndAtkStatSelect').value,
-      toHit: document.getElementById('dndAtkToHitInput').value,
-      dmgDie: document.getElementById('dndAtkDieSelect').value,
-      dmgCount: document.getElementById('dndAtkCountInput').value,
-      dmgMod: document.getElementById('dndAtkModInput').value,
-      desc: document.getElementById('dndAtkDescInput').value,
-      aoeRadius: document.getElementById('dndAtkAoeRadiusInput').value,
-    },
-  });
-  document.getElementById('dndAtkNameInput').value = '';
-  document.getElementById('dndAtkStatSelect').value = '';
-  document.getElementById('dndAtkToHitInput').value = '0';
-  document.getElementById('dndAtkDieSelect').value = '0';
-  document.getElementById('dndAtkCountInput').value = '1';
-  document.getElementById('dndAtkModInput').value = '0';
-  document.getElementById('dndAtkDescInput').value = '';
-  document.getElementById('dndAtkAoeRadiusInput').value = '0';
-};
-document.getElementById('dndTokenStatusAddBtn').onclick = (ev) => {
-  if (dndTokenEditTargetId == null) return;
-  const name = document.getElementById('dndTokenStatusName').value.trim();
-  if (!name) return;
-  flashBtn(ev.currentTarget);
-  const durationSec = Math.max(0, Math.min(86400, Math.round(Number(document.getElementById('dndTokenStatusDuration').value) || 0)));
-  const tAtkMod = Number(document.getElementById('dndTokenStatusAtk').value) || 0;
-  const tDmgMod = Number(document.getElementById('dndTokenStatusDmg').value) || 0;
-  const tDefMod = Number(document.getElementById('dndTokenStatusDef').value) || 0;
-  const tTickValue = Number(document.getElementById('dndTokenStatusTick').value) || 0;
-  const tTickIntervalSec = Number(document.getElementById('dndTokenStatusTickInterval').value) || 0;
-  send({ type: 'dndStatusApply', status: { targetType: 'token', targetId: dndTokenEditTargetId, name, note: document.getElementById('dndTokenStatusNote').value, durationSec, atkMod: tAtkMod, dmgMod: tDmgMod, defMod: tDefMod, tickValue: tTickValue, tickIntervalSec: tTickIntervalSec } });
-  document.getElementById('dndTokenStatusName').value = '';
-  document.getElementById('dndTokenStatusNote').value = '';
-  document.getElementById('dndTokenStatusDuration').value = '';
-  document.getElementById('dndTokenStatusAtk').value = '';
-  document.getElementById('dndTokenStatusDmg').value = '';
-  document.getElementById('dndTokenStatusDef').value = '';
-  document.getElementById('dndTokenStatusTick').value = '';
-  document.getElementById('dndTokenStatusTickInterval').value = '';
-};
+// ================== ระบบแผนที่การต่อสู้ (Battle Map) ==================
+// ย้ายไปอยู่ที่ public/js/dnd-map.js ทั้งหมดแล้ว (token, fog of war, vision,
+// npc list, token editor ฯลฯ) — ไฟล์นั้นโหลดหลัง app.js นี้ใน index.html
+// ========================================================================
 
 function renderOverlay(state) {
   const overlay = document.getElementById('overlay');

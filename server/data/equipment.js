@@ -14,8 +14,10 @@ const DND_FORGE_FAIL_POLICY_LABELS = {
   break: 'พลาดแล้วไอเทมพัง (โบนัสตีบวกรีเซตกลับเป็น +0 ทั้งหมด)',
 };
 const DND_ITEM_EFFECT_TYPES = ['heal', 'revive', 'gold', 'equip', 'none'];
+// จำนวน "ช่อง" ไอเทมสูงสุดในกระเป๋าของตัวละคร 1 คน — นับตามชนิดไอเทมที่ไม่ซ้ำกัน (ชื่อเดียวกันกองรวมกันในช่องเดียว ไม่จำกัดจำนวนต่อกอง)
+const DND_BAG_CAPACITY = 20;
 module.exports = {
   DND_EQUIP_SLOTS, DND_EQUIP_SLOT_LABELS, DND_EQUIP_ICON_MAX_LEN,
   DND_SHOP_TYPES, DND_FORGE_FAIL_POLICIES, DND_FORGE_FAIL_POLICY_LABELS,
-  DND_ITEM_EFFECT_TYPES,
+  DND_ITEM_EFFECT_TYPES, DND_BAG_CAPACITY,
 };
