@@ -3,5 +3,5 @@
 
 list games
   - Hearth
-  - dndd: dungeonszy and dragon
+  - ตำนานผู้กล้า 
 test
