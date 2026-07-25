@@ -19,26 +19,34 @@
   }
 
   /* ---- Main menu (game selection) ---- */
-  #gameMenuList { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
-  .gameCard {
-    display: flex; align-items: center; gap: 12px; text-align: left;
-    background: #0d1117; border: 1px solid #2c3341; border-radius: 8px;
-    padding: 12px 14px; cursor: pointer; transition: border-color 0.15s, transform 0.1s;
+  #mainMenuScreen { max-width: 1100px; }
+  #gameMenuList {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 16px; margin-top: 14px;
   }
-  .gameCard:hover { border-color: #6fd3ff; transform: translateY(-1px); }
-  .gameCard.locked { cursor: not-allowed; opacity: 0.5; }
-  .gameCard.locked:hover { border-color: #2c3341; transform: none; }
-  .gameCardIcon { font-size: 26px; width: 34px; text-align: center; flex-shrink: 0; }
-  .gameCardInfo { flex: 1; min-width: 0; }
-  .gameCardName { font-weight: bold; font-size: 15px; color: #eee; }
-  .gameCardDesc { font-size: 12px; color: #9aa4b2; margin-top: 2px; }
+  .gameCard {
+    display: flex; flex-direction: column; text-align: left;
+    background: #0d1117; border: 1px solid #2c3341; border-radius: 14px;
+    cursor: pointer; transition: border-color 0.15s, transform 0.12s, box-shadow 0.15s;
+    overflow: hidden; position: relative;
+  }
+  .gameCard:hover { border-color: #6fd3ff; transform: translateY(-3px); box-shadow: 0 10px 24px rgba(0,0,0,0.35); }
+  .gameCard.locked { cursor: not-allowed; opacity: 0.62; }
+  .gameCard.locked:hover { border-color: #2c3341; transform: none; box-shadow: none; }
+  .gameCardImgWrap { width: 100%; aspect-ratio: 16 / 10; overflow: hidden; background: #161b22; }
+  .gameCardImg { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .gameCardBody { flex: 1; min-width: 0; padding: 12px 14px 4px 14px; }
+  .gameCardName { font-weight: bold; font-size: 16px; color: #eee; }
+  .gameCardDesc { font-size: 12px; color: #9aa4b2; margin-top: 4px; line-height: 1.4; }
   .gameCardBtn {
     font-size: 12px; font-weight: bold; background: #6fd3ff; color: #0a0a12;
-    padding: 6px 12px; border-radius: 6px; flex-shrink: 0;
+    padding: 8px 12px; border-radius: 0 0 12px 12px; text-align: center; margin-top: 10px;
   }
+  .gameCard.locked .gameCardBody { padding-bottom: 14px; }
   .gameCardBadge {
-    font-size: 11px; font-weight: bold; background: #2c3341; color: #9aa4b2;
-    padding: 6px 10px; border-radius: 6px; flex-shrink: 0; white-space: nowrap;
+    font-size: 11px; font-weight: bold; background: #161b22; color: #ffd76b;
+    padding: 4px 10px; border-radius: 20px; white-space: nowrap;
+    position: absolute; top: 10px; right: 10px; border: 1px solid #3a4150;
   }
   .linkBtn {
     background: none !important; border: none !important; color: #ff9d9d !important;

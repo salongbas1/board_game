@@ -1,0 +1,38 @@
+<svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="heartsBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3a0d16"/>
+      <stop offset="55%" stop-color="#7a1f2b"/>
+      <stop offset="100%" stop-color="#c73a4a"/>
+    </linearGradient>
+    <radialGradient id="heartsGlow" cx="50%" cy="38%" r="65%">
+      <stop offset="0%" stop-color="#ff9fb0" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#ff9fb0" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="heartShape" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#ffd9e0"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="300" fill="url(#heartsBg)"/>
+  <rect width="400" height="300" fill="url(#heartsGlow)"/>
+  <g fill="#ffffff" opacity="0.10" font-family="Georgia, serif">
+    <text x="30" y="60" font-size="34">♥</text>
+    <text x="345" y="50" font-size="26">♦</text>
+    <text x="40" y="255" font-size="24">♣</text>
+    <text x="350" y="260" font-size="30">♠</text>
+  </g>
+  <g transform="translate(200,158)">
+    <path d="M0 42 C -56 -6 -56 -66 -14 -66 C 4 -66 0 -46 0 -34 C 0 -46 -4 -66 14 -66 C 56 -66 56 -6 0 42 Z"
+          fill="url(#heartShape)" stroke="#7a1f2b" stroke-width="3"/>
+    <path d="M0 42 C -56 -6 -56 -66 -14 -66 C 4 -66 0 -46 0 -34"
+          fill="none" stroke="#ffffff" stroke-width="2" opacity="0.7"/>
+  </g>
+  <g fill="#ffffff" opacity="0.85">
+    <circle cx="80" cy="90" r="2.5"/>
+    <circle cx="320" cy="110" r="2"/>
+    <circle cx="300" cy="200" r="2.5"/>
+    <circle cx="95" cy="215" r="2"/>
+    <circle cx="200" cy="40" r="2"/>
+  </g>
+</svg>

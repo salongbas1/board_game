@@ -2519,7 +2519,7 @@ function dndUpdateEditStatMods() {
   if (delta !== 0) {
     const level = Math.max(1, Number(document.getElementById('dndEditLevel').value) || 1);
     const hpDelta = delta * level;
-    hint.textContent = `⚙️ ตัวปรับ CON เปลี่ยน → บันทึกแล้ว HP สูงสุดจะ${hpDelta > 0 ? '+' : ''}${hpDelta} (อิงกลไก D&D)`;
+    hint.textContent = `⚙️ ตัวปรับ CON เปลี่ยน → บันทึกแล้ว HP สูงสุดจะ${hpDelta > 0 ? '+' : ''}${hpDelta} (อิงกลไกเกม)`;
   } else {
     hint.textContent = '';
   }
@@ -2886,7 +2886,7 @@ function renderDndParty() {
           <span class="dndPCardName">${escapeHtml(p.character.charName || p.name)}${isMe ? ' (คุณ)' : ''}</span>
           <span class="dndPCardTag">DM</span>
         </div>
-        <div class="dndPCardMeta">🎛️ Dungeon Master — ควบคุมเกม${p.connected ? '' : ' · หลุดการเชื่อมต่อ'}</div>`;
+        <div class="dndPCardMeta">🎛️ DM — ควบคุมเกม${p.connected ? '' : ' · หลุดการเชื่อมต่อ'}</div>`;
       list.appendChild(div);
       return;
     }

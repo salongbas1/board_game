@@ -1,0 +1,33 @@
+<svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="pokerBg" cx="50%" cy="40%" r="75%">
+      <stop offset="0%" stop-color="#155238"/>
+      <stop offset="100%" stop-color="#062416"/>
+    </radialGradient>
+    <linearGradient id="pokerCard" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e8e8e8"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="300" fill="url(#pokerBg)"/>
+  <g transform="translate(255,175) rotate(-14)">
+    <rect x="-40" y="-58" width="80" height="116" rx="9" fill="#0d1117" stroke="#1f1f1f" stroke-width="1"/>
+  </g>
+  <g transform="translate(285,178) rotate(10)">
+    <rect x="-40" y="-58" width="80" height="116" rx="9" fill="url(#pokerCard)" stroke="#1f1f1f" stroke-width="1.5"/>
+    <text x="-25" y="-32" font-size="20" font-family="Georgia, serif" fill="#1f1f1f">A</text>
+    <text x="0" y="12" text-anchor="middle" font-size="32" font-family="Georgia, serif" fill="#1f1f1f">♠</text>
+  </g>
+  <g transform="translate(115,205)">
+    <ellipse cx="0" cy="34" rx="46" ry="12" fill="#000000" opacity="0.25"/>
+    <g>
+      <circle cx="0" cy="20" r="30" fill="#ff6b6b"/>
+      <circle cx="0" cy="20" r="30" fill="none" stroke="#ffffff" stroke-width="4" stroke-dasharray="6 7"/>
+      <circle cx="0" cy="0" r="30" fill="#ffd76b"/>
+      <circle cx="0" cy="0" r="30" fill="none" stroke="#ffffff" stroke-width="4" stroke-dasharray="6 7"/>
+      <circle cx="0" cy="-20" r="30" fill="#6fd3ff"/>
+      <circle cx="0" cy="-20" r="30" fill="none" stroke="#ffffff" stroke-width="4" stroke-dasharray="6 7"/>
+    </g>
+  </g>
+  <text x="200" y="70" text-anchor="middle" font-size="34" font-family="Georgia, serif" fill="#ffd76b" opacity="0.85">♠</text>
+</svg>
