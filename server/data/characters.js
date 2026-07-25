@@ -42,8 +42,9 @@ const DND_LEVEL_EXP = [
 ];
 const DND_POINT_BUY_TOTAL = 72;
 const DND_STARTING_GOLD_MAX = 200; // เพดานทองเริ่มต้นที่ผู้เล่นกรอกเองได้ตอนสร้างตัวละคร กัน exploit
+const DND_STARTING_SP = 1; // SP (Skill Point / Mana) เริ่มต้นของตัวละครทุกคน = 1 คงที่ — DM ปรับเพิ่ม/ลด (ทั้งปัจจุบันและสูงสุด) เองทีหลังผ่านหน้าต่างแก้ไขผู้เล่น
 module.exports = {
   DND_RACES, DND_CLASSES, DND_CLASS_STARTER_GEAR,
   DND_HAIR_STYLES, DND_HAIR_COLORS, DND_FACE_STYLES,
-  DND_LEVEL_EXP, DND_POINT_BUY_TOTAL, DND_STARTING_GOLD_MAX,
+  DND_LEVEL_EXP, DND_POINT_BUY_TOTAL, DND_STARTING_GOLD_MAX, DND_STARTING_SP,
 };

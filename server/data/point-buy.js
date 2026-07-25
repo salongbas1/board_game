@@ -45,9 +45,21 @@ function pointBuyCostOf(score) {
 }
 
 // ต้นทุนของการ "เพิ่มสเตตัสอีก 1 แต้ม" จากค่าปัจจุบัน — ใช้ตอนเลเวลอัพแล้วอัพสเตตัสทีละแต้ม
-function pointBuyStepCost(currentScore) {
+// bonus = โบนัสเผ่าพันธุ์/คลาสที่บวกเข้ากับค่าดิบอยู่แล้ว (ถ้ามี) — ราคาต้องอิง "ค่ารวม" (ดิบ+โบนัส)
+// ไม่ใช่ค่าดิบเฉยๆ เพราะไม่งั้นสเตตัสที่มีโบนัสเผ่า/คลาสอยู่แล้วจะได้แต้มถูกกว่าที่ควรจะเป็นเทียบกับค่ารวมจริงที่ได้
+function pointBuyStepCost(currentScore, bonus) {
+  const b = Math.round(Number(bonus)) || 0;
   const s = Math.max(POINT_BUY_MIN, Math.round(Number(currentScore)) || POINT_BUY_MIN);
-  return pointBuyCostOf(s + 1) - pointBuyCostOf(s);
+  return pointBuyCostOf(s + b + 1) - pointBuyCostOf(s + b);
+}
+
+// ต้นทุนรวมของการซื้อค่าดิบ (rawScore) เมื่อมีโบนัสเผ่า/คลาสคงที่ (bonus) บวกอยู่ด้วยเสมอ
+// ใช้ตอน "สร้างตัวละคร" (point-buy budget) — ค่าที่ต้องเสียแต้มคือส่วนต่างของค่ารวม (ดิบ+โบนัส) เทียบกับค่ารวมตอนเริ่ม (ฐาน+โบนัส)
+// โบนัสจากเผ่า/คลาสเองไม่เสียแต้ม (ได้มาฟรี) แต่ทุกแต้มที่ผู้เล่นซื้อเพิ่มจะถูกคิดราคาตามตำแหน่งค่ารวมจริงที่มันไปยืนอยู่
+function pointBuyCostForRaw(rawScore, bonus) {
+  const b = Math.round(Number(bonus)) || 0;
+  const s = Math.max(POINT_BUY_MIN, Math.round(Number(rawScore)) || POINT_BUY_MIN);
+  return pointBuyCostOf(s + b) - pointBuyCostOf(POINT_BUY_MIN + b);
 }
 
 module.exports = {
@@ -59,4 +71,5 @@ module.exports = {
   POINT_BUY_COST_PER_STEP_ABOVE_MAX,
   pointBuyCostOf,
   pointBuyStepCost,
+  pointBuyCostForRaw,
 };
