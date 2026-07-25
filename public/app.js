@@ -568,7 +568,7 @@ let dndSkills = [];
 let dndActiveTool = 'dice';
 const DND_STAT_LABELS = { str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA' };
 // ค่าตั้งต้นของ "โจมตีปกติ" ฝั่งไคลเอนต์ — ต้องตรงกับ DND_NORMAL_ATTACK_DEFAULT ฝั่งเซิร์ฟเวอร์ (server/dnd.js)
-const DND_NORMAL_ATTACK_DEFAULT_CLIENT = { name: 'โจมตีปกติ', stat: 'auto', dmgDie: 6, dmgCount: 1, atkBonus: 0, dmgBonus: 0 };
+const DND_NORMAL_ATTACK_DEFAULT_CLIENT = { name: 'โจมตีปกติ', stat: 'auto', dmgDie: 6, dmgCount: 1, atkBonus: 0, dmgBonus: 0, range: 0 };
 // ค่าเฉลี่ยคนทั่วไป ~10 — ตัวปรับ (modifier) คำนวณจาก floor((ค่าสเตตัส-10)/2) ยิ่งค่าสูงยิ่งได้ตัวปรับบวกมาก ยิ่งค่าต่ำยิ่งโดนหักลบตอนทอยเต๋า
 const DND_STAT_TIPS = {
   str: '💪 พละกำลัง (STR) — พลังกายภาพและระยะประชิด เพิ่มพลังโจมตีและดาเมจระยะประชิด ค่าเฉลี่ยคนทั่วไป ~10',
@@ -1127,6 +1127,8 @@ function applyNormalAttackToEditForm(na) {
   document.getElementById('dndEditNaDmgCount').value = cfg.dmgCount || DND_NORMAL_ATTACK_DEFAULT_CLIENT.dmgCount;
   document.getElementById('dndEditNaAtkBonus').value = cfg.atkBonus || 0;
   document.getElementById('dndEditNaDmgBonus').value = cfg.dmgBonus || 0;
+  const rangeEl = document.getElementById('dndEditNaRange');
+  if (rangeEl) rangeEl.value = cfg.range || 0;
 }
 document.getElementById('dndEditNaResetBtn').onclick = (ev) => {
   flashBtn(ev.currentTarget);
@@ -1269,7 +1271,7 @@ function openDndTargetPicker(action) {
   error.textContent = '';
   const rows = [];
   if (action.mode === 'npcAttack') {
-    dndPlayersList.filter(p => !p.isDM && p.connected !== false).forEach(p => {
+    dndPlayersList.filter(p => !p.isDM && p.connected !== false && dndPlayerInCurrentMap(p.id)).forEach(p => {
       rows.push({ type: 'player', id: p.id, name: p.character.charName || p.name, hp: p.character.hp, maxHp: p.character.maxHp, ac: p.character.ac });
     });
     hint.textContent = 'เลือกผู้เล่นที่จะโดนโจมตี';
@@ -1288,7 +1290,7 @@ function openDndTargetPicker(action) {
     // สกิลฟื้นฟู HP ธรรมดา (ไม่ใช่สกิลชุบชีวิต) เลือกเป้าหมายที่หมดสติไม่ได้เลย — ต้องใช้สกิลชุบชีวิตแทน
     const isPlainHeal = !!action.isHeal && !action.isCleanse && !action.isBuff && !action.isRevive;
     if (tMode === 'player' || tMode === 'both') {
-      dndPlayersList.filter(p => !p.isDM && p.connected !== false).forEach(p => {
+      dndPlayersList.filter(p => !p.isDM && p.connected !== false && dndPlayerInCurrentMap(p.id)).forEach(p => {
         const isMe = dndYou && p.id === dndYou.id;
         if (action.mode === 'normalAttack' && isMe) return; // โจมตีปกติเลือกโจมตีตัวเองไม่ได้
         const dead = Number(p.character.hp) <= 0;
@@ -1428,7 +1430,9 @@ function renderDndNormalAttackInfo() {
   const dmgCount = na.dmgCount || 1;
   const statTag = naStat === 'auto' ? 'STR/DEX' : DND_STAT_LABELS[naStat];
   const nameTag = na.name || DND_NORMAL_ATTACK_DEFAULT_CLIENT.name;
-  el.innerHTML = `⚔️ ${escapeHtml(nameTag)} (${statTag})<br>🎯 โจมตี: <b>1d20 ${modStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b><br>💥 ดาเมจ: <b>${dmgCount}d${dmgDie} ${dmgModStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b>`;
+  const naRange = Number(na.range) || 0;
+  const rangeTag = naRange > 0 ? `<br>📏 ระยะโจมตี: <b>${naRange}</b>` : '';
+  el.innerHTML = `⚔️ ${escapeHtml(nameTag)} (${statTag})<br>🎯 โจมตี: <b>1d20 ${modStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b><br>💥 ดาเมจ: <b>${dmgCount}d${dmgDie} ${dmgModStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b>${rangeTag}`;
 }
 
 function amIDead() {
@@ -2839,6 +2843,7 @@ document.getElementById('dndDmEditSaveBtn').onclick = (ev) => {
         dmgCount: document.getElementById('dndEditNaDmgCount').value,
         atkBonus: document.getElementById('dndEditNaAtkBonus').value,
         dmgBonus: document.getElementById('dndEditNaDmgBonus').value,
+        range: document.getElementById('dndEditNaRange').value,
       },
     },
   });
@@ -3020,6 +3025,8 @@ function renderDndState(state) {
   dndVisionEnabled = !!state.visionEnabled;
   dndVisionTypeLabels = state.visionTypeLabels || dndVisionTypeLabels;
   dndVisionDefaults = state.visionDefaults || dndVisionDefaults;
+  dndPartyVisionShared = !!state.partyVisionShared;
+  dndPartyVisionGroups = Array.isArray(state.partyVisionGroups) ? state.partyVisionGroups : [];
   dndShops = state.shops || dndShops;
   dndForgeFailPolicyLabels = state.forgeFailPolicyLabels || dndForgeFailPolicyLabels;
   dndItemEffects = state.itemEffects || [];
