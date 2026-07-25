@@ -405,6 +405,13 @@
         <h3>🗺️ แผนที่การต่อสู้</h3>
         <div id="dndMapTabsRow"></div>
         <div id="dndMapCurrentLabel" style="display:none;"></div>
+        <div id="dndMapPlayersDmRow" style="display:none;">
+          <div class="dndFieldRow" style="align-items:center;">
+            <b style="color:#ffd76b; font-size:12px;">👥 ผู้เล่นในแผนที่นี้:</b>
+            <span class="dndRangeHint">ไม่เลือกใครเลย = ยังไม่มีใครอยู่ในแผนที่นี้ (ทุกคนจะเห็นแผนที่มืดสนิทจนกว่าจะถูกเลือก)</span>
+          </div>
+          <div id="dndMapPlayersAssignBox" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;"></div>
+        </div>
         <div id="dndMapHint">ลาก token เพื่อจัดตำแหน่ง — ผู้เล่นลากได้เฉพาะ token ตัวเอง, DM ลากได้ทุก token</div>
         <div id="dndMapCanvasWrap">
           <div id="dndMapCanvas"></div>
@@ -412,6 +419,14 @@
         </div>
         <div id="dndVisionDmRow" style="display:none;">
           <label class="dndLockRow"><input type="checkbox" id="dndVisionEnabledToggle"> 👁️ เปิดระบบวิสัยทัศน์ผู้เล่น (Fog of War) — นอกระยะวิสัยทัศน์ ผู้เล่นจะมองไม่เห็นอะไรเลย (DM เห็นแผนที่เต็มเสมอ)</label>
+          <label class="dndLockRow"><input type="checkbox" id="dndPartyVisionSharedToggle"> 👥 แชร์วิสัยทัศน์ในปาร์ตี้ — รวมพื้นที่มองเห็นของเพื่อนร่วมทีมเข้าด้วยกัน (คนหมดสติ/ตายไม่นับเป็นแหล่งวิสัยทัศน์)</label>
+          <div id="dndPartyVisionSubRow" style="display:none; margin-left:22px; margin-top:4px;">
+            <div class="dndFieldRow" style="align-items:center; gap:8px;">
+              <button type="button" id="dndPartyVisionGroupAddBtn">+ เพิ่มกรุ๊ป</button>
+              <span class="dndRangeHint">ผู้เล่นแต่ละคนอยู่ได้แค่กรุ๊ปเดียว — คนที่ไม่อยู่กรุ๊ปไหนเลยจะเห็นแค่รอบ token ตัวเอง</span>
+            </div>
+            <div id="dndPartyVisionGroupsBox"></div>
+          </div>
         </div>
         <div id="dndWallDmRow" style="display:none;">
           <button type="button" id="dndWallModeToggleBtn">🧱 โหมดวาดกำแพง: ปิด</button>
@@ -707,6 +722,9 @@
     <div class="dndFieldRow">
       <div class="dndField"><label>โบนัสทอยตี ±</label><input id="dndEditNaAtkBonus" type="number" min="-100" max="100"></div>
       <div class="dndField"><label>โบนัสดาเมจ ±</label><input id="dndEditNaDmgBonus" type="number" min="-100" max="100"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ระยะโจมตี (0 = ไม่จำกัด)</label><input id="dndEditNaRange" type="number" min="0" max="100" placeholder="0"></div>
     </div>
     <button type="button" id="dndEditNaResetBtn" class="dndDmEditCancelBtn" style="margin-bottom:10px;">↺ รีเซ็ตโจมตีปกติเป็นค่าเริ่มต้น</button>
     <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">✨ สกิลของผู้เล่นคนนี้</h4>

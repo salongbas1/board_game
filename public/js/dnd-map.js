@@ -19,6 +19,8 @@ let dndWallDrawStart = null; // จุดเริ่มลากตอนกำ
 let dndVisionEnabled = false;
 let dndVisionTypeLabels = { normal: 'ปกติ', dark: 'มองในที่มืด (Darkvision)' };
 let dndVisionDefaults = { normal: 24, dark: 42 };
+let dndPartyVisionShared = false;   // DM เปิด/ปิด "แชร์วิสัยทัศน์ในปาร์ตี้" — รวมพื้นที่มองเห็นของเพื่อนร่วมทีมเข้าด้วยกัน
+let dndPartyVisionGroups = [];      // [{id, playerIds}] — แต่ละกรุ๊ปแชร์วิสัยทัศน์กันเองเท่านั้น ไม่เห็นของกรุ๊ปอื่น (1 คนอยู่ได้กรุ๊ปเดียว)
 let dndTokenEls = {};       // id -> DOM element, so drags/redraws don't rebuild nodes needlessly
 let dndDraggingId = null;   // id ของ token ที่กำลังลากอยู่ตอนนี้ (กันไม่ให้ state ที่ค้างมาจาก server มาแย่งตำแหน่งระหว่างลาก)
 let dndMyTokenColor = null;
@@ -39,6 +41,53 @@ document.getElementById('dndMapBgClearBtn').onclick = () => send({ type: 'dndMap
 document.getElementById('dndVisionEnabledToggle').addEventListener('change', (ev) => {
   send({ type: 'dndVisionToggle', enabled: ev.target.checked });
 });
+
+// ---- toggle เปิด/ปิด "แชร์วิสัยทัศน์ในปาร์ตี้" + จัดการกรุ๊ปแชร์วิสัยทัศน์ (สร้าง/ลบ/เลือกสมาชิก) ----
+document.getElementById('dndPartyVisionSharedToggle').addEventListener('change', (ev) => {
+  send({ type: 'dndPartyVisionToggle', enabled: ev.target.checked });
+});
+document.getElementById('dndPartyVisionGroupAddBtn').addEventListener('click', () => {
+  send({ type: 'dndPartyVisionGroupCreate' });
+});
+// แผงควบคุมฝั่ง DM: เปิด/ปิด sub-row ตามค่า state ปัจจุบัน + วาดกรุ๊ปแต่ละกรุ๊ปพร้อม checkbox เลือกสมาชิก (1 คนอยู่ได้กรุ๊ปเดียว — เลือกในกรุ๊ปอื่นจะถูกเอาออกจากกรุ๊ปเดิมให้อัตโนมัติฝั่งเซิร์ฟเวอร์)
+function renderDndPartyVisionControls() {
+  const isDM = !!(dndYou && dndYou.isDM);
+  const sharedToggle = document.getElementById('dndPartyVisionSharedToggle');
+  const subRow = document.getElementById('dndPartyVisionSubRow');
+  const groupsBox = document.getElementById('dndPartyVisionGroupsBox');
+  if (!isDM || !sharedToggle || !subRow || !groupsBox) return;
+  if (document.activeElement !== sharedToggle) sharedToggle.checked = dndPartyVisionShared;
+  subRow.style.display = dndPartyVisionShared ? 'block' : 'none';
+  if (!dndPartyVisionShared) return;
+  const groups = dndPartyVisionGroups || [];
+  groupsBox.innerHTML = groups.length ? '' : '<div class="dndRangeHint">ยังไม่มีกรุ๊ป — กด "+ เพิ่มกรุ๊ป" เพื่อสร้างกรุ๊ปแรก คนที่ไม่ได้อยู่กรุ๊ปไหนจะเห็นแค่รอบ token ตัวเอง</div>';
+  groups.forEach((g, i) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:8px; margin-top:6px;';
+    const assigned = new Set(g.playerIds || []);
+    const chips = dndPlayersList.filter(p => !p.isDM).map(p => {
+      const label = escapeHtml(p.character.charName || p.name);
+      const checked = assigned.has(p.id) ? 'checked' : '';
+      return `<label class="dndAssignChip"><input type="checkbox" data-pvgid="${g.id}" data-pvid="${p.id}" ${checked}> ${label}</label>`;
+    }).join('');
+    wrap.innerHTML = `<div class="dndFieldRow" style="align-items:center; justify-content:space-between; margin-bottom:6px;">
+      <b style="color:#ffd76b; font-size:12px;">👥 กรุ๊ป ${i + 1}</b>
+      <button type="button" class="linkBtn" data-pvgdel="${g.id}" style="color:#ff8080;">ลบกรุ๊ปนี้</button>
+    </div>
+    <div style="display:flex; flex-wrap:wrap; gap:8px;">${chips}</div>`;
+    groupsBox.appendChild(wrap);
+  });
+  groupsBox.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.onchange = () => {
+      const groupId = Number(cb.dataset.pvgid);
+      const ids = Array.from(groupsBox.querySelectorAll(`input[data-pvgid="${groupId}"]:checked`)).map(el => Number(el.dataset.pvid));
+      send({ type: 'dndPartyVisionGroupPlayersUpdate', groupId, playerIds: ids });
+    };
+  });
+  groupsBox.querySelectorAll('button[data-pvgdel]').forEach(btn => {
+    btn.onclick = () => send({ type: 'dndPartyVisionGroupDelete', groupId: Number(btn.dataset.pvgdel) });
+  });
+}
 
 // ================== กำแพง (Wall): DM วาดเส้นกำแพงลงบนแผนที่ ==================
 // เก็บพิกัดเป็น % ของแผนที่เหมือน token (0-100 ทั้งสองแกน) ผ่าน SVG overlay ที่ใช้ viewBox 0 0 100 100
@@ -251,6 +300,11 @@ function dndMyToken() {
   if (!dndYou) return null;
   return dndTokens.find(t => t.kind === 'pc' && t.ownerId === dndYou.id) || null;
 }
+// เช็คว่าผู้เล่นคนนี้ "อยู่ในแผนที่" ที่กำลังแสดงอยู่ตอนนี้หรือไม่ — ต้องถูก DM เลือกไว้เท่านั้น (ไม่เลือกเลย = ยังไม่มีใครอยู่ในแผนที่นี้)
+function dndPlayerInCurrentMap(playerId) {
+  const current = dndMaps.find(m => m.id === dndCurrentMapId);
+  return !!(current && Array.isArray(current.playerIds) && current.playerIds.includes(Number(playerId)));
+}
 function dndCanDragToken(t) {
   if (!dndYou) return false;
   if (dndYou.isDM) return true;
@@ -313,6 +367,8 @@ function renderDndMapTabs() {
   if (!row) return;
   const isDM = !!(dndYou && dndYou.isDM);
   const current = dndMaps.find(m => m.id === dndCurrentMapId);
+  renderDndMapPlayersAssign();
+  renderDndPartyVisionControls();
   if (!isDM) {
     row.innerHTML = '';
     row.style.display = 'none';
@@ -361,6 +417,28 @@ function renderDndMapTabs() {
   const heading = document.getElementById('dndMapBgHeading');
   if (heading) heading.textContent = `🖼️ พื้นหลังแผนที่ "${current ? current.name : ''}" (DM)`;
 }
+// DM เลือกว่าผู้เล่นคนไหน "อยู่ในแผนที่" ที่กำลังแสดงอยู่ตอนนี้บ้าง — ไม่เลือกใครเลย = ทุกคนอยู่ในแผนที่นี้เหมือนพฤติกรรมเดิม
+function renderDndMapPlayersAssign() {
+  const wrap = document.getElementById('dndMapPlayersDmRow');
+  const box = document.getElementById('dndMapPlayersAssignBox');
+  if (!wrap || !box) return;
+  const isDM = !!(dndYou && dndYou.isDM);
+  if (!isDM) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  const current = dndMaps.find(m => m.id === dndCurrentMapId);
+  const assigned = new Set(Array.isArray(current && current.playerIds) ? current.playerIds : []);
+  box.innerHTML = dndPlayersList.filter(p => !p.isDM).map(p => {
+    const label = escapeHtml(p.character.charName || p.name);
+    const checked = assigned.has(p.id) ? 'checked' : '';
+    return `<label class="dndAssignChip"><input type="checkbox" data-pid="${p.id}" ${checked}> ${label}</label>`;
+  }).join('');
+  box.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.onchange = () => {
+      const ids = Array.from(box.querySelectorAll('input[type="checkbox"]:checked')).map(el => Number(el.dataset.pid));
+      send({ type: 'dndMapPlayersUpdate', mapId: dndCurrentMapId, playerIds: ids });
+    };
+  });
+}
 function renderDndMapBackground() {
   const canvas = document.getElementById('dndMapCanvas');
   if (!canvas) return;
@@ -378,31 +456,125 @@ function renderDndMapBackground() {
 }
 // วิสัยทัศน์ผู้เล่น (Fog of War): DM เห็นแผนที่เต็มเสมอ ผู้เล่นเห็นแค่รอบรัศมี token ตัวเอง นอกรัศมีมืดสนิท
 // รัศมีเป็นหน่วย % ของแผนที่เหมือน AOE (ดูคอมเมนต์ฝั่งเซิร์ฟเวอร์) — แปลงเป็นวงรีพิกเซลตามสัดส่วนจริงของแคนวาส (กว้าง/สูงไม่เท่ากัน)
+// กำแพงที่ DM วาดไว้ (dndWalls) จะบังวิสัยทัศน์ด้วย: คำนวณ "พื้นที่มองเห็นได้จริง" ด้วยเทคนิค shadow casting
+// (ยิงรังสีจากตำแหน่ง token ไปยังมุมกำแพงทุกจุด + รอบวงกลมแบบเว้นระยะสม่ำเสมอ หาจุดตัดกำแพงที่ใกล้ที่สุดของแต่ละรังสี)
+// แล้ววาดเป็น polygon ตัดรู mask ของหมอกแทนวงรีทึบเดิม — เพื่อให้แกน x/y ที่สัดส่วนไม่เท่ากันของแคนวาสไม่บิดมุมคำนวณผิด
+// จึงคำนวณทุกอย่างในพิกัด "ปกติแล้ว" (หาร x ด้วย rx, หาร y ด้วย ry ก่อน) ให้ขอบเขตวิสัยทัศน์กลายเป็นวงกลมหนึ่งหน่วยเสียก่อน
 function dndHideVisionFog() {
   const fog = document.getElementById('dndFogOverlay');
   if (fog) fog.style.display = 'none';
+}
+// แผนที่นี้ DM ไม่ได้เลือกให้ผู้เล่นคนนี้เข้ามา (ไม่มี token ตัวเองบนแผนที่ปัจจุบัน) — บังคับมืดสนิททั้งจอ ไม่ว่าจะเปิดระบบวิสัยทัศน์หรือไม่
+function dndShowFullDarkFog() {
+  const fog = document.getElementById('dndFogOverlay');
+  if (!fog) return;
+  fog.innerHTML = '';
+  fog.style.background = 'rgba(4,5,10,0.985)';
+  fog.style.display = 'block';
+}
+function dndIntersectRaySegment(dx, dy, ax, ay, ex, ey) {
+  // รังสี: (x,y) = t*(dx,dy), t>=0 จากจุดกำเนิด (0,0) ; เส้นกำแพง (segment): (x,y) = (ax,ay)+u*(ex,ey), u ใน [0,1]
+  const denom = dx * ey - dy * ex;
+  if (Math.abs(denom) < 1e-9) return null; // ขนานกัน ไม่ตัดกัน
+  const t = (ax * ey - ay * ex) / denom;
+  const u = (ax * dy - ay * dx) / denom;
+  if (t < 0 || u < 0 || u > 1) return null;
+  return t;
+}
+// คำนวณ polygon พื้นที่มองเห็นได้ (หน่วยพิกเซลจริงของแคนวาส) จากตำแหน่งกำเนิด + รัศมีวงรี + กำแพงทั้งหมด (พิกเซล)
+function dndComputeVisionPolygonPoints(originPx, rx, ry, segmentsPx) {
+  if (!(rx > 0) || !(ry > 0)) return null;
+  const norm = (x, y) => ({ x: (x - originPx.x) / rx, y: (y - originPx.y) / ry });
+  const segs = segmentsPx.map(s => {
+    const a = norm(s.x1, s.y1), b = norm(s.x2, s.y2);
+    return { ax: a.x, ay: a.y, ex: b.x - a.x, ey: b.y - a.y };
+  });
+  const EPS = 0.0003;
+  const angles = [];
+  segmentsPx.forEach(s => {
+    [[s.x1, s.y1], [s.x2, s.y2]].forEach(([px, py]) => {
+      const n = norm(px, py);
+      const ang = Math.atan2(n.y, n.x);
+      angles.push(ang - EPS, ang, ang + EPS);
+    });
+  });
+  const STEPS = 72; // ยิงรังสีรอบวงกลมทุก 5 องศา ให้ขอบวงกลม (จุดที่ไม่มีกำแพงบัง) ยังคงเรียบ
+  for (let i = 0; i < STEPS; i++) angles.push((i / STEPS) * Math.PI * 2);
+  angles.sort((a, b) => a - b);
+  const pts = [];
+  for (const ang of angles) {
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    let closest = 1; // ขอบเขตวิสัยทัศน์ = วงกลมหนึ่งหน่วยหลัง normalize แล้ว
+    for (const s of segs) {
+      const t = dndIntersectRaySegment(dx, dy, s.ax, s.ay, s.ex, s.ey);
+      if (t != null && t < closest) closest = t;
+    }
+    pts.push({ x: originPx.x + dx * closest * rx, y: originPx.y + dy * closest * ry });
+  }
+  return pts;
+}
+// สร้าง svg shape (ellipse หรือ polygon ถ้ามีกำแพงบัง) ของ "แหล่งวิสัยทัศน์" หนึ่งจุด — ใช้ทั้งกับ token ตัวเองและเพื่อนร่วมทีมตอนแชร์วิสัยทัศน์กัน
+function dndVisionShapeSvgFor(px, py, rx, ry, wallSegs) {
+  if (!wallSegs.length) return `<ellipse cx="${px}" cy="${py}" rx="${rx}" ry="${ry}"></ellipse>`;
+  const poly = dndComputeVisionPolygonPoints({ x: px, y: py }, rx, ry, wallSegs);
+  if (!poly || !poly.length) return `<ellipse cx="${px}" cy="${py}" rx="${rx}" ry="${ry}"></ellipse>`;
+  return `<polygon points="${poly.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}"></polygon>`;
 }
 function dndApplyVisionFog(xPct, yPct) {
   const canvas = document.getElementById('dndMapCanvas');
   const fog = document.getElementById('dndFogOverlay');
   if (!canvas || !fog) return;
   const isDM = !!(dndYou && dndYou.isDM);
-  if (isDM || !dndVisionEnabled) { dndHideVisionFog(); return; }
+  if (isDM) { dndHideVisionFog(); return; }
   const mine = dndMyToken();
-  if (!mine) { dndHideVisionFog(); return; }
+  if (!mine) { dndShowFullDarkFog(); return; } // DM ไม่ได้เลือกผู้เล่นคนนี้เข้าแผนที่นี้ — เห็นมืดสนิทเสมอ
+  if (!dndVisionEnabled) { dndHideVisionFog(); return; }
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) { dndHideVisionFog(); return; }
-  const radiusPct = Number.isFinite(mine.visionRadius) ? mine.visionRadius : (dndVisionDefaults[mine.visionType || 'normal'] || 24);
-  const rx = Math.max(4, (radiusPct / 100) * w);
-  const ry = Math.max(4, (radiusPct / 100) * h);
-  const px = (xPct / 100) * w;
-  const py = (yPct / 100) * h;
-  fog.style.background = `radial-gradient(ellipse ${rx}px ${ry}px at ${px}px ${py}px, transparent 0%, transparent 94%, rgba(4,5,10,0.985) 100%)`;
+  const wallSegs = (dndWalls || []).map(wall => ({
+    x1: (wall.x1 / 100) * w, y1: (wall.y1 / 100) * h,
+    x2: (wall.x2 / 100) * w, y2: (wall.y2 / 100) * h,
+  }));
+  const radiusPctFor = (tok) => Number.isFinite(tok.visionRadius) ? tok.visionRadius : (dndVisionDefaults[tok.visionType || 'normal'] || 24);
+  // แหล่งวิสัยทัศน์ของตัวเอง — ใช้ตำแหน่งสด (xPct,yPct) ที่ส่งเข้ามา (ระหว่างลากจะอัปเดตลื่นๆ)
+  const myRadiusPct = radiusPctFor(mine);
+  const myRx = Math.max(4, (myRadiusPct / 100) * w);
+  const myRy = Math.max(4, (myRadiusPct / 100) * h);
+  const myPx = (xPct / 100) * w;
+  const myPy = (yPct / 100) * h;
+  let shapeSvg = dndVisionShapeSvgFor(myPx, myPy, myRx, myRy, wallSegs);
+  // แชร์วิสัยทัศน์ในปาร์ตี้: หา "กรุ๊ป" ที่ตัวเองอยู่ (ถ้ามี) แล้วรวมพื้นที่มองเห็นของเพื่อนร่วมกรุ๊ปที่ยังไม่หมดสติเข้ามาด้วย — ไม่อยู่กรุ๊ปไหนเลย = เห็นแค่รอบ token ตัวเอง
+  if (dndPartyVisionShared) {
+    const myGroup = (dndPartyVisionGroups || []).find(g => (g.playerIds || []).includes(dndYou.id));
+    if (myGroup) {
+      const mateIds = new Set(myGroup.playerIds);
+      const mates = dndTokens.filter(t => t.kind === 'pc' && t.id !== mine.id && Number(t.hp) > 0 && mateIds.has(t.ownerId));
+      for (const mate of mates) {
+        const mRadiusPct = radiusPctFor(mate);
+        const mRx = Math.max(4, (mRadiusPct / 100) * w);
+        const mRy = Math.max(4, (mRadiusPct / 100) * h);
+        const mPx = (mate.x / 100) * w;
+        const mPy = (mate.y / 100) * h;
+        shapeSvg += dndVisionShapeSvgFor(mPx, mPy, mRx, mRy, wallSegs);
+      }
+    }
+  }
+  fog.innerHTML = `<svg width="100%" height="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <defs>
+      <filter id="dndFogEdgeBlur" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="5"></feGaussianBlur></filter>
+      <mask id="dndFogMask">
+        <rect x="0" y="0" width="${w}" height="${h}" fill="#fff"></rect>
+        <g fill="#000" filter="url(#dndFogEdgeBlur)">${shapeSvg}</g>
+      </mask>
+    </defs>
+    <rect x="0" y="0" width="${w}" height="${h}" fill="rgba(4,5,10,0.985)" mask="url(#dndFogMask)"></rect>
+  </svg>`;
+  fog.style.background = 'none';
   fog.style.display = 'block';
 }
 window.addEventListener('resize', () => {
   const mine = dndMyToken();
-  if (mine) dndApplyVisionFog(mine.x, mine.y); else dndHideVisionFog();
+  if (mine) dndApplyVisionFog(mine.x, mine.y); else dndApplyVisionFog(0, 0);
 });
 function renderDndMap() {
   const canvas = document.getElementById('dndMapCanvas');
@@ -477,7 +649,7 @@ function renderDndMap() {
   refreshOpenDndModals();
   const mine = dndMyToken();
   if (mine && dndDraggingId !== mine.id) dndApplyVisionFog(mine.x, mine.y);
-  else if (!mine) dndHideVisionFog();
+  else if (!mine) dndApplyVisionFog(0, 0);
 }
 // รีเฟรชรายการในหน้าต่างแก้ไขที่เปิดค้างอยู่ (สถานะ/ท่าโจมตี) เมื่อมี state ใหม่เข้ามา โดยไม่ไปรีเซ็ตช่องกรอกข้อความที่ผู้ใช้กำลังพิมพ์อยู่
 function refreshOpenDndModals() {

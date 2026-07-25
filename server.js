@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
 
-const PORT = process.env.PORT || 3300;
+const PORT = process.env.PORT || 3000;
 
 // ---------------- Mode config (เลือกได้ในห้องรอ) ----------------
 const MODES = {
