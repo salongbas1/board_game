@@ -24,6 +24,28 @@ module.exports = function createShopModule(ctx) {
     }))];
   }
 
+  // ---- ร้านห้องสมุด: DM สร้างร้านประเภท "library" — ขาย "สมุดเวทย์" ที่ผูกกับสกิลของ DM แต่ละเล่ม ----
+  // ผู้เล่นซื้อสมุดมาเก็บในกระเป๋าเหมือนไอเทมทั่วไป แล้วกดปุ่ม "ใช้" (อ่าน) เพื่อเรียนรู้สกิลที่ผูกไว้ทันที (สมุดหายไป 1 เล่ม)
+  // skillId ต้องอ้างอิงสกิลที่ DM สร้างไว้แล้วในระบบสกิล (server/dnd.js dndSkills) เท่านั้น ถึงจะใช้งานได้จริงตอนอ่าน
+  function dndSanitizeLibraryItem(raw) {
+    const r = (raw && typeof raw === 'object') ? raw : {};
+    const name = (r.name || '').toString().trim().slice(0, 40) || 'สมุดเวทย์';
+    const price = Math.max(0, Math.min(999999, Math.round(Number(r.price) || 0)));
+    const desc = (r.desc || '').toString().trim().slice(0, 150);
+    let stock = null;
+    if (r.stock !== null && r.stock !== undefined && r.stock !== '') {
+      const n = Math.max(0, Math.min(9999, Math.round(Number(r.stock) || 0)));
+      if (Number.isFinite(n)) stock = n;
+    }
+    const skillId = Math.max(0, Math.round(Number(r.skillId) || 0));
+    return { name, price, desc, stock, skillId };
+  }
+
+  function dndDefaultLibraryItems() {
+    // ไม่มีสมุดเริ่มต้นให้ เพราะต้องผูกกับสกิลที่ DM ออกแบบเองไว้ก่อนแล้วเท่านั้น (ยังไม่มีสกิลให้ผูกตอนเปิดร้านใหม่)
+    return [];
+  }
+
   // ---- ร้านตีบวก: DM สร้างร้านประเภท "forge" — ผู้เล่นเลือกอุปกรณ์ที่สวมใส่อยู่มาตีบวกทีละขั้นด้วยทอง ----
   // นโยบายเมื่อตีบวกพลาด: safe = ไม่มีอะไรเกิดขึ้นนอกจากเสียทอง, downgrade = ระดับตีบวกลดลง 1 ขั้น, break = ไอเทมพัง (รีเซตโบนัสตีบวกทั้งหมดกลับเป็น +0)
   function dndSanitizeForgeTier(raw) {
@@ -58,14 +80,14 @@ module.exports = function createShopModule(ctx) {
     const p = ctx.dndFindByWs(ws);
     if (!p) { ctx.dndSendError(ws, 'ไม่พบข้อมูลผู้เล่นของคุณในห้องนี้ ลองเข้าห้องใหม่อีกครั้ง'); return; }
     if (!p.isDM) { ctx.dndSendError(ws, 'เฉพาะ DM เท่านั้นที่เปิดร้านค้าได้'); return; }
-    const shopType = type === 'forge' ? 'forge' : 'item';
-    const cleanName = (name || '').toString().trim().slice(0, 40)
-      || (shopType === 'forge' ? `ร้านตีบวก ${ctx.shops.length + 1}` : `ร้านค้า ${ctx.shops.length + 1}`);
+    const shopType = type === 'forge' ? 'forge' : (type === 'library' ? 'library' : 'item');
+    const shopTypeLabel = shopType === 'forge' ? 'ร้านตีบวก' : (shopType === 'library' ? 'ห้องสมุด' : 'ร้านค้า');
+    const cleanName = (name || '').toString().trim().slice(0, 40) || `${shopTypeLabel} ${ctx.shops.length + 1}`;
     ctx.shops.push({
       id: ctx.nextShopId++, name: cleanName, type: shopType, closed: false,
-      items: shopType === 'forge' ? dndDefaultForgeItems() : dndDefaultShopItems(),
+      items: shopType === 'forge' ? dndDefaultForgeItems() : (shopType === 'library' ? dndDefaultLibraryItems() : dndDefaultShopItems()),
     });
-    ctx.dndAddLog(`🏪 DM เปิด${shopType === 'forge' ? 'ร้านตีบวก' : 'ร้านค้า'}ใหม่: "${cleanName}"`);
+    ctx.dndAddLog(`🏪 DM เปิด${shopTypeLabel}ใหม่: "${cleanName}"`);
   }
 
   function dndHandleShopRename(ws, shopId, name) {
@@ -109,8 +131,10 @@ module.exports = function createShopModule(ctx) {
     if (!payload || typeof payload !== 'object') return;
     const shop = ctx.shops.find(s => s.id === Number(shopId));
     if (!shop) { ctx.dndSendError(ws, 'ไม่พบร้านค้านี้แล้ว'); return; }
-    const cleanItem = shop.type === 'forge' ? dndSanitizeForgeTier(payload) : dndSanitizeShopItem(payload);
+    const cleanItem = shop.type === 'forge' ? dndSanitizeForgeTier(payload) : (shop.type === 'library' ? dndSanitizeLibraryItem(payload) : dndSanitizeShopItem(payload));
     shop.items.push(Object.assign({ id: ctx.nextShopItemId++ }, cleanItem));
+    // ร้านห้องสมุด: ผูกชื่อสมุดเข้ากับไอเทมใช้งานได้ประเภท "skill" ให้อัตโนมัติ ผู้เล่นจะกดปุ่ม "ใช้" ในกระเป๋าเพื่อเรียนสกิลได้ทันทีหลังซื้อ
+    if (shop.type === 'library' && ctx.dndUpsertSkillItemEffect) ctx.dndUpsertSkillItemEffect(cleanItem.name, cleanItem.skillId, cleanItem.desc);
     ctx.dndBroadcastState();
   }
 
@@ -147,6 +171,14 @@ module.exports = function createShopModule(ctx) {
     if (!item) return;
     if (item.stock !== null && item.stock <= 0) { ctx.dndSendError(ws, `${item.name} ในร้านหมดแล้ว`); return; }
     const c = p.character;
+    // ร้านห้องสมุด: ถ้าสกิลที่ผูกกับสมุดเวทย์เล่มนี้จำกัดคลาสไว้ และคลาสของผู้เล่นไม่ตรง ห้ามซื้อ (กันเสียทองฟรีกับของที่เรียนไม่ได้)
+    if (shop.type === 'library' && item.skillId) {
+      const skill = (ctx.skills || []).find(s => s.id === item.skillId);
+      if (skill && ctx.dndSkillClassAllowed && !ctx.dndSkillClassAllowed(skill, c.classKey)) {
+        ctx.dndSendError(ws, `"${item.name}" ผูกกับสกิล "${skill.name}" ซึ่งใช้ได้เฉพาะคลาส: ${ctx.dndAllowedClassesText(skill.allowedClasses)} — คลาสของคุณเรียนรู้สกิลนี้ไม่ได้ ซื้อไม่ได้`);
+        return;
+      }
+    }
     if ((c.gold || 0) < item.price) { ctx.dndSendError(ws, `ทองไม่พอซื้อ ${item.name} (ต้องการ ${item.price}, มี ${c.gold || 0})`); return; }
     if (!ctx.dndBagHasRoomFor(c, item.name)) { ctx.dndSendError(ws, `กระเป๋าเต็มแล้ว (${ctx.DND_BAG_CAPACITY} ช่อง) ซื้อ ${item.name} ไม่ได้ ลองใช้หรือขายไอเทมอื่นก่อน`); return; }
     c.gold = (c.gold || 0) - item.price;

@@ -1,10 +1,25 @@
 // ============================================================
-// ลำดับเทิร์นผู้เล่น+มอนสเตอร์ — DM จัดลำดับเอง (ลาก/เลื่อนขึ้นลง ไม่ทอย initiative) แล้วกดเลื่อนตาไปเรื่อยๆ วนลูป
+// ลำดับเทิร์นผู้เล่น+มอนสเตอร์ — ตอนกด "เริ่มเทิร์น" ระบบทอย initiative (d20 + DEX modifier) ให้ทุกตัว
+// จากผู้เล่นที่ DM ติ๊กเลือกไว้ว่าอยู่ในแผนที่ปัจจุบัน + มอนสเตอร์ทุกตัวบนแผนที่นั้น แล้วเรียงจากมากไปน้อย
+// (เสมอกันจะเทียบ DEX ดิบต่อ แล้วสุ่มถ้ายังเสมออยู่) จากนั้น DM ยังลาก/เลื่อนขึ้นลงจัดลำดับเองต่อได้ตามปกติ
+// ถ้าเริ่มเทิร์นไปแล้ว DM พึ่งติ๊กเพิ่มผู้เล่นเข้าแผนที่ปัจจุบัน (หรือวางมอนสเตอร์เพิ่ม) จะต่อท้ายลำดับให้ทันที ไม่แทรกกลางคิวตาม initiative
 // แยกออกมาจาก dnd.js: state (turnOrder/turnIndex) ถูกย้ายมาเก็บไว้ในโมดูลนี้เอง ไม่ใช่ตัวแปร module-level ของ dnd.js อีกต่อไป
-// รับ findByWs/sendError/addLog/getPlayers/getTokens/getCurrentMapId จาก dnd.js ผ่าน factory function createTurnOrder(...)
-// เพื่อเลี่ยง circular require (เหมือน server/dnd/game-time.js) — getPlayers/getTokens/getCurrentMapId ต้องเป็นฟังก์ชัน
-// (ไม่ใช่ค่าตรงๆ) เพราะ dndPlayers/dndTokens/dndCurrentMapId ใน dnd.js ถูกแทนที่ทั้งก้อนได้ (เช่นตอนโหลดไฟล์เซฟ)
+// รับ findByWs/sendError/addLog/getPlayers/getTokens/getCurrentMapId/getCurrentMap/mapAllowsPlayer จาก dnd.js ผ่าน factory function createTurnOrder(...)
+// เพื่อเลี่ยง circular require (เหมือน server/dnd/game-time.js) — ต้องเป็นฟังก์ชันทั้งหมด (ไม่ใช่ค่าตรงๆ)
+// เพราะ dndPlayers/dndTokens/dndCurrentMapId/dndMaps ใน dnd.js ถูกแทนที่ทั้งก้อนได้ (เช่นตอนโหลดไฟล์เซฟ)
 // ============================================================
+
+const { dndAbilityMod, dndRandInt } = require('./combat-math');
+
+// สุ่มเรียงลำดับ array แบบ Fisher–Yates (ไม่แก้ array เดิม คืน array ใหม่) — ยังใช้เป็นตัวเบรกไทตอน initiative เท่ากันเป๊ะ
+function dndShuffleArray(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
 // แต่ละช่องในลำดับเทิร์นเป็น entry รูปแบบ { kind: 'pc'|'npc', id } — 'pc' คือผู้เล่น (id = player id), 'npc' คือมอนสเตอร์/token บนแผนที่ (id = token id)
 // ต้องแยก kind เพราะ player id กับ token id คนละชุดตัวเลข อาจชนกันได้ ถ้าเทียบแค่ id เฉยๆ จะสับสนว่าเป็นใครกันแน่
@@ -20,10 +35,18 @@ function dndNormalizeTurnEntry(raw) {
 }
 
 // ---- factory: สร้าง instance ของระบบลำดับเทิร์น พร้อม state ของตัวเอง ----
-function createTurnOrder({ findByWs, sendError, addLog, getPlayers, getTokens, getCurrentMapId }) {
+function createTurnOrder({ findByWs, sendError, addLog, getPlayers, getTokens, getCurrentMapId, getCurrentMap, mapAllowsPlayer }) {
   let turnOrder = []; // array of entries { kind: 'pc'|'npc', id } ตามลำดับที่ DM ตั้งไว้
   let turnIndex = -1; // index ใน turnOrder ของตาปัจจุบัน, -1 = ยังไม่ได้เริ่ม/หยุดแล้ว
+  // นับ "รอบตา" ปัจจุบันแบบไม่ซ้ำ (เพิ่มขึ้นทุกครั้งที่ตาเปลี่ยน ไม่ว่าจะเป็นตอนกด "เริ่มเทิร์น" หรือ "ตาถัดไป")
+  // ใช้แยกแยะว่า "ตานี้" กับ "ตาก่อนหน้าที่ index อาจวนกลับมาเลขเดิม" เป็นคนละตากันจริงๆ — เอาไว้ให้ dnd.js เช็คว่าผู้เล่นขยับ token ไปแล้วหรือยังในตานี้
+  let stepId = 0;
 
+  // ผู้เล่นที่ DM ติ๊กเลือกไว้ว่า "อยู่ในแผนที่ปัจจุบัน" เท่านั้น (ไม่รวม DM เอง) — ใช้เป็นสระสำหรับสุ่มลำดับเทิร์นตอนกดเริ่ม
+  function playersInCurrentMap() {
+    const map = getCurrentMap();
+    return getPlayers().filter(pp => !pp.isDM && mapAllowsPlayer(map, pp.id));
+  }
   // เอา entry ที่อ้างถึงผู้เล่น/มอนสเตอร์ที่ไม่มีอยู่แล้วออกจากลำดับเทิร์น (เผื่อถูกเตะออก หรือมอนสเตอร์ถูกลบ/แผนที่ถูกลบระหว่างนับเทิร์นอยู่)
   function cleanTurnOrder() {
     const players = getPlayers();
@@ -42,6 +65,21 @@ function createTurnOrder({ findByWs, sendError, addLog, getPlayers, getTokens, g
     }
     const pp = getPlayers().find(pl => pl.id === e.id);
     return pp ? (pp.character.charName || pp.name) : '-';
+  }
+  // หา DEX ดิบของเจ้าของ entry (ผู้เล่นดูจาก character.dex, มอนสเตอร์ดูจาก token.dex) — ไม่เจอให้ถือว่า 10 (ตัวปรับ = 0) เหมือนค่าเริ่มต้นปกติ
+  function entryDex(e) {
+    if (e.kind === 'npc') {
+      const t = getTokens().find(tt => tt.id === e.id && tt.kind === 'npc');
+      return Number(t && t.dex) || 10;
+    }
+    const pp = getPlayers().find(pl => pl.id === e.id && !pl.isDM);
+    return Number(pp && pp.character && pp.character.dex) || 10;
+  }
+  // ทอย initiative แบบ D&D มาตรฐาน: 1d20 + ตัวปรับ DEX ของตัวละคร/มอนสเตอร์ตัวนั้น
+  function rollInitiative(e) {
+    const dex = entryDex(e);
+    const total = dndRandInt(1, 20) + dndAbilityMod(dex);
+    return { entry: e, total, dex };
   }
   function currentTurnEntry() {
     if (turnIndex < 0 || turnIndex >= turnOrder.length) return null;
@@ -80,23 +118,26 @@ function createTurnOrder({ findByWs, sendError, addLog, getPlayers, getTokens, g
   function handleTurnStart(ws) {
     const p = findByWs(ws);
     if (!p || !p.isDM) return;
-    // สำคัญ: ต้อง "ซิงค์" ทุกครั้งที่กดเริ่ม ไม่ใช่สร้างใหม่แค่ตอนลำดับว่างเปล่าเท่านั้น
-    // เพราะถ้าเคยกดเริ่ม/หยุดไปแล้วครั้งหนึ่ง (ตอนนั้นยังไม่มีมอนสเตอร์) turnOrder จะไม่ว่างอีกต่อไป
-    // แล้วพอ DM วางมอนสเตอร์เพิ่มทีหลังแล้วกดเริ่มใหม่ มอนสเตอร์จะไม่ถูกเติมเข้าลำดับเลยเพราะเงื่อนไข "ถ้าว่าง" ไม่จริงแล้ว
-    // เก็บลำดับที่ DM เคยจัดไว้สำหรับคนที่ยังอยู่ไว้ก่อน แล้วเติมผู้เล่น/มอนสเตอร์บนแผนที่นี้ที่ยังไม่มีในลำดับต่อท้ายให้อัตโนมัติ
-    cleanTurnOrder();
-    const existingKeys = new Set(turnOrder.map(e => `${e.kind}:${e.id}`));
-    const missingPlayers = getPlayers().filter(pp => !pp.isDM && !existingKeys.has(`pc:${pp.id}`)).map(pp => ({ kind: 'pc', id: pp.id }));
-    const missingNpcs = getTokens().filter(t => t.kind === 'npc' && t.mapId === getCurrentMapId() && !existingKeys.has(`npc:${t.id}`)).map(t => ({ kind: 'npc', id: t.id }));
-    turnOrder = [...turnOrder, ...missingPlayers, ...missingNpcs];
-    if (!turnOrder.length) { sendError(ws, 'ยังไม่มีผู้เล่นหรือมอนสเตอร์บนแผนที่นี้ให้เริ่มเทิร์น'); return; }
+    // ทุกครั้งที่กดเริ่ม ทอย initiative (1d20 + ตัวปรับ DEX) ใหม่ทั้งหมดจาก "ผู้เล่นที่ DM ติ๊กเลือกไว้ว่าอยู่ในแผนที่ปัจจุบัน" + มอนสเตอร์ทุกตัวบนแผนที่นี้
+    // (ไม่ใช่ผู้เล่นทุกคนในห้อง — ต้องถูกติ๊กเข้าแผนที่นี้ก่อนถึงจะเข้าคิวได้) เรียงจากคะแนนรวมมากไปน้อย
+    // เสมอกันเป๊ะเทียบ DEX ดิบต่อ (สูงกว่าไปก่อน) ถ้ายังเสมออยู่อีกค่อยสุ่มเรียง (dndShuffleArray) ตัดสิน
+    const pcEntries = playersInCurrentMap().map(pp => ({ kind: 'pc', id: pp.id }));
+    const npcEntries = getTokens().filter(t => t.kind === 'npc' && t.mapId === getCurrentMapId()).map(t => ({ kind: 'npc', id: t.id }));
+    const pool = [...pcEntries, ...npcEntries];
+    if (!pool.length) { sendError(ws, 'ยังไม่มีผู้เล่นหรือมอนสเตอร์บนแผนที่นี้ให้เริ่มเทิร์น'); return; }
+    const rolled = dndShuffleArray(pool).map(rollInitiative); // สุ่มก่อนทอยกันลำดับเดิมมีผลตอนเสมอกันเป๊ะทุกอย่าง
+    rolled.sort((a, b) => b.total - a.total || b.dex - a.dex);
+    turnOrder = rolled.map(r => r.entry);
     turnIndex = 0;
-    addLog(`🎯 เริ่มลำดับเทิร์น (${turnOrder.length} ตัว) — ตอนนี้เป็นตาของ ${turnEntryName(currentTurnEntry())}`);
+    stepId++; // ตาใหม่เสมอทุกครั้งที่กดเริ่มเทิร์น (รีเซตสิทธิ์ขยับ token ของทุกคน)
+    const rollSummary = rolled.map(r => `${turnEntryName(r.entry)} (${r.total})`).join(', ');
+    addLog(`🎲 ทอย initiative ใหม่ (1d20+DEX, ${turnOrder.length} ตัว): ${rollSummary} — ตอนนี้เป็นตาของ ${turnEntryName(currentTurnEntry())}`);
   }
   function handleTurnNext(ws) {
     const p = findByWs(ws);
     if (!p || !p.isDM || !turnOrder.length || turnIndex < 0) return;
     turnIndex = (turnIndex + 1) % turnOrder.length;
+    stepId++; // ตาใหม่ทุกครั้งที่กด "ตาถัดไป" — แม้ index จะวนกลับมาเลขเดิม (รอบใหม่) ก็นับเป็นตาใหม่
     addLog(`➡️ ตาถัดไป: ${turnEntryName(currentTurnEntry())}`);
   }
   function handleTurnStop(ws) {
@@ -108,11 +149,13 @@ function createTurnOrder({ findByWs, sendError, addLog, getPlayers, getTokens, g
 
   function getTurnOrder() { return turnOrder; }
   function getTurnIndex() { return turnIndex; }
+  function getStepId() { return stepId; }
 
   // ใช้ตอน dndHandleRestart — รีเซตลำดับเทิร์นกลับค่าเริ่มต้น
   function reset() {
     turnOrder = [];
     turnIndex = -1;
+    stepId = 0;
   }
 
   // ใช้ตอน dndSerializeState — ส่วนหนึ่งของไฟล์เซฟ
@@ -139,6 +182,7 @@ function createTurnOrder({ findByWs, sendError, addLog, getPlayers, getTokens, g
     handleTurnStop,
     getTurnOrder,
     getTurnIndex,
+    getStepId,
     reset,
     serialize,
     restore,

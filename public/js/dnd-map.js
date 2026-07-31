@@ -27,6 +27,7 @@ let dndMyTokenColor = null;
 let dndNpcFormColor = DND_TOKEN_COLORS[0];
 let dndNpcFormImage = null;
 let dndMapBackground = null;
+let dndMapGridSize = 10; // จำนวนช่องตาราง (grid) ต่อด้านของแผนที่ปัจจุบัน — DM ปรับได้ (ค่าเริ่มต้นเดิมคือ 10 ช่องคงที่)
 let dndMaps = [];
 let dndCurrentMapId = 1;
 let dndTokenEditTargetId = null;
@@ -73,6 +74,13 @@ document.getElementById('dndMapBgInput').addEventListener('change', ev => {
   readDndImageFile(ev.target.files[0], image => { if (image) send({ type: 'dndMapBackgroundUpdate', image }); ev.target.value = ''; });
 });
 document.getElementById('dndMapBgClearBtn').onclick = () => send({ type: 'dndMapBackgroundUpdate', image: null });
+
+// ---- ขนาดตาราง (grid) ของแผนที่ที่กำลังเลือกอยู่ (DM ปรับได้) ----
+document.getElementById('dndMapGridSizeInput').addEventListener('change', ev => {
+  const n = parseInt(ev.target.value, 10);
+  if (!Number.isFinite(n)) { ev.target.value = dndMapGridSize; return; }
+  send({ type: 'dndMapGridSizeUpdate', mapId: dndCurrentMapId, gridSize: n });
+});
 
 // ---- toggle เปิด/ปิดระบบวิสัยทัศน์ (fog of war) ----
 document.getElementById('dndVisionEnabledToggle').addEventListener('change', (ev) => {
@@ -172,9 +180,10 @@ function renderDndWalls() {
   const layer = dndGetMapWallLayer();
   if (!layer) return;
   const isDM = !!(dndYou && dndYou.isDM);
-  layer.innerHTML = dndWalls.map(w => (isDM
-    ? `<line x1="${w.x1}" y1="${w.y1}" x2="${w.x2}" y2="${w.y2}" class="dndWallHit" data-wall="${w.id}" vector-effect="non-scaling-stroke"></line>`
-    : '') + `<line x1="${w.x1}" y1="${w.y1}" x2="${w.x2}" y2="${w.y2}" class="dndWallLine" vector-effect="non-scaling-stroke"></line>`
+  if (!isDM) { layer.innerHTML = ''; return; } // ผู้เล่นไม่เห็นเส้นกำแพงเลย (แต่กำแพงยังบังสายตาได้ตามปกติผ่านการคำนวณ FOV)
+  layer.innerHTML = dndWalls.map(w =>
+    `<line x1="${w.x1}" y1="${w.y1}" x2="${w.x2}" y2="${w.y2}" class="dndWallHit" data-wall="${w.id}" vector-effect="non-scaling-stroke"></line>` +
+    `<line x1="${w.x1}" y1="${w.y1}" x2="${w.x2}" y2="${w.y2}" class="dndWallLine" vector-effect="non-scaling-stroke"></line>`
   ).join('');
   if (isDM) {
     layer.querySelectorAll('.dndWallHit').forEach(el => {
@@ -306,19 +315,38 @@ function playDndMapAttackAnim(data) {
       dndFlashToken(data.tgtTokenId, 'dndFxHit', 420);
     }
 
-    // ---- AOE: ขยายวงแหวนตามรัศมีที่ตั้งไว้ (ประมาณสัดส่วนคร่าว ๆ จากความกว้างแผนที่) + กระพริบ/เด้งตัวเลขให้ทุกเป้าหมายที่โดนลูกหลง ----
+    // ---- AOE: วาดพื้นที่ตามรูปแบบที่ตั้งไว้ — วงกลม (ขยายวงแหวนรอบเป้าหมายหลัก) หรือเส้นตรง (คานแสงจากผู้โจมตีไปเป้าหมายหลัก)
+    // ขนาดประมาณสัดส่วนคร่าว ๆ จากความกว้าง/สูงจริงของแผนที่บนจอ + กระพริบ/เด้งตัวเลขให้ทุกเป้าหมายที่โดนลูกหลง
     if (data.aoeRadius > 0) {
-      const ring = document.createElement('div');
-      ring.className = 'dndAtkAoeRing dndFxAoeRing';
       const canvas = document.getElementById('dndMapCanvas');
       const wpx = canvas ? canvas.clientWidth : 600;
-      const sizePx = Math.max(20, (data.aoeRadius / 100) * wpx * 2);
-      ring.style.width = sizePx + 'px';
-      ring.style.height = sizePx + 'px';
-      ring.style.left = tgtPos.x + '%';
-      ring.style.top = tgtPos.y + '%';
-      layer.appendChild(ring);
-      setTimeout(() => ring.remove(), 600);
+      const hpx = canvas ? canvas.clientHeight : 600;
+      if (data.aoeShape === 'line' && atkPos) {
+        const dxPx = (tgtPos.x - atkPos.x) / 100 * wpx;
+        const dyPx = (tgtPos.y - atkPos.y) / 100 * hpx;
+        const lengthPx = Math.max(4, Math.hypot(dxPx, dyPx));
+        const angleDeg = Math.atan2(dyPx, dxPx) * 180 / Math.PI;
+        const thicknessPx = Math.max(10, (data.aoeRadius / 100) * wpx * 2);
+        const beam = document.createElement('div');
+        beam.className = 'dndAtkAoeLine dndFxAoeLine';
+        beam.style.left = atkPos.x + '%';
+        beam.style.top = `calc(${atkPos.y}% - ${thicknessPx / 2}px)`;
+        beam.style.width = lengthPx + 'px';
+        beam.style.height = thicknessPx + 'px';
+        beam.style.transform = `rotate(${angleDeg}deg)`;
+        layer.appendChild(beam);
+        setTimeout(() => beam.remove(), 600);
+      } else {
+        const ring = document.createElement('div');
+        ring.className = 'dndAtkAoeRing dndFxAoeRing';
+        const sizePx = Math.max(20, (data.aoeRadius / 100) * wpx * 2);
+        ring.style.width = sizePx + 'px';
+        ring.style.height = sizePx + 'px';
+        ring.style.left = tgtPos.x + '%';
+        ring.style.top = tgtPos.y + '%';
+        layer.appendChild(ring);
+        setTimeout(() => ring.remove(), 600);
+      }
 
       (data.aoeHits || []).forEach(hitInfo => {
         const pos = dndTokenPosPct(hitInfo.tokenId);
@@ -337,16 +365,55 @@ function dndMyToken() {
   if (!dndYou) return null;
   return dndTokens.find(t => t.kind === 'pc' && t.ownerId === dndYou.id) || null;
 }
+// สัตว์อัญเชิญทั้งหมดที่เป็นของผู้เล่นคนนี้ (โมดูล 5: แผงควบคุมฝั่งผู้เล่น) — DM ไม่มี "ของตัวเอง" เพราะ DM ไม่ร่ายสกิล
+function dndMySummonTokens() {
+  if (!dndYou || dndYou.isDM) return [];
+  return dndTokens.filter(t => t.kind === 'npc' && !!t.summoned && t.ownerId === dndYou.id);
+}
+// entry ของลำดับเทิร์นที่กำลังถึงตาอยู่ตอนนี้ (ทั้ง pc และ npc) — ใช้ทั้งเช็คสิทธิ์ลาก/สั่งโจมตี และไฮไลต์ UI
+function dndCurrentTurnEntryClient() {
+  if (dndTurnIndexClient < 0 || dndTurnIndexClient >= dndTurnOrderClient.length) return null;
+  return dndTurnOrderClient[dndTurnIndexClient];
+}
+// ข้อความเวลาคงเหลือก่อนสัตว์อัญเชิญหมดอายุ (mm:ss) — null ถ้าไม่มีกำหนดหมดอายุ
+function dndSummonTimeLeftText(t) {
+  if (!t || !t.summonExpiresAt) return null;
+  const remain = Math.max(0, Math.ceil((t.summonExpiresAt - Date.now()) / 1000));
+  const m = Math.floor(remain / 60), s = remain % 60;
+  return `⏳${m}:${String(s).padStart(2, '0')}`;
+}
 // เช็คว่าผู้เล่นคนนี้ "อยู่ในแผนที่" ที่กำลังแสดงอยู่ตอนนี้หรือไม่ — ต้องถูก DM เลือกไว้เท่านั้น (ไม่เลือกเลย = ยังไม่มีใครอยู่ในแผนที่นี้)
 function dndPlayerInCurrentMap(playerId) {
   const current = dndMaps.find(m => m.id === dndCurrentMapId);
   return !!(current && Array.isArray(current.playerIds) && current.playerIds.includes(Number(playerId)));
 }
+// คืนข้อความเหตุผลที่ขยับ token นี้ไม่ได้ตอนนี้ เฉพาะเงื่อนไขเรื่อง "ตาเดิน" (ไม่รวมเรื่องเป็นเจ้าของ/ตายไปแล้ว) — null แปลว่าขยับได้
+// t ไม่ระบุ (undefined) = เช็คแบบเดิม (ตาตัวละครผู้เล่นเอง) เผื่อจุดอื่นเรียกไม่ส่ง token มา; ถ้าส่ง token kind:'npc' มา จะเช็คว่าถึงตาของสัตว์อัญเชิญตัวนั้นเป๊ะๆ แทน (คนละ entry กับตาตัวเอง)
+function dndTurnBlockReason(t) {
+  if (!dndYou || dndYou.isDM) return null;
+  if (dndTurnIndexClient < 0) return null; // ยังไม่กด "เริ่มเทิร์น" เลย ยังลากได้อิสระ
+  const isSummonEntry = !!(t && t.kind === 'npc');
+  const entry = dndCurrentTurnEntryClient();
+  const myEntryNow = !!entry && (isSummonEntry ? (entry.kind === 'npc' && entry.id === t.id) : (entry.kind === 'pc' && entry.id === dndYou.id));
+  if (!myEntryNow) return isSummonEntry ? 'ยังไม่ถึงตาของสัตว์อัญเชิญตัวนี้ รอให้ถึงตาก่อนถึงจะขยับได้' : 'ยังไม่ถึงตาคุณ รอให้ถึงตาก่อนถึงจะขยับ token ได้';
+  if (dndYou.movedThisTurn) return 'ขยับ token ได้แค่ครั้งเดียวต่อตา รอตาหน้าค่อยขยับใหม่';
+  return null;
+}
 function dndCanDragToken(t) {
   if (!dndYou) return false;
   if (dndYou.isDM) return true;
-  if (t.kind === 'pc' && t.ownerId === dndYou.id && Number(t.hp) <= 0) return false; // หมดสติ ลาก token ตัวเองไม่ได้
-  return t.kind === 'pc' && t.ownerId === dndYou.id;
+  const isMySummon = t.kind === 'npc' && !!t.summoned && t.ownerId === dndYou.id;
+  if (t.kind === 'pc') {
+    if (t.ownerId !== dndYou.id) return false;
+    if (Number(t.hp) <= 0) return false; // หมดสติ ลาก token ตัวเองไม่ได้
+  } else if (isMySummon) {
+    if (Number(t.hp) <= 0) return false; // สัตว์อัญเชิญหมดแรง (HP 0) ลากไม่ได้เหมือนกัน
+    if (typeof amIDead === 'function' && amIDead()) return false; // เจ้าของหมดสติ/ตายไปแล้ว สั่งสัตว์อัญเชิญไม่ได้เหมือนกัน (ตรงกับเงื่อนไขฝั่งเซิร์ฟเวอร์)
+  } else {
+    return false; // token คนอื่น/มอนสเตอร์ของ DM — ผู้เล่นทั่วไปลากไม่ได้
+  }
+  // กำลังนับเทิร์นอยู่ (ตั้งแต่กด "เริ่มเทิร์น") — ขยับได้เฉพาะตอนถึงตาของ entry นี้จริงๆ และขยับได้แค่ครั้งเดียวต่อตา
+  return !dndTurnBlockReason(t);
 }
 function dndTokenInitials(name) {
   return (name || '?').trim().slice(0, 2).toUpperCase();
@@ -360,7 +427,18 @@ function dndSendTokenMove(id, x, y) {
 function dndAttachTokenDrag(el, tokenId) {
   el.addEventListener('pointerdown', ev => {
     const t = dndTokens.find(tt => tt.id === tokenId);
-    if (!t || !dndCanDragToken(t)) return;
+    if (!t) return;
+    if (!dndCanDragToken(t)) {
+      // แจ้งเตือนเฉพาะตอนพยายามลาก token ของตัวเอง (ตัวละครหรือสัตว์อัญเชิญ) แต่ติดเงื่อนไขเรื่องตาเดิน
+      // (token คนอื่น/มอนสเตอร์ของ DM ไม่ต้องมีข้อความ เพราะลากไม่ได้อยู่แล้วเป็นปกติ)
+      const isMine = (t.kind === 'pc' && dndYou && t.ownerId === dndYou.id) || (t.kind === 'npc' && !!t.summoned && dndYou && t.ownerId === dndYou.id);
+      if (isMine && Number(t.hp) > 0) {
+        const reason = dndTurnBlockReason(t);
+        if (reason) showDndErrorToast(reason);
+        else if (t.kind === 'npc' && typeof amIDead === 'function' && amIDead()) showDndErrorToast(dndDeadMsgForMe());
+      }
+      return;
+    }
     ev.preventDefault();
     const canvas = document.getElementById('dndMapCanvas');
     dndDraggingId = tokenId;
@@ -479,20 +557,35 @@ function renderDndMapPlayersAssign() {
 function renderDndMapBackground() {
   const canvas = document.getElementById('dndMapCanvas');
   if (!canvas) return;
+  const cells = Number.isFinite(Number(dndMapGridSize)) && Number(dndMapGridSize) > 0 ? Number(dndMapGridSize) : 10;
+  // #dndMapCanvas ถูกล็อกสัดส่วนไว้ที่ 4:3 (กว้าง:สูง) ใน CSS เสมอ ไม่ใช่สี่เหลี่ยมจัตุรัส
+  // ถ้าใช้ % เท่ากันทั้งแกน x และ y ช่องตารางจะออกมาเป็นสี่เหลี่ยมผืนผ้า (ไม่ใช่สี่เหลี่ยมจัตุรัส) บนจอจริง
+  // ต้องคูณเปอร์เซ็นต์แกน y ด้วย 4/3 เพื่อชดเชยสัดส่วนแคนวาส ให้ช่องออกมาเป็นสี่เหลี่ยมจัตุรัสจริงบนหน้าจอ
+  const cellPctX = (100 / cells);
+  const cellPctY = cellPctX * (4 / 3);
+  const cellPct = cellPctX + '%';
+  const cellPctYStr = cellPctY + '%';
+  // ตั้งตัวแปร CSS จำนวนช่องตารางไว้ที่ตัวแคนวาส — .dndToken (ลูกของแคนวาส) จะ inherit ไปคำนวณขนาด token
+  // ให้เท่ากับ 1 ช่องพอดีเสมอ (ดู .dndToken ใน style.css — ใช้ตัวคูณ 4/3 แบบเดียวกันนี้กับแกนสูง)
+  canvas.style.setProperty('--dndGridCols', cells);
   if (dndMapBackground) {
     canvas.style.backgroundImage = `linear-gradient(to right, rgba(255,255,255,0.07) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.07) 1px, transparent 1px), url("${dndMapBackground}")`;
-    canvas.style.backgroundSize = '10% 10%, 10% 10%, cover';
+    canvas.style.backgroundSize = `${cellPct} ${cellPctYStr}, ${cellPct} ${cellPctYStr}, cover`;
     canvas.style.backgroundPosition = '0 0, 0 0, center';
     canvas.style.backgroundRepeat = 'repeat, repeat, no-repeat';
   } else {
     canvas.style.backgroundImage = 'linear-gradient(to right, rgba(255,255,255,0.07) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.07) 1px, transparent 1px)';
-    canvas.style.backgroundSize = '10% 10%';
+    canvas.style.backgroundSize = `${cellPct} ${cellPctYStr}`;
     canvas.style.backgroundPosition = '0 0';
     canvas.style.backgroundRepeat = 'repeat';
   }
+  const input = document.getElementById('dndMapGridSizeInput');
+  if (input && document.activeElement !== input) input.value = cells;
 }
 // วิสัยทัศน์ผู้เล่น (Fog of War): DM เห็นแผนที่เต็มเสมอ ผู้เล่นเห็นแค่รอบรัศมี token ตัวเอง นอกรัศมีมืดสนิท
-// รัศมีเป็นหน่วย % ของแผนที่เหมือน AOE (ดูคอมเมนต์ฝั่งเซิร์ฟเวอร์) — แปลงเป็นวงรีพิกเซลตามสัดส่วนจริงของแคนวาส (กว้าง/สูงไม่เท่ากัน)
+// tok.visionRadius ที่ได้จาก server เป็น % ของแผนที่ที่ "แปลงมาแล้ว" จากหน่วยจำนวนช่องตาราง (grid) ของแผนที่ปัจจุบัน
+// (ดูคอมเมนต์ dndPublicToken ฝั่งเซิร์ฟเวอร์ — ทำแบบนี้เพื่อให้รัศมีวิสัยทัศน์ครอบคลุมจำนวนช่องเท่าเดิมเสมอไม่ว่า DM จะปรับตารางเป็นเท่าไหร่)
+// ฝั่ง client แค่รับ % นี้มาแปลงเป็นวงรีพิกเซลตามสัดส่วนจริงของแคนวาส (กว้าง/สูงไม่เท่ากัน) ตามปกติ ไม่ต้องรู้เรื่องหน่วยช่องเลย
 // กำแพงที่ DM วาดไว้ (dndWalls) จะบังวิสัยทัศน์ด้วย: คำนวณ "พื้นที่มองเห็นได้จริง" ด้วยเทคนิค shadow casting
 // (ยิงรังสีจากตำแหน่ง token ไปยังมุมกำแพงทุกจุด + รอบวงกลมแบบเว้นระยะสม่ำเสมอ หาจุดตัดกำแพงที่ใกล้ที่สุดของแต่ละรังสี)
 // แล้ววาดเป็น polygon ตัดรู mask ของหมอกแทนวงรีทึบเดิม — เพื่อให้แกน x/y ที่สัดส่วนไม่เท่ากันของแคนวาสไม่บิดมุมคำนวณผิด
@@ -631,8 +724,11 @@ function renderDndMap() {
       dndAttachTokenDrag(el, t.id);
     }
     const canDrag = dndCanDragToken(t);
+    const isMySummonToken = t.kind === 'npc' && !!t.summoned && !!dndYou && t.ownerId === dndYou.id;
     el.classList.toggle('dndTokenMine', canDrag && !(dndYou && dndYou.isDM));
     el.classList.toggle('dndTokenDm', canDrag && !!(dndYou && dndYou.isDM));
+    // ขอบเส้นประ = สัตว์อัญเชิญของผู้เล่น (ต่างจาก NPC ทั่วไปของ DM ที่เป็นเส้นทึบ) ให้เห็นชัดตั้งแต่แรกเห็นว่าไม่ใช่มอนสเตอร์ของ DM
+    el.classList.toggle('dndTokenSummon', !!t.summoned);
     if (dndDraggingId !== t.id) {
       el.style.left = t.x + '%';
       el.style.top = t.y + '%';
@@ -646,15 +742,23 @@ function renderDndMap() {
     }
     const inner = el.querySelector('.dndTokenInner');
     inner.textContent = t.image ? '' : dndTokenInitials(t.name);
-    el.querySelector('.dndTokenLabel').textContent = t.name;
-    el.title = t.name + (t.kind === 'npc' ? ' (NPC)' : '');
+    // สัตว์อัญเชิญ: ติดไอคอน 🐾 หน้าชื่อบนแผนที่เสมอ ให้ทุกคนแยกออกจาก NPC ของ DM ได้ทันที; DM เห็นชื่อเจ้าของต่อท้ายด้วย (ผู้เล่นคนอื่นไม่เห็น กันสับสนเรื่องสิทธิ์)
+    const summonOwner = t.summoned ? dndPlayersList.find(pp => pp.id === t.ownerId) : null;
+    const summonOwnerName = summonOwner ? (summonOwner.character.charName || summonOwner.name) : null;
+    let labelText = t.name;
+    if (t.summoned) {
+      labelText = '🐾 ' + labelText;
+      if (dndYou && dndYou.isDM && summonOwnerName) labelText += ` (${summonOwnerName})`;
+    }
+    el.querySelector('.dndTokenLabel').textContent = labelText;
+    el.title = t.summoned ? `${t.name} — สัตว์อัญเชิญของ ${summonOwnerName || '?'}` : (t.name + (t.kind === 'npc' ? ' (NPC)' : ''));
     el.querySelector('.dndTokenAcBadge').textContent = '🛡' + (t.ac != null ? t.ac : '-');
     const maxHp = t.maxHp || 0;
     const pct = maxHp > 0 ? Math.max(0, Math.min(100, Math.round((t.hp / maxHp) * 100))) : 0;
     const fill = el.querySelector('.dndTokenHpBarFill');
     const hpWrap = el.querySelector('.dndTokenHpWrap');
-    // ไม่บอกเลือดที่เหลือของมอนสเตอร์ (npc) บนแผนที่ให้ผู้เล่นเห็น — DM เท่านั้นที่เห็น
-    const hideHp = t.kind === 'npc' && !(dndYou && dndYou.isDM);
+    // ไม่บอกเลือดที่เหลือของมอนสเตอร์ (npc) บนแผนที่ให้ผู้เล่นเห็น — DM เห็นได้ทุกตัว, เจ้าของสัตว์อัญเชิญเห็นเลือดของสัตว์ตัวเองได้ด้วย
+    const hideHp = t.kind === 'npc' && !(dndYou && (dndYou.isDM || isMySummonToken));
     hpWrap.style.display = hideHp ? 'none' : '';
     if (!hideHp) {
       fill.style.width = pct + '%';
@@ -682,6 +786,7 @@ function renderDndMap() {
   renderDndMyTokenColorRow();
   renderDndNpcColorRow();
   renderDndMapNpcList();
+  renderDndMySummonsPanel();
   renderDndMapTabs();
   refreshOpenDndModals();
   const mine = dndMyToken();
@@ -732,16 +837,22 @@ function renderDndMapNpcList() {
   if (!box || !dndYou || !dndYou.isDM) { if (box) box.innerHTML = ''; return; }
   const npcs = dndTokens.filter(t => t.kind === 'npc');
   if (!npcs.length) { box.innerHTML = '<div class="dndRangeHint">ยังไม่มี token NPC</div>'; return; }
-  box.innerHTML = npcs.map(t => `
+  box.innerHTML = npcs.map(t => {
+    // สัตว์อัญเชิญของผู้เล่น: ติดป้ายชื่อเจ้าของให้ DM เห็นชัด แยกจากมอนสเตอร์ทั่วไปที่ DM สร้างเอง (ไม่มี ownerId)
+    const owner = t.summoned ? dndPlayersList.find(p => p.id === t.ownerId) : null;
+    const ownerName = owner ? (owner.character.charName || owner.name) : '?';
+    const ownerTag = t.summoned ? ` <span style="color:#7ee8fa;">🐾 อัญเชิญของ ${escapeHtml(ownerName)}</span>` : '';
+    return `
     <div class="dndNpcRow">
       <div class="dndNpcSwatch" style="${dndTokenBgStyle(t)}"></div>
-      <div class="dndNpcName">${escapeHtml(t.name)} <span style="color:#9aa4b2;">(HP ${t.hp}/${t.maxHp} · AC ${t.ac})</span></div>
+      <div class="dndNpcName">${escapeHtml(t.name)} <span style="color:#9aa4b2;">(HP ${t.hp}/${t.maxHp} · AC ${t.ac})</span>${ownerTag}</div>
       <button type="button" class="dndNpcEditBtn" data-edit="${t.id}">✏️ แก้ไข</button>
       <button type="button" class="dndNpcRollBtn" data-roll="${t.id}">🎲 ทอย</button>
       <button type="button" class="dndNpcCopyBtn" data-copy="${t.id}">📋 คัดลอก</button>
       <button type="button" data-del="${t.id}">ลบ</button>
     </div>
-  `).join('');
+  `;
+  }).join('');
   box.querySelectorAll('button[data-edit]').forEach(btn => {
     btn.onclick = () => openTokenEdit(Number(btn.dataset.edit));
   });
@@ -753,6 +864,50 @@ function renderDndMapNpcList() {
   });
   box.querySelectorAll('button[data-del]').forEach(btn => {
     btn.onclick = () => send({ type: 'dndTokenDelete', id: Number(btn.dataset.del) });
+  });
+}
+// ---- ผู้เล่น: แผงควบคุมสัตว์อัญเชิญของตัวเอง (โมดูล 5) ----
+// ซ่อนกล่องทั้งหมดถ้าเป็น DM หรือยังไม่มีสัตว์อัญเชิญตัวไหนอยู่เลย — ไม่โชว์กล่องเปล่าค้างหน้าจอ
+function renderDndMySummonsPanel() {
+  const wrap = document.getElementById('dndMySummonsBox');
+  const box = document.getElementById('dndMySummonsList');
+  if (!wrap || !box) return;
+  if (!dndYou || dndYou.isDM) { wrap.style.display = 'none'; box.innerHTML = ''; return; }
+  const mine = dndMySummonTokens();
+  if (!mine.length) { wrap.style.display = 'none'; box.innerHTML = ''; return; }
+  wrap.style.display = 'block';
+  const entry = dndCurrentTurnEntryClient();
+  box.innerHTML = mine.map(t => {
+    const isTurnNow = dndTurnIndexClient >= 0 && !!entry && entry.kind === 'npc' && entry.id === t.id;
+    const timeLeft = dndSummonTimeLeftText(t);
+    const timeHtml = timeLeft ? ` · <span class="dndSummonCd" data-summon-expires-at="${t.summonExpiresAt}">${timeLeft}</span>` : '';
+    const dead = Number(t.hp) <= 0;
+    return `
+    <div class="dndNpcRow dndMySummonRow${isTurnNow ? ' current' : ''}">
+      <div class="dndNpcSwatch" style="${dndTokenBgStyle(t)}"></div>
+      <div class="dndNpcName">${isTurnNow ? '🎯 ' : ''}${escapeHtml(t.name)} <span style="color:#9aa4b2;">(HP ${t.hp}/${t.maxHp} · AC ${t.ac}${timeHtml})</span>${dead ? ' <span style="color:#ff8080;">💀 หมดแรงแล้ว</span>' : ''}</div>
+      <button type="button" class="dndNpcRollBtn" data-roll="${t.id}"${dead ? ' disabled' : ''}>🎲 โจมตี</button>
+      <button type="button" class="dndSummonDismissBtn" data-dismiss="${t.id}">💨 ยกเลิก</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('button[data-roll]').forEach(btn => {
+    btn.onclick = (ev) => {
+      flashBtn(ev.currentTarget);
+      const t = mine.find(m => m.id === Number(btn.dataset.roll));
+      if (!t) return;
+      const reason = dndTurnBlockReason(t);
+      if (reason) { showDndErrorToast(reason); return; }
+      dndOpenMonsterRoll(t);
+    };
+  });
+  box.querySelectorAll('button[data-dismiss]').forEach(btn => {
+    btn.onclick = (ev) => {
+      flashBtn(ev.currentTarget);
+      const t = mine.find(m => m.id === Number(btn.dataset.dismiss));
+      if (confirm(`ยกเลิกอัญเชิญ "${t ? t.name : ''}" เลยไหม? เรียกกลับมาใหม่ไม่ได้จนกว่าจะร่ายสกิลอัญเชิญอีกครั้ง`)) {
+        send({ type: 'dndSummonDismiss', tokenId: Number(btn.dataset.dismiss) });
+      }
+    };
   });
 }
 function dndReadImageFile(file, cb) {
@@ -889,12 +1044,13 @@ function renderTokenAttackList(t) {
     const hitStr = totalHit ? (totalHit > 0 ? `+${totalHit}` : `${totalHit}`) : '+0';
     const statTag = a.stat ? ` (${DND_STAT_LABELS[a.stat]})` : '';
     const dmgStr = a.dmgDie ? `${a.dmgCount}d${a.dmgDie}${totalDmgMod ? (totalDmgMod > 0 ? '+' + totalDmgMod : totalDmgMod) : ''}` : 'ไม่มีดาเมจ';
-    const aoeTag = a.aoeRadius > 0 ? ` · 💥 AOE รัศมี ${a.aoeRadius}` : '';
+    const aoeTag = a.aoeRadius > 0 ? ` · 💥 AOE${a.aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${a.aoeRadius}` : '';
+    const statusTag = a.statusName ? ` · ☠️ ${escapeHtml(a.statusName)} (${a.statusChance || 100}%)` : '';
     return `
     <div class="dndAttackRow">
       <div class="dndAttackInfo">
         <div class="dndAttackName">${escapeHtml(a.name)}${statTag}</div>
-        <div class="dndAttackDice">ทอยโจมตี 1d20${hitStr} · ดาเมจ ${dmgStr}${aoeTag}${a.desc ? ' · ' + escapeHtml(a.desc) : ''}</div>
+        <div class="dndAttackDice">ทอยโจมตี 1d20${hitStr} · ดาเมจ ${dmgStr}${aoeTag}${statusTag}${a.desc ? ' · ' + escapeHtml(a.desc) : ''}</div>
       </div>
       <button type="button" class="dndAttackUseBtn" data-use="${a.id}">🎲 ทอย</button>
       <button type="button" class="dndAttackDelBtn" data-adel="${a.id}">ลบ</button>
@@ -970,7 +1126,7 @@ document.getElementById('dndTokenSaveAsPresetBtn').onclick = (ev) => {
     ac: Number(document.getElementById('dndTokenEditAc').value) || 0,
     stats,
     attacks: (t && t.attacks ? t.attacks : []).map(a => ({
-      name: a.name, desc: a.desc, stat: a.stat, toHit: a.toHit, dmgDie: a.dmgDie, dmgCount: a.dmgCount, dmgMod: a.dmgMod, aoeRadius: a.aoeRadius || 0,
+      name: a.name, desc: a.desc, stat: a.stat, toHit: a.toHit, dmgDie: a.dmgDie, dmgCount: a.dmgCount, dmgMod: a.dmgMod, aoeRadius: a.aoeRadius || 0, aoeShape: a.aoeShape || 'circle',
     })),
     expReward: Number(document.getElementById('dndTokenEditExp').value) || 0,
     goldReward: Number(document.getElementById('dndTokenEditGold').value) || 0,
@@ -1001,6 +1157,20 @@ document.getElementById('dndAtkAddBtn').onclick = (ev) => {
       dmgMod: document.getElementById('dndAtkModInput').value,
       desc: document.getElementById('dndAtkDescInput').value,
       aoeRadius: document.getElementById('dndAtkAoeRadiusInput').value,
+      aoeShape: document.getElementById('dndAtkAoeShapeInput').value,
+      status: {
+        name: document.getElementById('dndAtkStatusName').value,
+        note: document.getElementById('dndAtkStatusNote').value,
+        chance: document.getElementById('dndAtkStatusChance').value,
+        durationSec: document.getElementById('dndAtkStatusDuration').value,
+        atkMod: document.getElementById('dndAtkStatusAtk').value,
+        dmgMod: document.getElementById('dndAtkStatusDmg').value,
+        defMod: document.getElementById('dndAtkStatusDef').value,
+        tickValue: document.getElementById('dndAtkStatusTick').value,
+        tickIntervalSec: document.getElementById('dndAtkStatusTickInterval').value,
+        icon: document.getElementById('dndAtkStatusIcon').value,
+        color: document.getElementById('dndAtkStatusColor').value,
+      },
     },
   });
   document.getElementById('dndAtkNameInput').value = '';
@@ -1011,6 +1181,18 @@ document.getElementById('dndAtkAddBtn').onclick = (ev) => {
   document.getElementById('dndAtkModInput').value = '0';
   document.getElementById('dndAtkDescInput').value = '';
   document.getElementById('dndAtkAoeRadiusInput').value = '0';
+  document.getElementById('dndAtkAoeShapeInput').value = 'circle';
+  document.getElementById('dndAtkStatusName').value = '';
+  document.getElementById('dndAtkStatusNote').value = '';
+  document.getElementById('dndAtkStatusChance').value = '100';
+  document.getElementById('dndAtkStatusDuration').value = '0';
+  document.getElementById('dndAtkStatusAtk').value = '0';
+  document.getElementById('dndAtkStatusDmg').value = '0';
+  document.getElementById('dndAtkStatusDef').value = '0';
+  document.getElementById('dndAtkStatusTick').value = '0';
+  document.getElementById('dndAtkStatusTickInterval').value = '6';
+  document.getElementById('dndAtkStatusIcon').value = '';
+  document.getElementById('dndAtkStatusColor').value = '#ff6b6b';
 };
 document.getElementById('dndTokenStatusAddBtn').onclick = (ev) => {
   if (dndTokenEditTargetId == null) return;

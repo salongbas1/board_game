@@ -7,7 +7,7 @@ const WebSocket = require('ws');
 
 const { DND_RACES, DND_CLASSES, DND_CLASS_STARTER_GEAR, DND_HAIR_STYLES, DND_HAIR_COLORS, DND_FACE_STYLES, DND_LEVEL_EXP, DND_STARTING_GOLD_MAX, DND_STARTING_SP } = require('./data/characters');
 const { POINT_BUY_MIN, POINT_BUY_BUDGET, STAT_POINTS_PER_LEVEL, POINT_BUY_COST, POINT_BUY_COST_MAX_DEFINED, POINT_BUY_COST_PER_STEP_ABOVE_MAX, pointBuyCostOf, pointBuyStepCost, pointBuyCostForRaw } = require('./data/point-buy');
-const { DND_RACE_PASSIVES, DND_PASSIVE_EFFECT_KEYS, DND_CLASS_SKILLS, DND_CLASS_SKILL_ID_BASE } = require('./data/skills');
+const { DND_RACE_PASSIVES, DND_PASSIVE_EFFECT_KEYS, DND_CLASS_SKILLS, DND_CLASS_SKILL_ID_BASE, DND_SPELLBOOK_SKILLS, DND_SPELLBOOK_ID_BASE, DND_SUMMON_TEMPLATES } = require('./data/skills');
 const { DND_EQUIP_SLOTS, DND_EQUIP_SLOT_LABELS, DND_EQUIP_ICON_MAX_LEN, DND_SHOP_TYPES, DND_FORGE_FAIL_POLICIES, DND_FORGE_FAIL_POLICY_LABELS, DND_ITEM_EFFECT_TYPES, DND_BAG_CAPACITY } = require('./data/equipment');
 const { DND_TOKEN_COLORS, DND_MAX_TOKEN_IMAGE_CHARS, DND_TOKEN_SIZES, DND_MAX_MAP_BG_CHARS } = require('./data/tokens-map');
 const { DEFAULT_MAPS, cloneDefaultMaps } = require('./data/maps');
@@ -15,10 +15,41 @@ const { dndAbilityMod, dndRandInt, dndRollVsAC, dndRollDamage, dndAcRange, dndHp
 
 // ---- วิสัยทัศน์ผู้เล่น (Fog of War): DM เปิด/ปิดระบบได้ทั้งห้อง + กำหนดชนิด/รัศมีให้ผู้เล่นแต่ละคนแยกกันได้ ----
 // 2 ชนิด ตามธีม D&D — 'normal' มองเห็นระยะปกติ, 'dark' (Darkvision) มองเห็นในที่มืดได้ไกลกว่า
-// หน่วยรัศมีเป็น % ของแผนที่เหมือนกับ AOE (0-100 = กว้าง/ยาวเต็มแผนที่) เพื่อให้เทียบมาตราส่วนเดียวกันได้
+// หน่วยรัศมีเป็น "จำนวนช่องตาราง (grid)" ของแผนที่ที่กำลังแสดงอยู่ (ไม่ใช่ % ของแผนที่แบบตายตัวเหมือน AOE)
+// เหตุผล: ถ้าเก็บเป็น % ตายตัว พอ DM ปรับขนาดช่องตาราง (ดู DND_MAP_GRID_*) รัศมีวิสัยทัศน์จะครอบคลุมจำนวนช่องไม่เท่าเดิม
+// (เช่น ตั้งไว้ให้มองเห็นประมาณ 2 ช่อง แล้ว DM ทำตารางถี่ขึ้น จะกลายเป็นมองเห็นได้หลายช่องขึ้นทันทีทั้งที่ตัวเลขเดิม)
+// จึงเก็บเป็น "จำนวนช่อง" แล้วแปลงเป็น % ของแผนที่ตอนส่งให้ผู้เล่นจริง (ดู dndPublicToken) โดยอิงขนาดช่องของแผนที่ปัจจุบันเสมอ
+// ---- ขนาดช่องตาราง (grid) บนแผนที่: DM กำหนดได้เองต่อแผนที่ ว่าจะแบ่งแผนที่ออกเป็นกี่ช่องต่อด้าน (ค่ายิ่งมาก = ช่องยิ่งเล็ก/ถี่) ----
+// ค่านี้ใช้คุม background-size ของตาราง grid overlay (ก่อนหน้านี้ hardcode ไว้ที่ 10% เท่ากับ 10 ช่องเสมอ)
+const DND_MAP_GRID_MIN = 2;
+const DND_MAP_GRID_MAX = 100;
+const DND_MAP_GRID_DEFAULT = 10;
 const DND_VISION_TYPES = ['normal', 'dark'];
 const DND_VISION_TYPE_LABELS = { normal: 'ปกติ', dark: 'มองในที่มืด (Darkvision)' };
-const DND_VISION_DEFAULT_RADIUS = { normal: 24, dark: 42 };
+// ค่าเริ่มต้น/ขอบเขต หน่วยเป็น "จำนวนช่องตาราง" (รัศมี ไม่ใช่เส้นผ่านศูนย์กลาง) — ค่าเดิมก่อนแก้คือ 24%/42% ของแผนที่
+// ซึ่งอิงกับตารางเริ่มต้น 10 ช่อง จึงแปลงกลับมาเป็นหน่วยช่องได้ประมาณ 2.4/4.2 ช่อง (ให้พฤติกรรมเดิมคงเดิมไว้ที่ตาราง 10 ช่อง)
+const DND_VISION_DEFAULT_RADIUS = { normal: 2.4, dark: 4.2 };
+const DND_VISION_RADIUS_CELLS_MIN = 0.5;
+const DND_VISION_RADIUS_CELLS_MAX = 20;
+// ---- ระยะโจมตี (สกิล / โจมตีปกติ): เดิมเก็บเป็น % ตายตัวของแผนที่ (0-100 อิงพิกัด token) เหมือนปัญหาเดียวกับวิสัยทัศน์ด้านบน ----
+// เวลา DM ปรับความถี่ตาราง (gridSize) ระยะเท่าเดิม (%) จะครอบคลุมจำนวนช่องไม่เท่าเดิมอีกต่อไป
+// จึงเปลี่ยนมาเก็บเป็น "จำนวนช่องตาราง" แทน แล้วแปลงเป็น % ของแผนที่ปัจจุบันตอนตรวจระยะจริง (อิงขนาดช่องของแผนที่ปัจจุบันเสมอ ดู dndRangeCellsToPercent)
+// 0 = ไม่จำกัดระยะ (ค่าเริ่มต้น คงพฤติกรรมเดิมของระบบไว้) — ค่าที่ไม่ใช่ 0 clamp อยู่ในช่วง 0.5-50 ช่อง
+const DND_ATTACK_RANGE_CELLS_MIN = 0.5;
+const DND_ATTACK_RANGE_CELLS_MAX = 50;
+// แปลง "จำนวนช่อง" ของระยะโจมตี เป็น % ของแผนที่ปัจจุบัน โดยอิงขนาดช่องตาราง (gridSize) ที่ DM ตั้งไว้ตอนนี้เสมอ
+// ใช้ร่วมกันทั้งสกิล (skill.range) และโจมตีปกติ (normalAttack.range) เพื่อให้ระยะที่ตั้งไว้ครอบคลุม "จำนวนช่องเท่าเดิม" ไม่ว่าตารางจะถี่/ห่างแค่ไหน
+function dndRangeCellsToPercent(cells) {
+  const gridSize = Number.isFinite(Number(dndCurrentMap().gridSize)) ? Number(dndCurrentMap().gridSize) : DND_MAP_GRID_DEFAULT;
+  return cells * (100 / gridSize);
+}
+// รับค่าระยะโจมตีดิบจาก payload (หน่วยจำนวนช่องตาราง) แล้ว clamp ให้อยู่ในช่วงที่ระบบรองรับ — 0 หรือค่าว่าง/ไม่ใช่ตัวเลข = ไม่จำกัดระยะ (0)
+function dndSanitizeAttackRangeCells(raw) {
+  const n = Number(raw) || 0;
+  if (n <= 0) return 0;
+  return Math.max(DND_ATTACK_RANGE_CELLS_MIN, Math.min(DND_ATTACK_RANGE_CELLS_MAX, Math.round(n * 10) / 10));
+}
+
 
 // ---------------- D&D helper room (separate mini-app, independent of Hearts state) ----------------
 let dndPlayers = []; // [{id, ws, name, isDM, connected, character}]
@@ -27,6 +58,7 @@ let dndNextId = 1;
 let dndSkills = [];  // [{id, name, desc, stat}] — designed by the DM, visible to the whole party
 let dndNextSkillId = 1;
 let dndCustomPassives = []; // [{id, key, raceKey ('any' or a race key), name, icon, desc, effect}] — passive skills the DM designs, on top of the built-in ones
+let dndRacePassiveOverrides = {}; // { `${raceKey}:${passiveKey}`: {name, icon, desc, effect} } — DM edits to the default values of a built-in race passive (global, affects every character of that race)
 let dndNextPassiveId = 1;
 let dndScene = { location: '', situation: '' }; // ป้ายประกาศสถานที่/สถานการณ์บนจอทุกคน — DM เท่านั้นที่กำหนดได้
 // นาฬิกาในเกม + เวลาวิ่งอัตโนมัติ — state ย้ายไปอยู่ใน server/dnd/game-time.js แล้ว (ดูการ instantiate ด้านล่าง)
@@ -97,8 +129,8 @@ function dndFillStarterGear(equipment, classKey) {
 
 // ---- สกิลติดตัว (Passive) ประจำเผ่าพันธุ์: race/class-kit.js เก็บ logic ไว้แล้ว แต่ dndCustomPassives (สกิลติดตัวที่ DM ออกแบบเอง)
 // ยังเป็น state ของไฟล์นี้ จึงห่อ wrapper ชื่อเดิมไว้ ส่ง dndCustomPassives เข้าไปให้ทุกครั้งที่เรียก ----
-function dndRacePassivesFor(raceKey) { return dndRacePassivesForKit(raceKey, dndCustomPassives); }
-function dndRacePassiveByKey(raceKey, passiveKey) { return dndRacePassiveByKeyKit(raceKey, passiveKey, dndCustomPassives); }
+function dndRacePassivesFor(raceKey) { return dndRacePassivesForKit(raceKey, dndCustomPassives, dndRacePassiveOverrides); }
+function dndRacePassiveByKey(raceKey, passiveKey) { return dndRacePassiveByKeyKit(raceKey, passiveKey, dndCustomPassives, dndRacePassiveOverrides); }
 // ---- สกิลติดตัว (Passive) ที่ DM ออกแบบเอง: เพิ่มเติมจากสกิลติดตัวประจำเผ่าที่มีมาให้ในระบบ ----
 function dndSanitizePassiveEffect(raw) {
   const r = (raw && typeof raw === 'object') ? raw : {};
@@ -110,6 +142,7 @@ function dndSanitizePassiveEffect(raw) {
     hp: clamp(r.hp, -50, 100),
     critRange: clamp(r.critRange, 0, 5),
     gold: clamp(r.gold, -100, 500),
+    resist: clamp(r.resist, -30, 30), // ค่าต้านทานสถานะ (%) ที่พาสซีฟให้เพิ่ม/ลดกับตัวละคร — บวกเข้า character.statusResist ตอนเลือก/เปลี่ยนพาสซีฟ
   };
 }
 function dndPassiveEffectLogText(effect) {
@@ -120,6 +153,7 @@ function dndPassiveEffectLogText(effect) {
   if (effect.hp) parts.push(`HP ${effect.hp > 0 ? '+' : ''}${effect.hp}`);
   if (effect.critRange) parts.push(`คริติคอลกว้างขึ้น ${effect.critRange}`);
   if (effect.gold) parts.push(`ทอง ${effect.gold > 0 ? '+' : ''}${effect.gold}`);
+  if (effect.resist) parts.push(`ต้านทานสถานะ ${effect.resist > 0 ? '+' : ''}${effect.resist}%`);
   return parts.length ? parts.join(', ') : 'ไม่มีผลกลไก (ใช้เพื่อสีสัน/บทบาทเท่านั้น)';
 }
 // DM เท่านั้นที่สร้างสกิลติดตัวใหม่ได้ — เลือกผูกกับเผ่าใดเผ่าหนึ่ง หรือ 'any' ให้ทุกเผ่าเลือกได้ตอนสร้างตัวละคร
@@ -166,17 +200,47 @@ function dndHandlePassiveDelete(ws, id) {
   const [removed] = dndCustomPassives.splice(idx, 1);
   dndAddLog(`DM ลบสกิลติดตัว: "${removed.name}"`);
 }
+// DM แก้ไขค่าเริ่มต้นของสกิลติดตัวประจำเผ่าที่มีมาให้ในระบบ (ไม่ใช่สกิลที่ DM สร้างเอง) — เป็นการแก้ไข "แบบกลาง" มีผลกับตัวละครทุกคนของเผ่านั้นที่เลือกสกิลติดตัวนี้ไว้
+// เก็บเป็น override แยกต่างหาก (ไม่แก้ DND_RACE_PASSIVES ตรงๆ) คีย์ = `${raceKey}:${passiveKey}` ทับเฉพาะฟิลด์ที่แก้ ส่วน key เดิมของสกิลยังคงเดิมเสมอ
+function dndHandleRacePassiveOverrideSave(ws, raceKey, passiveKey, payload) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM || !payload || typeof payload !== 'object') return;
+  const race = dndRaceByKey((raceKey || '').toString());
+  if (!race) { dndSendError(ws, 'ไม่พบเผ่าพันธุ์นี้'); return; }
+  const pk = (passiveKey || '').toString();
+  const builtin = (DND_RACE_PASSIVES[race.key] || []).find(bp => bp.key === pk);
+  if (!builtin) { dndSendError(ws, 'ไม่พบสกิลติดตัวประจำเผ่านี้'); return; }
+  const name = (payload.name || '').toString().trim().slice(0, 40);
+  if (!name) { dndSendError(ws, 'กรุณาตั้งชื่อสกิลติดตัว'); return; }
+  const desc = (payload.desc || '').toString().trim().slice(0, 150);
+  const icon = (payload.icon || '✨').toString().trim().slice(0, 4) || '✨';
+  const effect = dndSanitizePassiveEffect(payload.effect);
+  dndRacePassiveOverrides[`${race.key}:${pk}`] = { name, icon, desc, effect };
+  dndAddLog(`✏️ DM แก้ไขค่าเริ่มต้นสกิลติดตัวประจำเผ่า "${race.name}": "${name}" — ${dndPassiveEffectLogText(effect)}`);
+}
+// DM รีเซ็ตสกิลติดตัวประจำเผ่าที่แก้ไว้ ให้กลับไปเป็นค่าเริ่มต้นของระบบ
+function dndHandleRacePassiveOverrideReset(ws, raceKey, passiveKey) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const key = `${(raceKey || '').toString()}:${(passiveKey || '').toString()}`;
+  if (dndRacePassiveOverrides[key]) {
+    delete dndRacePassiveOverrides[key];
+    const race = dndRaceByKey((raceKey || '').toString());
+    dndAddLog(`♻️ DM รีเซ็ตสกิลติดตัวประจำเผ่า "${race ? race.name : raceKey}" กลับเป็นค่าเริ่มต้นแล้ว`);
+  }
+}
 // คืนโบนัสจากสกิลติดตัวของตัวละคร (ค่าเริ่มต้นเป็น 0 ทุกช่องถ้ายังไม่ได้เลือก/หาไม่เจอ)
-function dndCharPassiveEffect(character) { return dndCharPassiveEffectKit(character, dndCustomPassives); }
+function dndCharPassiveEffect(character) { return dndCharPassiveEffectKit(character, dndCustomPassives, dndRacePassiveOverrides); }
 // รวมโบนัส/บทลงโทษจากสถานะผิดปกติ (บัฟ/ดีบัฟ) ทั้งหมดที่ติดอยู่กับผู้เล่น/มอนสเตอร์คนนี้ตอนนี้ — ใช้บวกเข้ากับการทอยโจมตี/ดาเมจ/AC
 function dndStatusMods(list) {
-  let atk = 0, dmg = 0, def = 0;
+  let atk = 0, dmg = 0, def = 0, vision = 0;
   for (const s of (list || [])) {
     atk += Number(s.atkMod) || 0;
     dmg += Number(s.dmgMod) || 0;
     def += Number(s.defMod) || 0;
+    vision += Number(s.visionMod) || 0;
   }
-  return { atk, dmg, def };
+  return { atk, dmg, def, vision };
 }
 
 // ---- สกิลประจำคลาส: dndClassSkillId/dndClassSkillsForPlayer ย้ายไปอยู่ที่ server/dnd/character.js แล้ว (module 3, ไม่ต้องพึ่ง state ของไฟล์นี้ นำเข้ามาใช้ชื่อเดิมได้ตรงๆ) ----
@@ -230,14 +294,17 @@ function dndHandleClassSkillOverrideSave(ws, targetId, skillId, payload) {
 
   // สถานะ/ดีบัฟที่ผูกกับสกิล (ไม่บังคับ) — เหมือนตอนสร้าง/แก้ไขสกิลที่ DM สร้างเอง
   const status = dndSanitizeSkillStatus(payload.status);
+  // ไอเทมที่ต้องใช้ประกอบสกิลนี้ (ไม่บังคับ) — เหมือนตอนสร้าง/แก้ไขสกิลที่ DM สร้างเอง
+  const reqItem = dndSanitizeSkillReqItem(payload.reqItem);
   // สกิลบัฟเพื่อน (ไม่บังคับ) — เปิดไว้แล้วตอนใช้สกิลจะเลือกเป้าหมายเป็นผู้เล่นได้
   const buffAlly = !!payload.buffAlly;
 
-  // รัศมี AOE (0 = เป้าเดี่ยวปกติ)
+  // รัศมี AOE (0 = เป้าเดี่ยวปกติ) + รูปแบบพื้นที่ (วงกลม/เส้นตรง)
   const aoeRaw = (payload.aoe && typeof payload.aoe === 'object') ? payload.aoe : {};
   const aoeRadius = Math.max(0, Math.min(100, Math.round(Number(aoeRaw.radius) || 0)));
-  // ระยะโจมตี (0 = ไม่จำกัดระยะ) — ระยะห่างจริงบนแผนที่ (หน่วย % ของแผนที่ เหมือนพิกัด token) ระหว่าง token ผู้ใช้กับ token เป้าหมาย ดูรายละเอียดที่ dndHandleSkillCreate
-  const range = Math.max(0, Math.min(100, Math.round(Number(payload.range) || 0)));
+  const aoeShape = dndSanitizeAoeShape(aoeRaw.shape);
+  // ระยะโจมตี (0 = ไม่จำกัดระยะ) — หน่วย "จำนวนช่องตาราง" (แปลงเป็น % ของแผนที่ปัจจุบันตอนตรวจระยะจริง ดู dndRangeCellsToPercent) ระหว่าง token ผู้ใช้กับ token เป้าหมาย ดูรายละเอียดที่ dndHandleSkillCreate
+  const range = dndSanitizeAttackRangeCells(payload.range);
 
   // สกิลลบล้างสถานะ (cleanse)
   const cleanseRaw = (payload.cleanse && typeof payload.cleanse === 'object') ? payload.cleanse : {};
@@ -250,9 +317,10 @@ function dndHandleClassSkillOverrideSave(ws, targetId, skillId, payload) {
   target.character.skillOverrides[sid] = {
     name, stat, desc, dmgDie, dmgCount, dmgMod, cooldownSec, maxUses, spCost, hitChance, guaranteedHit,
     healDie, healCount, healMod, healRevive, statusName: status.name, statusNote: status.note, statusChance: status.chance, buffAlly, targetMode,
-    statusDurationSec: status.durationSec, statusAtkMod: status.atkMod, statusDmgMod: status.dmgMod, statusDefMod: status.defMod,
+    statusDurationSec: status.durationSec, statusAtkMod: status.atkMod, statusDmgMod: status.dmgMod, statusDefMod: status.defMod, statusVisionMod: status.visionMod,
     statusTickValue: status.tickValue, statusTickIntervalSec: status.tickIntervalSec, statusIcon: status.icon, statusColor: status.color,
-    aoeRadius, cleanseEnabled, cleanseName, range,
+    reqItemName: reqItem.reqItemName, reqItemQty: reqItem.reqItemQty,
+    aoeRadius, aoeShape, cleanseEnabled, cleanseName, range,
   };
   dndAddLog(`✏️ DM ปรับสกิลประจำคลาส "${name}" ของ ${target.character.charName || target.name} (เฉพาะคนนี้คนเดียว คนอื่นในคลาสเดียวกันไม่กระทบ)`);
 }
@@ -297,20 +365,24 @@ function dndPublicPlayer(p) {
     healDie: s.healDie || 0, healCount: s.healCount || 1, healMod: s.healMod || 0, healRevive: !!s.healRevive,
     statusName: s.statusName || '', statusNote: s.statusNote || '', statusChance: s.statusChance,
     statusDurationSec: s.statusDurationSec || 0, statusAtkMod: s.statusAtkMod || 0, statusDmgMod: s.statusDmgMod || 0,
-    statusDefMod: s.statusDefMod || 0, statusTickValue: s.statusTickValue || 0, statusTickIntervalSec: s.statusTickIntervalSec || 6,
-    aoeRadius: s.aoeRadius || 0, cleanseEnabled: !!s.cleanseEnabled, cleanseName: s.cleanseName || '', range: s.range || 0,
+    statusDefMod: s.statusDefMod || 0, statusVisionMod: s.statusVisionMod || 0, statusTickValue: s.statusTickValue || 0, statusTickIntervalSec: s.statusTickIntervalSec || 6,
+    reqItemName: s.reqItemName || '', reqItemQty: s.reqItemQty || 0,
+    aoeRadius: s.aoeRadius || 0, aoeShape: dndSanitizeAoeShape(s.aoeShape), cleanseEnabled: !!s.cleanseEnabled, cleanseName: s.cleanseName || '', range: s.range || 0,
     buffAlly: !!s.buffAlly, targetMode: dndSkillTargetMode(s),
   }));
   return { id: p.id, isDM: p.isDM, connected: p.connected, character: p.character, assignedSkills, classSkills };
 }
 // คืนรายการสกิลที่ผู้เล่นคนนี้มองเห็น พร้อมสถานะคูลดาวน์/จำนวนครั้งที่ใช้ไปแล้ว "เฉพาะของเขาเอง"
 // (ไม่แก้ไขอ็อบเจกต์สกิลต้นฉบับ เพราะสกิลเดียวกันอาจถูกมองจากผู้เล่นหลายคนพร้อมกัน)
-// ผู้เล่นทั่วไป (ไม่ใช่ DM) เห็นเฉพาะ: สกิลที่ DM ยังไม่ได้จำกัดสิทธิ์ (ใช้ได้ทั้งปาร์ตี้) + สกิลที่ตัวเองถูกระบุสิทธิ์ไว้โดยเฉพาะ
+// ผู้เล่นทั่วไป (ไม่ใช่ DM) เห็นเฉพาะ: สกิลที่ DM ยังไม่ได้จำกัดสิทธิ์ (ใช้ได้ทั้งปาร์ตี้) + สกิลที่ตัวเองถูกระบุสิทธิ์ไว้โดยเฉพาะ/เรียนรู้แล้ว
 // (ไม่เห็นรายละเอียด/ชื่อของสกิลที่ DM มอบสิทธิ์ให้ผู้เล่นคนอื่นเท่านั้น) — DM เห็นสกิลทั้งหมดในห้องเสมอเพื่อจัดการได้ครบ
+// สำคัญ: รายการนี้คือ "สกิลที่ใช้ได้จริง" ที่ไปโผล่ในแท็บ "สกิล" ของผู้เล่นด้วย — สกิล libraryOnly (จากสมุดเวทย์) ต้องถูกซื้อ+อ่านเรียนก่อน
+// (ทำให้ตัวเองถูกเติมเข้า assignedIds) ถึงจะโผล่ตรงนี้ ห้ามเอา libraryOnly ออกจากเงื่อนไขนี้ ไม่งั้นผู้เล่นจะเห็น/ใช้สกิลที่ยังไม่ได้เรียนได้ทั้งหมด
+// การแสดงชื่อ/รายละเอียดสกิลในหน้าร้านห้องสมุด "ก่อนซื้อ" ใช้ข้อมูลจากคนละช่องทาง (librarySkillCatalog) ไม่ใช่ช่องนี้
 function dndVisibleSkills(p) {
   const customVisible = p.isDM
     ? dndSkills
-    : dndSkills.filter(s => !s.assignedIds || s.assignedIds.length === 0 || s.assignedIds.includes(p.id));
+    : dndSkills.filter(s => (s.assignedIds && s.assignedIds.includes(p.id)) || (!s.libraryOnly && (!s.assignedIds || s.assignedIds.length === 0)));
   const all = customVisible.concat(dndClassSkillsForPlayer(p));
   return all.map(s => {
     const used = (p.skillUsedCount && p.skillUsedCount[s.id]) || 0;
@@ -326,12 +398,23 @@ function dndFindUsableSkill(p, skillId) {
   if (custom) return custom;
   return dndClassSkillsForPlayer(p).find(s => s.id === sid) || null;
 }
+// รายการ "ข้อมูลแสดงผล" ของสกิล libraryOnly ทุกตัว (เช่น สกิลจากสมุดเวทย์ในร้านห้องสมุด) ส่งให้ผู้เล่นทุกคนแบบไม่กรอง assignedIds
+// ใช้แค่โชว์ชื่อ/ดาเมจ/SP/คูลดาวน์ ฯลฯ ในหน้าร้านก่อนซื้อเท่านั้น — ไม่เกี่ยวกับสิทธิ์ใช้สกิลจริง (ดู dndVisibleSkills ด้านบน)
+function dndLibrarySkillCatalog() {
+  return dndSkills.filter(s => s.libraryOnly).map(s => ({
+    id: s.id, name: s.name, desc: s.desc, level: s.level, stat: s.stat,
+    allowedClasses: s.allowedClasses, dmgDie: s.dmgDie, dmgCount: s.dmgCount, dmgMod: s.dmgMod,
+    healDie: s.healDie, healCount: s.healCount, healMod: s.healMod, healRevive: s.healRevive,
+    spCost: s.spCost || 0, cooldownSec: s.cooldownSec, maxUses: s.maxUses,
+    range: s.range, aoeRadius: s.aoeRadius, aoeShape: s.aoeShape,
+  }));
+}
 function dndBroadcastState() {
   for (const p of dndPlayers) {
     if (p.ws && p.ws.readyState === WebSocket.OPEN) {
       p.ws.send(JSON.stringify({
         type: 'dndState',
-        you: { id: p.id, isDM: p.isDM, locked: p.character.locked },
+        you: { id: p.id, isDM: p.isDM, locked: p.character.locked, movedThisTurn: p.dndMovedAtStep === dndTurnOrderModule.getStepId() },
         players: dndPlayers.map(dndPublicPlayer),
         log: dndLogForPlayer(p),
         races: DND_RACES,
@@ -339,7 +422,10 @@ function dndBroadcastState() {
         classStarterGear: DND_CLASS_STARTER_GEAR,
         passives: DND_RACE_PASSIVES,
         customPassives: dndCustomPassives,
+        racePassiveOverrides: dndRacePassiveOverrides,
         skills: dndVisibleSkills(p),
+        librarySkillCatalog: dndLibrarySkillCatalog(),
+        summonTemplates: DND_SUMMON_TEMPLATES,
         pointBuyMin: POINT_BUY_MIN,
         pointBuyBudget: POINT_BUY_BUDGET,
         pointBuyCost: POINT_BUY_COST,
@@ -367,7 +453,10 @@ function dndBroadcastState() {
         partyVisionShared: dndPartyVisionShared,
         partyVisionGroups: dndPartyVisionGroups.map(g => ({ id: g.id, playerIds: g.playerIds.slice() })),
         mapBackground: dndCurrentMap().background,
-        maps: dndMaps.map(m => ({ id: m.id, name: m.name, playerIds: Array.isArray(m.playerIds) ? m.playerIds : [] })),
+        mapGridSize: Number.isFinite(Number(dndCurrentMap().gridSize)) ? Number(dndCurrentMap().gridSize) : DND_MAP_GRID_DEFAULT,
+        mapGridMin: DND_MAP_GRID_MIN,
+        mapGridMax: DND_MAP_GRID_MAX,
+        maps: dndMaps.map(m => ({ id: m.id, name: m.name, playerIds: Array.isArray(m.playerIds) ? m.playerIds : [], gridSize: Number.isFinite(Number(m.gridSize)) ? Number(m.gridSize) : DND_MAP_GRID_DEFAULT })),
         currentMapId: dndCurrentMapId,
         levelExpTable: DND_LEVEL_EXP,
         turnOrder: dndTurnOrderModule.getTurnOrder().map(e => ({ kind: e.kind, id: e.id, name: dndTurnEntryName(e) })),
@@ -409,17 +498,27 @@ function dndPublicToken(t) {
     const statuses = owner ? (owner.character.statuses || []) : [];
     const pos = dndPcPosForCurrentMap(t);
     const visionType = DND_VISION_TYPES.includes(t.visionType) ? t.visionType : 'normal';
-    const visionRadius = Number.isFinite(t.visionRadius) ? t.visionRadius : DND_VISION_DEFAULT_RADIUS[visionType];
+    const baseVisionRadiusCells = Number.isFinite(t.visionRadius) ? t.visionRadius : DND_VISION_DEFAULT_RADIUS[visionType];
+    // บวกโบนัส/บทลงโทษวิสัยทัศน์จากสถานะที่ติดตัวผู้เล่นอยู่ตอนนี้ (เช่นสกิลบัฟตาเหยี่ยว หรือดีบัฟตาบอด) เข้ากับค่าพื้นฐาน (หน่วยจำนวนช่องเหมือนกัน)
+    // แล้ว clamp ให้อยู่ในช่วงที่ระบบรองรับ (0.5-20 ช่อง) ก่อนแปลงเป็น % ของแผนที่ปัจจุบันตามขนาดช่องตาราง (gridSize) ที่ DM ตั้งไว้
+    // ทำแบบนี้เพื่อให้รัศมีวิสัยทัศน์ครอบคลุม "จำนวนช่องเท่าเดิม" เสมอ ไม่ว่า DM จะปรับตารางให้ถี่/ห่างแค่ไหนก็ตาม
+    const visionMod = dndStatusMods(statuses).vision;
+    const visionRadiusCells = Math.max(DND_VISION_RADIUS_CELLS_MIN, Math.min(DND_VISION_RADIUS_CELLS_MAX, baseVisionRadiusCells + visionMod));
+    const cellPctOfMap = 100 / (Number.isFinite(Number(dndCurrentMap().gridSize)) ? Number(dndCurrentMap().gridSize) : DND_MAP_GRID_DEFAULT);
+    const visionRadius = visionRadiusCells * cellPctOfMap;
     return {
       id: t.id, kind: 'pc', ownerId: t.ownerId, name, color: t.color, image: t.image || null, x: pos.x, y: pos.y, hp, maxHp, ac, attacks: [], statuses,
       visionType, visionRadius, visionRadiusOverride: Number.isFinite(t.visionRadius) ? t.visionRadius : null,
     };
   }
   return {
-    id: t.id, kind: 'npc', ownerId: null, name: t.name, color: t.color, image: t.image || null, x: t.x, y: t.y, mapId: t.mapId,
+    // ownerId เดิม hardcode เป็น null เสมอ (สมัยที่ npc มีแต่มอนสเตอร์ของ DM) — ตอนนี้ token อัญเชิญของผู้เล่นก็เป็น kind:'npc' เหมือนกัน
+    // แต่มี ownerId เป็นผู้เล่นที่ร่าย จึงต้องส่งค่าจริงออกไปให้ client รู้ว่า token ตัวนี้เป็นของใคร (ใช้คุมสิทธิ์สั่งการฝั่ง client ในโมดูลถัดไป)
+    id: t.id, kind: 'npc', ownerId: t.ownerId || null, name: t.name, color: t.color, image: t.image || null, x: t.x, y: t.y, mapId: t.mapId,
     hp: t.hp, maxHp: t.maxHp, ac: t.ac, size: t.size || 'normal',
     str: t.str || 10, dex: t.dex || 10, con: t.con || 10, int: t.int || 10, wis: t.wis || 10, cha: t.cha || 10,
     attacks: t.attacks || [], statuses: t.statuses || [], expReward: t.expReward || 0, goldReward: t.goldReward || 0, loot: t.loot || [], statusResist: t.statusResist || 0,
+    summoned: !!t.summoned, summonExpiresAt: t.summonExpiresAt || 0,
   };
 }
 // ผู้เล่น (pc) เห็นเฉพาะแผนที่ที่ตัวเองถูก DM เลือกไว้เท่านั้น (ยังไม่ถูกเลือก = ไม่แสดง) — มอนสเตอร์ (npc) แสดงเฉพาะที่อยู่บนแผนที่ปัจจุบันเท่านั้น
@@ -467,13 +566,39 @@ function dndPcTokenId(playerId) {
   const tok = dndTokens.find(t => t.kind === 'pc' && t.ownerId === Number(playerId));
   return tok ? tok.id : null;
 }
+// รูปแบบพื้นที่ AOE: 'circle' (ค่าเริ่มต้น) = วงกลมรอบเป้าหมายหลัก, 'line' = เส้นตรงพุ่งจากตัวผู้ใช้ไปยังเป้าหมายหลัก (กว้างเท่ารัศมีที่ตั้งไว้)
+const DND_AOE_SHAPES = ['circle', 'line'];
+function dndSanitizeAoeShape(raw) {
+  const s = (raw || '').toString();
+  return DND_AOE_SHAPES.includes(s) ? s : 'circle';
+}
+// ระยะของ "ผู้สมัคร" คนหนึ่ง (pos) จากพื้นที่ AOE ตามรูปแบบที่ตั้งไว้ — ใช้ตัวเลขนี้เทียบกับ aoeRadius/aoeWidth เพื่อดูว่าโดนหรือไม่ และคำนวณดาเมจลดหลั่น
+// - circle: ระยะทางตรงจากจุดศูนย์กลาง (ตำแหน่งเป้าหมายหลัก) แบบเดิม
+// - line: ระยะตั้งฉากจากส่วนของเส้นตรงระหว่างจุดเริ่ม (origin, ตำแหน่งผู้ใช้ตอนร่าย) ถึงจุดปลาย (center, ตำแหน่งเป้าหมายหลัก)
+//   หากจุดนั้น "เลย" ปลายเส้นไปข้างใดข้างหนึ่ง จะยึดระยะจากปลายเส้นที่ใกล้ที่สุดแทน (เหมือนแคปซูล/เส้นมีหัวมน กันไม่ให้เป็นเส้นยาวไม่มีที่สิ้นสุด)
+function dndAoeDist(shape, originPos, centerPos, pos) {
+  if (shape === 'line' && originPos) {
+    const dx = centerPos.x - originPos.x, dy = centerPos.y - originPos.y;
+    const lenSq = dx * dx + dy * dy;
+    let t = lenSq > 0 ? ((pos.x - originPos.x) * dx + (pos.y - originPos.y) * dy) / lenSq : 0;
+    t = Math.max(0, Math.min(1, t));
+    const px = originPos.x + dx * t, py = originPos.y + dy * t;
+    return Math.hypot(pos.x - px, pos.y - py);
+  }
+  return Math.hypot(pos.x - centerPos.x, pos.y - centerPos.y);
+}
 function dndFindByWs(ws) { return dndPlayers.find(p => p.ws === ws); }
 function dndSendError(ws, msg) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'dndError', msg }));
 }
 // ตัวละครถือว่า "หมดสติ/ตาย" เมื่อ HP <= 0 — ทำอะไรไม่ได้ (โจมตี/ใช้สกิล/ใช้ไอเทม/ขยับ token) จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้โดยตรง
 const DND_DEAD_MSG = 'คุณหมดสติอยู่ ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้';
-function dndIsCharDead(c) { return !!c && (Number(c.hp) || 0) <= 0; }
+// โดนโจมตีครั้งเดียวดาเมจ >= 2 เท่าของ "เลือดสูงสุด" ตัวเอง (โอเวอร์คิล) = ตายถาวร ("permaDead")
+// ต่างจากหมดสติปกติตรงที่ไอเทม/สกิลชุบ (แม้แต่ประเภท "ชุบชีวิต") ปลุกไม่ได้เด็ดขาด — ต้องให้ DM เพิ่ม HP ให้โดยตรงเท่านั้นถึงจะฟื้นกลับมาได้
+const DND_OVERKILL_MULT = 2;
+const DND_PERMADEAD_MSG = 'คุณตายถาวรแล้ว (โดนดาเมจครั้งเดียวเกิน 2 เท่าของเลือดสูงสุด) ไอเทม/สกิลชุบใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้นถึงจะฟื้นได้';
+function dndIsCharDead(c) { return !!c && ((Number(c.hp) || 0) <= 0 || !!c.permaDead); }
+function dndDeadMsgFor(c) { return (c && c.permaDead) ? DND_PERMADEAD_MSG : DND_DEAD_MSG; }
 
 // ---- ctx: บริดจ์ระหว่าง dnd.js กับโมดูลย่อย (server/dnd/bag.js, item.js, shop.js) ----
 // ใช้ get/set accessor สำหรับ state ที่มีการ "แทนที่ทั้งก้อน" (ไม่ใช่แค่ push/splice) เช่น dndItemEffects ตอนลบ,
@@ -481,6 +606,7 @@ function dndIsCharDead(c) { return !!c && (Number(c.hp) || 0) <= 0; }
 const dndCtx = {
   get dndPlayers() { return dndPlayers; },
   get shops() { return dndShops; },
+  get skills() { return dndSkills; },
   get itemEffects() { return dndItemEffects; },
   set itemEffects(v) { dndItemEffects = v; },
   get nextShopId() { return dndNextShopId; },
@@ -490,9 +616,10 @@ const dndCtx = {
   get nextItemEffectId() { return dndNextItemEffectId; },
   set nextItemEffectId(v) { dndNextItemEffectId = v; },
   DND_BAG_CAPACITY, DND_EQUIP_SLOTS, DND_EQUIP_SLOT_LABELS, DND_FORGE_FAIL_POLICIES, DND_ITEM_EFFECT_TYPES,
-  DND_DEAD_MSG,
+  DND_DEAD_MSG, DND_PERMADEAD_MSG, DND_CLASSES,
   dndFindByWs, dndSendError, dndAddLog, dndBroadcastState,
-  dndSanitizeEquipment, dndSanitizeEquipIcon, dndSanitizeForgeHistory, dndIsCharDead,
+  dndSanitizeEquipment, dndSanitizeEquipIcon, dndSanitizeForgeHistory, dndIsCharDead, dndDeadMsgFor,
+  dndSkillClassAllowed, dndAllowedClassesText,
 };
 
 const {
@@ -523,8 +650,10 @@ const {
 const {
   dndEnsureStarterItemEffect, dndDefaultItemEffectsInit, dndSanitizeItemEffect, dndItemEffectLogText,
   dndHandleItemEffectCreate, dndAutoRegisterEquipItemEffect, dndHandleItemEffectEdit, dndHandleItemEffectDelete,
-  dndHandleUseItem, dndEquipSlotBroken,
+  dndHandleUseItem, dndEquipSlotBroken, dndUpsertSkillItemEffect,
 } = require('./dnd/item')(dndCtx);
+// ให้ร้านค้า (server/dnd/shop.js) เรียกใช้ตอนเพิ่ม/แก้ไข "สมุดเวทย์" ในร้านห้องสมุดได้ — ผูกชื่อหนังสือเข้ากับผลไอเทมประเภท "skill" ให้อัตโนมัติ
+dndCtx.dndUpsertSkillItemEffect = dndUpsertSkillItemEffect;
 
 const {
   dndSanitizeShopItem, dndDefaultShopItems, dndSanitizeForgeTier, dndDefaultForgeItems,
@@ -536,6 +665,71 @@ const {
 // ค่าเริ่มต้นของ itemEffects (เดิมเซ็ตตอนประกาศ let dndItemEffects — ย้ายมาทำที่นี่เพราะฟังก์ชันอยู่ในโมดูลแยกแล้ว)
 dndItemEffects = dndDefaultItemEffectsInit();
 
+// ---- ห้องสมุดเวทย์เริ่มต้น: seed สกิลจาก DND_SPELLBOOK_SKILLS (Cantrip-9th Level, 574 เวทย์ ครบทุกเลเวลแล้ว) เข้าไปเป็นสกิล libraryOnly ----
+// พร้อมเปิดร้านห้องสมุดเริ่มต้น 1 ร้าน ขายสมุดเวทย์ผูกกับสกิลแต่ละอันให้อัตโนมัติ ผู้เล่นซื้อมา "ใช้" (อ่าน) เพื่อเรียนรู้ได้ทันที
+// ราคาสมุด: อิงเลเวลเวทย์ — เลเวลยิ่งสูงยิ่งแพง ตามสูตร (level+1)^2 * 10 ทอง (แคนทริป=10, เลเวล1=40, เลเวล2=90, เลเวล3=160, ... เลเวล9=1000)
+function dndCloneDefaultSpellbookSkills() {
+  return DND_SPELLBOOK_SKILLS.map(s => ({ ...s, assignedIds: [] }));
+}
+function dndSpellbookPriceForLevel(level) {
+  return (level + 1) * (level + 1) * 10;
+}
+function dndDefaultSpellbookLibraryShop() {
+  const items = DND_SPELLBOOK_SKILLS.map(s => ({
+    id: ctxNextShopItemIdPeek(), name: `สมุดเวทย์: ${s.name}`, price: dndSpellbookPriceForLevel(s.level),
+    desc: `อ่านแล้วเรียนรู้สกิล "${s.name}" (เวทย์เลเวล ${s.level === 0 ? 'แคนทริป' : s.level})`,
+    stock: null, skillId: s.id,
+  }));
+  return { id: 1, name: '📚 ห้องสมุดเวทย์ (Cantrip-9th Level)', type: 'library', closed: false, items };
+}
+// ctxNextShopItemIdPeek: ตอน seed ตอน startup ยังไม่ต้องกันชนกับ id จริงของร้านอื่น เพราะร้านนี้เป็นร้านแรกเสมอ (id เริ่ม 1..574)
+let dndSpellbookItemIdCounter = 0;
+function ctxNextShopItemIdPeek() { dndSpellbookItemIdCounter += 1; return dndSpellbookItemIdCounter; }
+
+function dndSeedSpellbookLibrary() {
+  dndSpellbookItemIdCounter = 0;
+  dndSkills = dndCloneDefaultSpellbookSkills();
+  dndNextSkillId = DND_SPELLBOOK_ID_BASE + DND_SPELLBOOK_SKILLS.length + 1000; // เผื่อช่องว่างกันชนสกิลที่ DM สร้างเพิ่มเอง
+  const libraryShop = dndDefaultSpellbookLibraryShop();
+  dndShops = [libraryShop];
+  dndNextShopId = 2;
+  dndNextShopItemId = libraryShop.items.length + 1;
+  // ผูกชื่อสมุดแต่ละเล่มเข้ากับผลไอเทมประเภท "skill" ให้อัตโนมัติ เหมือนตอน DM เพิ่มเองผ่านหน้าร้าน
+  for (const item of libraryShop.items) {
+    if (dndUpsertSkillItemEffect) dndUpsertSkillItemEffect(item.name, item.skillId, item.desc);
+  }
+}
+dndSeedSpellbookLibrary();
+
+// เติมห้องสมุดเวทย์ (สกิล 574 เล่ม + ร้านห้องสมุด) กลับเข้าไปอัตโนมัติ ถ้าข้อมูลที่โหลดมา (เช่นไฟล์เซฟเก่า) ไม่มีอยู่แล้ว
+// เช็คจากช่วง id สกิล — ถ้าไม่มีสกิลไหนอยู่ในช่วง id ของห้องสมุดเวทย์เลย ถือว่าเซฟนี้ไม่มีห้องสมุด (เซฟไว้ตั้งแต่ก่อนมีฟีเจอร์นี้)
+// จะเติมกลับเข้าไปแบบต่อท้าย (ไม่ทับของเดิม) ไม่ให้สกิล/ร้านค้าที่ DM สร้างเองในเซฟหายไป
+function dndEnsureSpellbookLibraryPresent() {
+  const hasSpellbookSkills = dndSkills.some(s => Number(s.id) >= DND_SPELLBOOK_ID_BASE);
+  if (hasSpellbookSkills) return;
+
+  const newSkills = dndCloneDefaultSpellbookSkills();
+  dndSkills = dndSkills.concat(newSkills);
+  dndNextSkillId = Math.max(dndNextSkillId, DND_SPELLBOOK_ID_BASE + DND_SPELLBOOK_SKILLS.length + 1000);
+
+  const items = newSkills.map(s => {
+    const id = dndNextShopItemId;
+    dndNextShopItemId += 1;
+    return {
+      id, name: `สมุดเวทย์: ${s.name}`, price: dndSpellbookPriceForLevel(s.level),
+      desc: `อ่านแล้วเรียนรู้สกิล "${s.name}" (เวทย์เลเวล ${s.level === 0 ? 'แคนทริป' : s.level})`,
+      stock: null, skillId: s.id,
+    };
+  });
+  const libraryShop = { id: dndNextShopId, name: '📚 ห้องสมุดเวทย์ (Cantrip-9th Level)', type: 'library', closed: false, items };
+  dndNextShopId += 1;
+  dndShops = dndShops.concat([libraryShop]);
+  for (const item of items) {
+    if (dndUpsertSkillItemEffect) dndUpsertSkillItemEffect(item.name, item.skillId, item.desc);
+  }
+  dndAddLog('📚 เซฟนี้ไม่มีห้องสมุดเวทย์อยู่ — เติมห้องสมุดเวทย์ (574 เล่ม) กลับเข้ามาอัตโนมัติแล้ว');
+}
+
 function dndHandleJoin(ws, name) {
   // เชื่อมต่อ (ws) นี้มีตัวละครอยู่ในห้องอยู่แล้ว — เช่น รีเฟรช/สลับหน้าเร็วจนข้อความ join เข้ามาซ้ำ
   // ก่อนที่เซิร์ฟเวอร์จะรู้ตัวว่าการเชื่อมต่อเก่าหลุดไปแล้ว ถ้าปล่อยให้สร้างตัวละครใหม่ซ้อนไป จะเกิดตัวละคร "ผี" ค้าง
@@ -545,7 +739,7 @@ function dndHandleJoin(ws, name) {
   const cleanName = (name || '').toString().trim().slice(0, 16) || `นักผจญภัย${dndPlayers.length + 1}`;
   const isDM = dndPlayers.length === 0; // คนแรกที่เข้าห้องเป็น DM เสมอ และจะยังคงเป็น DM แม้หลุดการเชื่อมต่อ (ไม่มีใครมาแทนที่)
   const id = dndNextId++;
-  dndPlayers.push({ id, ws, name: cleanName, isDM, connected: true, character: newDndCharacter(cleanName) });
+  dndPlayers.push({ id, ws, name: cleanName, isDM, connected: true, character: newDndCharacter(cleanName), dndMovedAtStep: -1 });
   dndAddLog(isDM ? `${cleanName} เข้าห้องในฐานะ DM` : `${cleanName} เข้าร่วมปาร์ตี้`);
 }
 function dndVacantSeats() {
@@ -644,6 +838,7 @@ function dndHandleCreateCharacter(ws, payload) {
     inventory, backstory, locked: true, pointBuy, equipment, statuses: (p.character.statuses || []),
     appearance, gold: (p.character.gold || 0) + gold, bag: dndSanitizeBag(p.character.bag),
     statPoints: (p.character.statPoints || 0),
+    statusResist: Math.max(0, Math.min(100, (p.character.statusResist || 0) + (passiveEffect.resist || 0))),
   };
   // สร้าง token บนแผนที่ให้อัตโนมัติ (ครั้งแรกที่ล็อกการ์ดตัวละครเท่านั้น เพราะฟังก์ชันนี้ทำงานได้แค่ครั้งเดียวต่อคน)
   if (!dndTokens.some(t => t.kind === 'pc' && t.ownerId === p.id)) {
@@ -749,6 +944,11 @@ function dndHandleDmUpdate(ws, targetId, updates) {
       if (Number.isFinite(n)) c[f] = Math.max(0, Math.min(9999, Math.round(n)));
     }
   }
+  // ค่าต้านทานสถานะ (%) ของผู้เล่นคนนี้ — แยกจากลูป DND_DM_NUM_FIELDS ด้านบนเพราะช่วงค่าจำกัดแค่ 0-100 (เป็น % ไม่ใช่ 0-9999) เหมือนของ token
+  if (updates.statusResist !== undefined) {
+    const n = Number(updates.statusResist);
+    if (Number.isFinite(n)) c.statusResist = Math.max(0, Math.min(100, Math.round(n)));
+  }
   if (updates.passiveKey !== undefined) {
     const passive = dndRacePassiveByKey(c.raceKey, updates.passiveKey.toString());
     if (passive) {
@@ -759,13 +959,15 @@ function dndHandleDmUpdate(ws, targetId, updates) {
       const newPassiveEffect = dndCharPassiveEffect(c);
       const acDelta = (newPassiveEffect.ac || 0) - (oldPassiveEffect.ac || 0);
       const hpDelta = (newPassiveEffect.hp || 0) - (oldPassiveEffect.hp || 0);
+      const resistDelta = (newPassiveEffect.resist || 0) - (oldPassiveEffect.resist || 0);
       if (acDelta) c.ac = Math.max(0, Math.round((Number(c.ac) || 0) + acDelta));
       if (hpDelta) {
         c.maxHp = Math.max(1, Math.round((Number(c.maxHp) || 1) + hpDelta));
         c.hp = Math.max(0, Math.min(c.maxHp, Math.round((Number(c.hp) || 0) + hpDelta)));
       }
-      if (acDelta || hpDelta) {
-        dndAddLog(`✨ ${c.charName || target.name} เปลี่ยนสกิลติดตัวเป็น "${passive.name}"${acDelta ? ` (AC ${acDelta > 0 ? '+' : ''}${acDelta} เป็น ${c.ac})` : ''}${hpDelta ? ` (HP สูงสุด ${hpDelta > 0 ? '+' : ''}${hpDelta} เป็น ${c.maxHp})` : ''}`);
+      if (resistDelta) c.statusResist = Math.max(0, Math.min(100, Math.round((Number(c.statusResist) || 0) + resistDelta)));
+      if (acDelta || hpDelta || resistDelta) {
+        dndAddLog(`✨ ${c.charName || target.name} เปลี่ยนสกิลติดตัวเป็น "${passive.name}"${acDelta ? ` (AC ${acDelta > 0 ? '+' : ''}${acDelta} เป็น ${c.ac})` : ''}${hpDelta ? ` (HP สูงสุด ${hpDelta > 0 ? '+' : ''}${hpDelta} เป็น ${c.maxHp})` : ''}${resistDelta ? ` (ต้านทานสถานะ ${resistDelta > 0 ? '+' : ''}${resistDelta}% เป็น ${c.statusResist}%)` : ''}`);
       }
     }
   }
@@ -804,6 +1006,8 @@ function dndHandleDmUpdate(ws, targetId, updates) {
     if (Number.isFinite(n) && conHpDelta) n += conHpDelta;
     const wasDead = dndIsCharDead(c);
     if (Number.isFinite(n)) c.hp = Math.max(0, Math.min(c.maxHp || 9999, Math.round(n)));
+    // DM เพิ่ม HP ให้เองโดยตรง (>0) = ยกเลิกสถานะ "ตายถาวร" ด้วย เพราะถือว่า DM ตั้งใจชุบให้ฟื้นกลับมาเอง
+    if (c.permaDead && c.hp > 0) c.permaDead = false;
     revived = wasDead && !dndIsCharDead(c);
   } else if (conHpDelta) {
     // DM ไม่ได้ส่งค่า HP มาด้วย แต่ CON เปลี่ยน — ปรับ HP ปัจจุบันตามส่วนต่างเช่นกัน
@@ -851,6 +1055,7 @@ const { createTurnOrder, dndNormalizeTurnEntry } = require('./dnd/turn-order');
 const dndTurnOrderModule = createTurnOrder({
   findByWs: dndFindByWs, sendError: dndSendError, addLog: dndAddLog,
   getPlayers: () => dndPlayers, getTokens: () => dndTokens, getCurrentMapId: () => dndCurrentMapId,
+  getCurrentMap: () => dndCurrentMap(), mapAllowsPlayer: dndMapAllowsPlayer,
 });
 const {
   cleanTurnOrder: dndCleanTurnOrder,
@@ -906,7 +1111,7 @@ function dndHandleMapCreate(ws, name) {
   const p = dndFindByWs(ws);
   if (!p || !p.isDM) return;
   const cleanName = (name || '').toString().trim().slice(0, 30) || `แผนที่ ${dndMaps.length + 1}`;
-  const map = { id: dndNextMapId++, name: cleanName, background: null, playerIds: [] };
+  const map = { id: dndNextMapId++, name: cleanName, background: null, playerIds: [], gridSize: DND_MAP_GRID_DEFAULT };
   dndMaps.push(map);
   dndCurrentMapId = map.id; // สลับไปแผนที่ใหม่ทันทีเพื่อให้ DM ออกแบบต่อได้เลย
   dndAddLog(`🗺️ DM สร้างแผนที่ใหม่ "${cleanName}" และสลับไปแสดงแผนที่นี้`);
@@ -922,10 +1127,20 @@ function dndHandleMapPlayersUpdate(ws, mapId, playerIds) {
   if (!p || !p.isDM) return;
   const map = dndMaps.find(m => m.id === Number(mapId));
   if (!map) return;
+  const prevIds = new Set(Array.isArray(map.playerIds) ? map.playerIds : []);
   const clean = Array.isArray(playerIds)
     ? [...new Set(playerIds.map(id => Number(id)).filter(id => Number.isFinite(id) && dndPlayers.some(pp => pp.id === id)))]
     : [];
   map.playerIds = clean;
+  // ถ้าแผนที่นี้กำลังแสดงอยู่และมีการนับลำดับเทิร์นอยู่แล้ว ผู้เล่นที่พึ่งถูกติ๊กเพิ่มเข้ามาใหม่ (ไม่ได้อยู่ในลิสต์เดิม)
+  // ให้เข้าคิวต่อท้ายลำดับเทิร์นทันทีเหมือนตอนวางมอนสเตอร์เพิ่ม ไม่ต้องกด "เริ่มเทิร์น" ใหม่ (ซึ่งจะสุ่มลำดับใหม่ทั้งหมด)
+  // ต้องทำ "ก่อน" เรียก dndAddLog เพราะ dndAddLog เป็นตัว broadcast state ให้ทุกคน — ถ้าต่อคิวทีหลัง
+  // client จะไม่เห็นคิวใหม่เลยจนกว่าจะมี broadcast รอบถัดไปจากเหตุการณ์อื่น (เช่น กด "ตาถัดไป")
+  if (map.id === dndCurrentMapId) {
+    for (const id of clean) {
+      if (!prevIds.has(id)) dndAppendTurnEntryIfActive('pc', id);
+    }
+  }
   const label = clean.length ? clean.map(id => { const pp = dndPlayers.find(x => x.id === id); return pp ? (pp.character.charName || pp.name) : '?'; }).join(', ') : '(ยังไม่มีใครเลย — ทุกคนจะเห็นมืด)';
   dndAddLog(`🗺️ DM ตั้งผู้เล่นในแผนที่ "${map.name}": ${label}`);
 }
@@ -982,6 +1197,15 @@ function dndHandleMapSwitch(ws, mapId) {
   if (!p || !p.isDM) return;
   const map = dndMaps.find(m => m.id === Number(mapId));
   if (!map) return;
+  // โมดูล 4 (Lifecycle/Despawn): สลับแผนที่ = เปลี่ยนฉาก สัตว์อัญเชิญที่ยังค้างอยู่ทั้งหมด (ทุกแผนที่) หายไปทันที ไม่ค้างข้ามฉากรอเจ้าของกลับมาใช้ทีหลัง
+  if (map.id !== dndCurrentMapId) {
+    const before = dndTokens.length;
+    dndTokens = dndTokens.filter(t => !(t.kind === 'npc' && t.summoned));
+    if (dndTokens.length !== before) {
+      dndCleanTurnOrder();
+      dndAddLog(`💨 เปลี่ยนแผนที่ — สัตว์อัญเชิญที่ยังค้างอยู่หายไปทั้งหมด (${before - dndTokens.length} ตัว)`);
+    }
+  }
   dndCurrentMapId = map.id;
   dndAddLog(`🗺️ DM สลับไปแสดงแผนที่ "${map.name}"`);
 }
@@ -994,6 +1218,20 @@ function dndHandleMapRename(ws, mapId, name) {
   if (!cleanName) { dndSendError(ws, 'กรุณาตั้งชื่อแผนที่'); return; }
   map.name = cleanName;
   dndAddLog(`🗺️ DM เปลี่ยนชื่อแผนที่เป็น "${cleanName}"`);
+}
+// DM ปรับขนาดช่องตาราง (grid) ของแผนที่นี้ — จำนวนช่องต่อด้าน ยิ่งมากช่องยิ่งเล็ก/ถี่ ยิ่งน้อยช่องยิ่งใหญ่
+function dndHandleMapGridSizeUpdate(ws, mapId, gridSize) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const map = dndMaps.find(m => m.id === Number(mapId));
+  if (!map) return;
+  const n = Math.round(Number(gridSize));
+  if (!Number.isFinite(n) || n < DND_MAP_GRID_MIN || n > DND_MAP_GRID_MAX) {
+    dndSendError(ws, `ขนาดช่องแผนที่ต้องเป็นตัวเลขระหว่าง ${DND_MAP_GRID_MIN}-${DND_MAP_GRID_MAX} ช่อง`);
+    return;
+  }
+  map.gridSize = n;
+  dndAddLog(`🗺️ DM ปรับตารางแผนที่ "${map.name}" เป็น ${n}x${n} ช่อง`);
 }
 function dndHandleMapDelete(ws, mapId) {
   const p = dndFindByWs(ws);
@@ -1078,6 +1316,7 @@ const {
   sanitizeTickInterval: dndSanitizeTickInterval,
   sanitizeStatusIcon: dndSanitizeStatusIcon,
   sanitizeStatusColor: dndSanitizeStatusColor,
+  sanitizeVisionMod: dndSanitizeVisionMod,
   buildStatusModText: dndBuildStatusModText,
   handleStatusApply: dndHandleStatusApply,
   handleStatusRemove: dndHandleStatusRemove,
@@ -1085,6 +1324,11 @@ const {
   sweepExpiredStatuses: dndSweepExpiredStatuses,
   allocStatusId: dndAllocStatusId,
 } = dndStatusEffectsModule;
+// เติมฟังก์ชันจากระบบสถานะเข้า ctx ให้โมดูลไอเทม (server/dnd/item.js, ถูกสร้างไปแล้วก่อนหน้านี้ที่บรรทัดบน แต่ dndCtx เป็น object เดียวกัน
+// แก้ไข/เพิ่ม property เข้าไปทีหลังได้เหมือน dndBagAdd/dndBagRemove ด้านบน) ใช้ตอนไอเทมประเภท "เพิ่มวิสัยทัศน์" มอบสถานะบัฟให้ผู้เล่นที่ใช้
+dndCtx.sanitizeVisionMod = dndSanitizeVisionMod;
+dndCtx.sanitizeStatusDuration = dndSanitizeStatusDuration;
+dndCtx.allocStatusId = dndAllocStatusId;
 const DND_VALID_DICE = [4, 6, 8, 10, 12, 20, 100];
 // ทอยลูกเต๋าอิสระ (d4-d100 เลือกเอง) — statKey (ไม่บังคับ) ให้ผู้เล่นเลือกได้เองว่าจะบวกตัวปรับของสเตตัสตัวไหนเพิ่มจาก modifier
 // ที่พิมพ์เอง (บวกเสริมกัน ไม่ใช่แทนที่) ต่างจากโจมตี/สกิลที่สเตตัสถูกกำหนดตายตัวไว้ล่วงหน้าโดย DM
@@ -1116,10 +1360,10 @@ function dndHandleRoll(ws, die, count, modifier, label, statKey) {
 const DND_SKILL_STATS = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const DND_STAT_LABELS_TH = { str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA' };
 // ค่าตั้งต้นของ "โจมตีปกติ" (ตีธรรมดา) — ใช้เมื่อ DM ยังไม่ได้ปรับแต่งอะไรให้ตัวละครคนนั้น (คงพฤติกรรมเดิมของระบบไว้)
-const DND_NORMAL_ATTACK_DEFAULT = { name: 'โจมตีปกติ', stat: 'auto', dmgDie: 6, dmgCount: 1, atkBonus: 0, dmgBonus: 0, range: 0 };
+const DND_NORMAL_ATTACK_DEFAULT = { name: 'โจมตีปกติ', stat: 'auto', dmgDie: 6, dmgCount: 1, atkBonus: 0, dmgBonus: 0, range: 0, reqItemName: '', reqItemQty: 0 };
 // DM ปรับแต่ง "โจมตีปกติ" ของผู้เล่นแต่ละคนได้ (ชื่อท่า / สเตตัสที่ใช้ทอย / ลูกเต๋าดาเมจ / โบนัสทอยตี-โบนัสดาเมจ / ระยะโจมตี)
 // stat: 'auto' = เดิม ใช้ค่ามากสุดระหว่าง STR/DEX เหมือนระบบเดิม, หรือระบุสเตตัสเฉพาะ (เช่น caster ที่อยากให้ตีธรรมดาใช้ INT/WIS/CHA แทน)
-// range: ระยะโจมตีสูงสุดบนแผนที่ (หน่วย % ของแผนที่ 0-100, เท่ากับหน่วยพิกัด token) — 0 = ไม่จำกัดระยะ (ค่าเริ่มต้น คงพฤติกรรมเดิมของระบบไว้)
+// range: ระยะโจมตีสูงสุดบนแผนที่ (หน่วย "จำนวนช่องตาราง" แปลงเป็น % ของแผนที่ปัจจุบันตอนตรวจระยะจริง ดู dndRangeCellsToPercent) — 0 = ไม่จำกัดระยะ (ค่าเริ่มต้น คงพฤติกรรมเดิมของระบบไว้)
 function dndSanitizeNormalAttack(raw) {
   if (raw === null) return null; // DM ล้างค่ากลับไปใช้ค่าเริ่มต้นของระบบ
   const r = (raw && typeof raw === 'object') ? raw : {};
@@ -1130,35 +1374,74 @@ function dndSanitizeNormalAttack(raw) {
   const dmgCount = Math.max(1, Math.min(20, Math.round(Number(r.dmgCount) || 1)));
   const atkBonus = Math.max(-100, Math.min(100, Math.round(Number(r.atkBonus) || 0)));
   const dmgBonus = Math.max(-100, Math.min(100, Math.round(Number(r.dmgBonus) || 0)));
-  const range = Math.max(0, Math.min(100, Math.round(Number(r.range) || 0)));
-  return { name, stat, dmgDie, dmgCount, atkBonus, dmgBonus, range };
+  const range = dndSanitizeAttackRangeCells(r.range);
+  // ไอเทมที่ต้องใช้ประกอบท่าโจมตีปกตินี้ (ไม่บังคับ) — ใช้ helper เดียวกับสกิล (dndSanitizeSkillReqItem) ให้พฤติกรรมเหมือนกันทุกประการ
+  const reqItem = dndSanitizeSkillReqItem(r.reqItem);
+  return { name, stat, dmgDie, dmgCount, atkBonus, dmgBonus, range, reqItemName: reqItem.reqItemName, reqItemQty: reqItem.reqItemQty };
 }
 // สกิลที่ตั้งค่าสถานะ/ดีบัฟไว้ — เมื่อใช้สกิลแล้วจะติดสถานะนี้ให้เป้าหมายอัตโนมัติ (เหมือนที่ DM มอบสถานะเองด้วยมือ แต่ผูกมากับสกิลแทน)
 function dndSanitizeSkillStatus(raw) {
   const s = (raw && typeof raw === 'object') ? raw : {};
-  const name = (s.name || '').toString().trim().slice(0, 24);
-  if (!name) return { name: '', note: '', chance: 100, durationSec: 0, atkMod: 0, dmgMod: 0, defMod: 0, tickValue: 0, tickIntervalSec: 0, icon: '', color: '' };
+  let name = (s.name || '').toString().trim().slice(0, 24);
   const note = (s.note || '').toString().trim().slice(0, 100);
   // โอกาสติดสถานะ (%) — ค่าเริ่มต้น 100 = ติดเสมอเหมือนพฤติกรรมเดิมของระบบ ถ้าอยากให้มีโอกาสพลาด DM ปรับลดได้ (1-100)
   const chanceRaw = s.chance === undefined || s.chance === '' ? 100 : Number(s.chance);
   const chance = Number.isFinite(chanceRaw) ? Math.max(1, Math.min(100, Math.round(chanceRaw))) : 100;
-  // ระยะเวลาสถานะ + บัฟ/ดีบัฟค่าโจมตี/ดาเมจ/ป้องกัน + ระบบ "ต่อวิ" (tick ต่อเวลา) — ใช้ helper ชุดเดียวกับที่ DM มอบสถานะเองมือ
+  // ระยะเวลาสถานะ + บัฟ/ดีบัฟค่าโจมตี/ดาเมจ/ป้องกัน/วิสัยทัศน์ + ระบบ "ต่อวิ" (tick ต่อเวลา) — ใช้ helper ชุดเดียวกับที่ DM มอบสถานะเองมือ
   // (dndHandleStatusApply) เพื่อให้พฤติกรรมของสถานะที่ติดจากสกิลผู้เล่นกับสถานะที่ DM ใส่มือ ทำงานเหมือนกันทุกประการ
   const durationSec = dndSanitizeStatusDuration(s.durationSec);
   const atkMod = dndSanitizeStatusMod(s.atkMod);
   const dmgMod = dndSanitizeStatusMod(s.dmgMod);
   const defMod = dndSanitizeStatusMod(s.defMod);
+  const visionMod = dndSanitizeVisionMod(s.visionMod);
   const tickValue = dndSanitizeStatusTick(s.tickValue);
   const tickIntervalSec = tickValue !== 0 ? dndSanitizeTickInterval(s.tickIntervalSec) : 0;
+  // เดิมถ้าไม่ตั้งชื่อสถานะ ระบบจะทิ้งค่าที่ตั้งไว้ทั้งหมด (รวมถึงวิสัยทัศน์) แบบเงียบๆ — ตอนนี้ถ้า DM ตั้งค่าปรับอะไรไว้ (เช่นวิสัยทัศน์ ±) แต่ลืมใส่ชื่อ
+  // จะตั้งชื่อให้อัตโนมัติแทนการทิ้งค่า กันไม่ให้ค่าที่กรอกไว้หายไปโดยไม่รู้ตัว — ถ้าไม่ได้ตั้งอะไรเลยจริงๆ (ไม่มีชื่อ+ไม่มีค่าปรับใดๆ) ถือว่าสกิลนี้ไม่ผูกสถานะ เหมือนเดิม
+  const hasAnyEffect = !!(atkMod || dmgMod || defMod || visionMod || tickValue);
+  if (!name && !hasAnyEffect) return { name: '', note: '', chance: 100, durationSec: 0, atkMod: 0, dmgMod: 0, defMod: 0, visionMod: 0, tickValue: 0, tickIntervalSec: 0, icon: '', color: '' };
+  if (!name) name = 'เอฟเฟกต์สกิล';
   // ไอคอน/สีของสถานะนี้ (ไม่บังคับ) — ใช้ตอนติดสถานะจากสกิลนี้จริง ๆ แทนค่าเริ่มต้น ☠️/ไม่มีสี เหมือนตอน DM มอบสถานะเองด้วยมือ
   const icon = dndSanitizeStatusIcon(s.icon);
   const color = dndSanitizeStatusColor(s.color);
-  return { name, note, chance, durationSec, atkMod, dmgMod, defMod, tickValue, tickIntervalSec, icon, color };
+  return { name, note, chance, durationSec, atkMod, dmgMod, defMod, visionMod, tickValue, tickIntervalSec, icon, color };
 }
-// เป้าหมายที่สกิล/บัฟ/ดีบัฟ/โจมตีนี้เลือกได้: 'monster' = มอนสเตอร์เท่านั้น, 'player' = ผู้เล่นเท่านั้น, 'both' = ใช้กับใครก็ได้
+// สกิลที่ต้องการไอเทมถึงจะใช้ได้ (ไม่บังคับ) — DM ระบุชื่อ + จำนวนไอเทมที่ต้องมีในกระเป๋าตอนใช้สกิลนี้
+// ไม่มีชื่อไอเทม = สกิลนี้ไม่ต้องการไอเทมอะไรเลย (ใช้ได้อิสระเหมือนเดิม) — ชื่อไอเทมต้องตรงกับชื่อในกระเป๋าผู้เล่นเป๊ะๆ เหมือนระบบไอเทมใช้งานได้
+// ใช้สกิลสำเร็จแล้วจะหักไอเทมออกจากกระเป๋าตามจำนวนที่กำหนดทันที (เหมือนไอเทมใช้งานได้ที่หายไปตอนกดใช้) — DM ไม่ถูกหักไอเทม (DM ไม่มีกระเป๋า/ไม่ถูกจำกัดสิทธิ์)
+function dndSanitizeSkillReqItem(raw) {
+  const r = (raw && typeof raw === 'object') ? raw : {};
+  const name = (r.name || '').toString().trim().slice(0, 40);
+  const qty = Math.max(1, Math.min(999, Math.round(Number(r.qty) || 1)));
+  return { reqItemName: name, reqItemQty: name ? qty : 0 };
+}
+// จำกัดคลาสที่ใช้สกิลนี้ได้ (ไม่บังคับ) — ไม่เลือกคลาสใดเลย = ทุกคลาสใช้ได้ (ค่าเริ่มต้น เข้ากันได้กับสกิลเก่าที่ยังไม่มีช่องนี้ ถือว่า allowedClasses ว่างเปล่า)
+// ใช้ตรวจตอนกดใช้สกิล (dndHandleSkillUse), ตอนอ่านสมุดเวทย์เพื่อเรียนสกิล (server/dnd/item.js), และตอนซื้อสมุดเวทย์ที่ร้านห้องสมุด (server/dnd/shop.js)
+function dndSanitizeAllowedClasses(raw) {
+  if (!Array.isArray(raw)) return [];
+  const validKeys = DND_CLASSES.map(c => c.key);
+  const out = [];
+  for (const v of raw) {
+    const key = (v || '').toString();
+    if (validKeys.includes(key) && !out.includes(key)) out.push(key);
+  }
+  return out;
+}
+// เช็คว่าคลาสที่ระบุใช้สกิลนี้ได้ไหม — allowedClasses ว่างเปล่า = ทุกคลาสใช้ได้ (ไม่จำกัด) DM ไม่ถูกจำกัดด้วยฟังก์ชันนี้ (เช็คแยกที่จุดเรียกใช้)
+function dndSkillClassAllowed(skill, classKey) {
+  const allowed = Array.isArray(skill.allowedClasses) ? skill.allowedClasses : [];
+  return allowed.length === 0 || allowed.includes(classKey);
+}
+// ข้อความแสดงรายชื่อคลาสที่จำกัดไว้ (ใช้โชว์เป็นแบดจ์บนชิปสกิล/ร้านห้องสมุด) — คืนค่าว่างถ้าไม่จำกัด (ทุกคลาสใช้ได้)
+function dndAllowedClassesText(allowedClasses) {
+  const allowed = Array.isArray(allowedClasses) ? allowedClasses : [];
+  if (!allowed.length) return '';
+  return allowed.map(key => { const cls = DND_CLASSES.find(c => c.key === key); return cls ? `${cls.icon} ${cls.name}` : key; }).join(', ');
+}
+// เป้าหมายที่สกิล/บัฟ/ดีบัฟ/โจมตีนี้เลือกได้: 'monster' = มอนสเตอร์เท่านั้น, 'player' = ผู้เล่นเท่านั้น, 'both' = ใช้กับใครก็ได้, 'self' = ใช้กับตัวเองเท่านั้น (ผู้ใช้สกิล)
 // สกิลเก่าที่สร้างไว้ก่อนมีช่องนี้ (targetMode เป็น undefined) จะ fallback ไปใช้กฎเดิม เพื่อไม่ให้พฤติกรรมสกิลที่มีอยู่แล้วเปลี่ยนไปโดยไม่ตั้งใจ
 function dndSanitizeTargetMode(raw) {
-  return (raw === 'monster' || raw === 'player' || raw === 'both') ? raw : '';
+  return (raw === 'monster' || raw === 'player' || raw === 'both' || raw === 'self') ? raw : '';
 }
 function dndSkillTargetMode(skill) {
   const explicit = dndSanitizeTargetMode(skill.targetMode);
@@ -1195,6 +1478,12 @@ function dndHandleSkillCreate(ws, payload) {
   const assignedIds = Array.isArray(payload.assignedIds)
     ? payload.assignedIds.map(Number).filter(id => dndPlayers.some(pp => pp.id === id))
     : [];
+  // libraryOnly: สกิลนี้ "ต้องเรียนก่อนถึงจะใช้ได้" (เช่น อ่านสมุดเวทย์จากร้านห้องสมุด) — ถ้าเปิดไว้ จะไม่ตกกลับไปเป็น
+  // "ทั้งปาร์ตี้ใช้ได้" แม้ assignedIds จะว่างเปล่า (ต่างจากสกิลปกติที่ assignedIds ว่าง = ทั้งปาร์ตี้ใช้ได้เลย)
+  // ต้องมีคนอยู่ใน assignedIds เท่านั้นถึงจะใช้สกิลนี้ได้ (นอกจาก DM ซึ่งใช้ได้เสมอ)
+  const libraryOnly = !!payload.libraryOnly;
+  // คลาสที่ใช้สกิลนี้ได้ (ไม่บังคับ) — ไม่เลือกคลาสใดเลย = ทุกคลาสใช้ได้ ดูรายละเอียดที่ dndSanitizeAllowedClasses
+  const allowedClasses = dndSanitizeAllowedClasses(payload.allowedClasses);
   const cooldownSec = Math.max(0, Math.min(3600, Math.round(Number(payload.cooldownSec) || 0)));
   const maxUses = Math.max(0, Math.min(99, Math.round(Number(payload.maxUses) || 0)));
   // SP (Skill Point / Mana) ที่ต้องใช้ต่อการใช้สกิลนี้ 1 ครั้ง — 0 = ไม่ใช้ SP เลย ผู้เล่นใช้ได้อิสระ (ไม่นับรวม DM)
@@ -1204,23 +1493,30 @@ function dndHandleSkillCreate(ws, payload) {
   // โดนเสมอ (guaranteedHit) — DM ตั้งไว้ล่วงหน้าตอนออกแบบสกิล ไม่ใช่ตัวเลือกที่ผู้เล่นกดตอนใช้สกิล
   // ถ้าเปิดไว้ สกิลนี้จะไม่ทอย 1d20 vs AC / ทอยโอกาสโดน (d100) อีกต่อไป ถือว่าโดนเป้าหมายทันทีทุกครั้งที่ใช้ (ไม่นับคริติคอล) แล้วทอยดาเมจตรง ๆ เลย
   const guaranteedHit = !!payload.guaranteedHit;
+  // เวทย์เลเวล (0 = แคนทริป, 1-9 = เลเวลเวทย์ตามมาตรฐาน D&D) — ใช้เป็นเกณฑ์เลเวลตัวละครขั้นต่ำที่จะใช้สกิลนี้ได้ (เฉพาะสกิล libraryOnly ดู dndHandleSkillUse)
+  // และใช้คำนวณราคาสมุดเวทย์ในร้านห้องสมุด (ดู dndSpellbookPriceForLevel)
+  const level = Math.max(0, Math.min(9, Math.round(Number(payload.level) || 0)));
 
   // สถานะ/ดีบัฟที่ผูกกับสกิล (ไม่บังคับ) — ใช้สกิลแล้วเป้าหมายจะติดสถานะนี้ให้อัตโนมัติ ใช้ร่วมกับดาเมจ/ฮีลได้ในสกิลเดียวกัน
   const status = dndSanitizeSkillStatus(payload.status);
+  // ไอเทมที่ต้องใช้ประกอบสกิลนี้ (ไม่บังคับ) — ต้องมีในกระเป๋าครบตามจำนวนถึงจะใช้สกิลได้ ใช้แล้วไอเทมจะถูกหักออกไปตามจำนวนที่ตั้งไว้
+  const reqItem = dndSanitizeSkillReqItem(payload.reqItem);
   // สกิลบัฟเพื่อน (ไม่บังคับ) — เปิดไว้แล้วตอนใช้สกิลจะเลือกเป้าหมายเป็นผู้เล่นได้ (เหมือนสกิลฮีล) แทนที่จะเลือกได้แต่มอนสเตอร์
   const buffAlly = !!payload.buffAlly;
   // เป้าหมายที่เลือกได้ตอนใช้สกิลนี้: 'monster' / 'player' / 'both' (ใช้กับใครก็ได้) — ไม่ระบุ = ให้ระบบเดาจากค่าฮีล/บัฟ/ลบล้างสถานะเหมือนเดิม
-  const targetMode = dndSanitizeTargetMode(payload.targetMode) || (buffAlly || healDie || (payload.cleanse && payload.cleanse.enabled) ? 'player' : 'monster');
+  let targetMode = dndSanitizeTargetMode(payload.targetMode) || (buffAlly || healDie || (payload.cleanse && payload.cleanse.enabled) ? 'player' : 'monster');
 
   // สกิล AOE (พื้นที่บริเวณ): เป้าเดี่ยวปกติยังต้องเลือกเป้าหมายหลักเหมือนเดิม แต่ถ้าตั้งรัศมีไว้ (>0)
   // ดาเมจจะกระจายไปโดนเป้าหมายอื่น ๆ ที่อยู่ในระยะรอบเป้าหมายหลักบนแผนที่ด้วย โดยดาเมจจะลดหลั่นตามระยะห่างจากจุดศูนย์กลาง
   // หน่วยรัศมีอิงตามพิกัด token บนแผนที่ (0-100 = กว้าง/ยาวเต็มแผนที่) — 0 = ไม่มี AOE ยิงเป้าเดี่ยวเหมือนเดิม
   const aoeRaw = (payload.aoe && typeof payload.aoe === 'object') ? payload.aoe : {};
   const aoeRadius = Math.max(0, Math.min(100, Math.round(Number(aoeRaw.radius) || 0)));
-  // ระยะโจมตี (%) — 0 = ไม่จำกัดระยะ, ใช้เดียวกันกับหน่วยพิกัด token บนแผนที่ (0-100 = กว้าง/ยาวเต็มแผนที่)
+  // รูปแบบพื้นที่ AOE: 'circle' (ค่าเริ่มต้น) = วงกลมรอบเป้าหมายหลัก, 'line' = เส้นตรงพุ่งจากตัวผู้ใช้สกิลไปยังเป้าหมายหลัก กว้างเท่ารัศมีที่ตั้งไว้
+  const aoeShape = dndSanitizeAoeShape(aoeRaw.shape);
+  // ระยะโจมตี (หน่วย "จำนวนช่องตาราง") — 0 = ไม่จำกัดระยะ, แปลงเป็น % ของแผนที่ปัจจุบันตอนตรวจระยะจริง (ดู dndRangeCellsToPercent) โดยอิงพิกัด token บนแผนที่ (0-100 = กว้าง/ยาวเต็มแผนที่)
   // ตอนใช้สกิลจะวัดระยะห่างจริงระหว่าง token ผู้ใช้กับ token เป้าหมายบนแผนที่ปัจจุบัน ถ้าไกลเกินระยะนี้จะใช้สกิลไม่ได้
   // ถ้าฝ่ายใดฝ่ายหนึ่งไม่มี token อยู่บนแผนที่ (เล่นแบบไม่มีแผนที่) จะไม่ตรวจระยะให้ ปล่อยผ่านเหมือนเดิม ดูรายละเอียดที่ dndHandleSkillUse
-  const range = Math.max(0, Math.min(100, Math.round(Number(payload.range) || 0)));
+  const range = dndSanitizeAttackRangeCells(payload.range);
 
   // สกิลลบล้างสถานะผิดปกติ (cleanse): เปิดใช้แล้วต้องเลือกเป้าหมายเป็นผู้เล่นเท่านั้น — cleanseName ว่าง = ล้างสถานะทั้งหมดที่ติดอยู่,
   // ถ้าระบุชื่อไว้จะล้างเฉพาะสถานะที่ชื่อตรงกัน (ใช้ทำสกิลแก้พิษ/แก้มึนงงเฉพาะทางได้) — ใช้ร่วมกับดาเมจ/ฮีล/ติดสถานะในสกิลเดียวกันได้
@@ -1228,18 +1524,35 @@ function dndHandleSkillCreate(ws, payload) {
   const cleanseEnabled = !!cleanseRaw.enabled;
   const cleanseName = cleanseEnabled ? (cleanseRaw.name || '').toString().trim().slice(0, 24) : '';
 
-  const skill = { id: dndNextSkillId++, name, icon, color, stat, desc, dmgDie, dmgCount, dmgMod, healDie, healCount, healMod, healRevive,
+  // สกิลอัญเชิญ (isSummon) — DM เลือกเองได้เต็มที่ตอนสร้างสกิลไหนก็ได้ (ไม่จำกัดแค่สกิลจากสมุดเวทย์) ว่าจะให้เป็นสกิลอัญเชิญไหม
+  // แล้วเลือกจาก "แคตตาล็อกสัตว์อัญเชิญ" (DND_SUMMON_TEMPLATES ในไฟล์ summon-templates.js) ว่าจะอัญเชิญตัวไหน — เปลี่ยนได้ตลอดผ่านปุ่มแก้ไขสกิลทีหลัง
+  // ไม่ต้องแก้ไฟล์ข้อมูลฝั่งเซิร์ฟเวอร์อีกต่อไป (ดู dndHandleSkillUse ตรง `if (skill.isSummon)` ที่ใช้ค่านี้จริงตอนร่าย)
+  const isSummon = !!payload.isSummon;
+  const summonTemplateKeyRaw = (payload.summonTemplateKey || '').toString();
+  const summonTemplateKey = isSummon && DND_SUMMON_TEMPLATES[summonTemplateKeyRaw] ? summonTemplateKeyRaw : '';
+  const summonDurationSec = Math.max(0, Math.min(3600, Math.round(Number(payload.summonDurationSec) || 0)));
+  const summonMaxActive = Math.max(1, Math.min(10, Math.round(Number(payload.summonMaxActive) || 1)));
+  // สกิลอัญเชิญไม่ได้ใช้เป้าหมายที่เลือกจริง (ดู dndHandleSkillUse ตรง `if (skill.isSummon)` ที่ return ก่อนถึง logic ใช้ target)
+  // แต่ flow เดิมยังต้องเลือกเป้าหมายที่ "ถูกต้อง" ผ่าน dndFindCombatTarget ก่อนเข้ามาถึงตรงนั้นอยู่ดี — บังคับเป็น 'self' เสมอ
+  // กันไม่ให้ DM เผลอตั้ง targetMode ผิด (เช่น 'monster') แล้วร่ายไม่ได้เพราะหาเป้าหมายไม่เจอตอนแผนที่ไม่มีมอนสเตอร์เลย
+  if (isSummon) targetMode = 'self';
+
+  const skill = { id: dndNextSkillId++, name, icon, color, stat, desc, level, dmgDie, dmgCount, dmgMod, healDie, healCount, healMod, healRevive,
     statusName: status.name, statusNote: status.note, statusChance: status.chance,
-    statusDurationSec: status.durationSec, statusAtkMod: status.atkMod, statusDmgMod: status.dmgMod, statusDefMod: status.defMod,
+    statusDurationSec: status.durationSec, statusAtkMod: status.atkMod, statusDmgMod: status.dmgMod, statusDefMod: status.defMod, statusVisionMod: status.visionMod,
     statusTickValue: status.tickValue, statusTickIntervalSec: status.tickIntervalSec, statusIcon: status.icon, statusColor: status.color,
-    buffAlly, targetMode, assignedIds, cooldownSec, maxUses, spCost, hitChance, guaranteedHit, aoeRadius, range, cleanseEnabled, cleanseName };
+    reqItemName: reqItem.reqItemName, reqItemQty: reqItem.reqItemQty,
+    buffAlly, targetMode, assignedIds, libraryOnly, allowedClasses, cooldownSec, maxUses, spCost, hitChance, guaranteedHit, aoeRadius, aoeShape, range, cleanseEnabled, cleanseName,
+    isSummon, summonTemplateKey, summonDurationSec, summonMaxActive };
   dndSkills.push(skill);
   const assignedNames = assignedIds.map(id => { const pp = dndPlayers.find(pp => pp.id === id); return pp ? (pp.character.charName || pp.name) : null; }).filter(Boolean);
-  const assignText = assignedNames.length ? ` — มอบให้: ${assignedNames.join(', ')}` : ' — ทั้งปาร์ตี้ใช้ได้';
-  const ruleText = `${cooldownSec ? ` (คูลดาวน์ ${cooldownSec}วิ)` : ''}${maxUses ? ` (ใช้ได้ ${maxUses} ครั้ง)` : ''}${spCost ? ` (ใช้ SP ${spCost})` : ''}`;
+  const assignText = assignedNames.length ? ` — มอบให้: ${assignedNames.join(', ')}` : (libraryOnly ? ' — ยังไม่มีใครเรียนรู้ (ต้องเรียนก่อนถึงจะใช้ได้)' : ' — ทั้งปาร์ตี้ใช้ได้');
+  const classText = allowedClasses.length ? ` (🎓 เฉพาะคลาส: ${dndAllowedClassesText(allowedClasses)})` : '';
+  const levelText = ` (📖 เวทย์เลเวล ${level === 0 ? 'แคนทริป' : level})`;
+  const ruleText = `${libraryOnly ? ' 🔒ต้องเรียนก่อน' : ''}${cooldownSec ? ` (คูลดาวน์ ${cooldownSec}วิ)` : ''}${maxUses ? ` (ใช้ได้ ${maxUses} ครั้ง)` : ''}${spCost ? ` (ใช้ SP ${spCost})` : ''}${reqItem.reqItemName ? ` (ต้องมี ${reqItem.reqItemName} x${reqItem.reqItemQty})` : ''}`;
   const healText = healDie ? ` (${healRevive ? '🌟 ชุบชีวิต' : '💚 ฟื้นฟู'} HP ${healCount}d${healDie}${healMod ? (healMod > 0 ? '+' + healMod : healMod) : ''})` : '';
-  const targetModeText = targetMode === 'both' ? ' 🎯เป้าหมาย: มอนสเตอร์+ผู้เล่น' : (targetMode === 'player' ? ' 🎯เป้าหมาย: ผู้เล่นเท่านั้น' : ' 🎯เป้าหมาย: มอนสเตอร์เท่านั้น');
-  dndAddLog(`✨ DM ออกแบบสกิลใหม่: ${name}${stat ? ` (ผูก ${stat.toUpperCase()})` : (hitChance < 100 ? ` (🎯 โอกาสโดน ${hitChance}%)` : '')}${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${dmgDie ? ` (ดาเมจ ${dmgCount}d${dmgDie}${dmgMod ? (dmgMod > 0 ? '+' + dmgMod : dmgMod) : ''})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec)})` : ''}${aoeRadius ? ` (💥 AOE รัศมี ${aoeRadius})` : ''}${range ? ` (📏 ระยะโจมตี ${range})` : ''}${cleanseEnabled ? ` (✨ ลบล้างสถานะ${cleanseName ? ` "${cleanseName}"` : 'ทั้งหมด'})` : ''}${ruleText}${assignText}${targetModeText}`);
+  const targetModeText = targetMode === 'both' ? ' 🎯เป้าหมาย: มอนสเตอร์+ผู้เล่น' : (targetMode === 'self' ? ' 🎯เป้าหมาย: ตัวเองเท่านั้น' : (targetMode === 'player' ? ' 🎯เป้าหมาย: ผู้เล่นเท่านั้น' : ' 🎯เป้าหมาย: มอนสเตอร์เท่านั้น'));
+  dndAddLog(`✨ DM ออกแบบสกิลใหม่: ${name}${levelText}${stat ? ` (ผูก ${stat.toUpperCase()})` : (hitChance < 100 ? ` (🎯 โอกาสโดน ${hitChance}%)` : '')}${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${dmgDie ? ` (ดาเมจ ${dmgCount}d${dmgDie}${dmgMod ? (dmgMod > 0 ? '+' + dmgMod : dmgMod) : ''})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec, status.visionMod)})` : ''}${aoeRadius ? ` (💥 AOE${aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${aoeRadius})` : ''}${range ? ` (📏 ระยะโจมตี ${range} ช่อง)` : ''}${cleanseEnabled ? ` (✨ ลบล้างสถานะ${cleanseName ? ` "${cleanseName}"` : 'ทั้งหมด'})` : ''}${classText}${ruleText}${assignText}${targetModeText}${isSummon ? ` (🔮 อัญเชิญ: ${summonTemplateKey ? DND_SUMMON_TEMPLATES[summonTemplateKey].name : 'ยังไม่เลือกตัว'}${summonMaxActive > 1 ? ` x${summonMaxActive}` : ''}${summonDurationSec ? ` อยู่ได้ ${summonDurationSec}วิ` : ''})` : ''}`);
 }
 // DM แก้ไขสกิลที่มีอยู่แล้วได้ทุกเมื่อ — เปลี่ยนรายละเอียด, คูลดาวน์, จำนวนครั้ง, หรือมอบ/ถอนสิทธิ์ให้ผู้เล่นคนไหนก็ได้
 function dndHandleSkillEdit(ws, skillId, payload) {
@@ -1266,6 +1579,8 @@ function dndHandleSkillEdit(ws, skillId, payload) {
   const hitChance = dndSanitizeHitChance(payload.hitChance);
   // โดนเสมอ (guaranteedHit) — DM ตั้งไว้ล่วงหน้าตอนแก้สกิล ไม่ใช่ตัวเลือกที่ผู้เล่นกดตอนใช้สกิล ดูรายละเอียดที่ dndHandleSkillCreate
   const guaranteedHit = !!payload.guaranteedHit;
+  // เวทย์เลเวล (0 = แคนทริป, 1-9) — แก้ไขได้เหมือนกัน ดูรายละเอียดที่ dndHandleSkillCreate
+  const level = Math.max(0, Math.min(9, Math.round(Number(payload.level) || 0)));
 
   const heal = (payload.heal && typeof payload.heal === 'object') ? payload.heal : {};
   const healDie = DND_VALID_DICE.includes(Number(heal.die)) ? Number(heal.die) : 0;
@@ -1276,16 +1591,19 @@ function dndHandleSkillEdit(ws, skillId, payload) {
 
   // สถานะ/ดีบัฟที่ผูกกับสกิล (ไม่บังคับ) — แก้ไขได้เหมือนดาเมจ/ฮีล
   const status = dndSanitizeSkillStatus(payload.status);
+  // ไอเทมที่ต้องใช้ประกอบสกิลนี้ (ไม่บังคับ) — แก้ไขได้เหมือนกัน
+  const reqItem = dndSanitizeSkillReqItem(payload.reqItem);
   // สกิลบัฟเพื่อน (ไม่บังคับ) — เปิดไว้แล้วตอนใช้สกิลจะเลือกเป้าหมายเป็นผู้เล่นได้
   const buffAlly = !!payload.buffAlly;
   // เป้าหมายที่เลือกได้ตอนใช้สกิลนี้: 'monster' / 'player' / 'both' — ดูรายละเอียดที่ dndHandleSkillCreate
-  const targetMode = dndSanitizeTargetMode(payload.targetMode) || (buffAlly || healDie || (payload.cleanse && payload.cleanse.enabled) ? 'player' : 'monster');
+  let targetMode = dndSanitizeTargetMode(payload.targetMode) || (buffAlly || healDie || (payload.cleanse && payload.cleanse.enabled) ? 'player' : 'monster');
 
-  // รัศมี AOE (0 = เป้าเดี่ยวปกติ) — ดูรายละเอียดหน่วยที่ dndHandleSkillCreate
+  // รัศมี AOE (0 = เป้าเดี่ยวปกติ) + รูปแบบพื้นที่ — ดูรายละเอียดหน่วยที่ dndHandleSkillCreate
   const aoeRaw = (payload.aoe && typeof payload.aoe === 'object') ? payload.aoe : {};
   const aoeRadius = Math.max(0, Math.min(100, Math.round(Number(aoeRaw.radius) || 0)));
-  // ระยะโจมตี (0 = ไม่จำกัดระยะ) — ดูรายละเอียดที่ dndHandleSkillCreate
-  const range = Math.max(0, Math.min(100, Math.round(Number(payload.range) || 0)));
+  const aoeShape = dndSanitizeAoeShape(aoeRaw.shape);
+  // ระยะโจมตี (0 = ไม่จำกัดระยะ, หน่วย "จำนวนช่องตาราง") — ดูรายละเอียดที่ dndHandleSkillCreate
+  const range = dndSanitizeAttackRangeCells(payload.range);
 
   // สกิลลบล้างสถานะ (cleanse) — ดูรายละเอียดที่ dndHandleSkillCreate
   const cleanseRaw = (payload.cleanse && typeof payload.cleanse === 'object') ? payload.cleanse : {};
@@ -1295,22 +1613,40 @@ function dndHandleSkillEdit(ws, skillId, payload) {
   const assignedIds = Array.isArray(payload.assignedIds)
     ? payload.assignedIds.map(Number).filter(id => dndPlayers.some(pp => pp.id === id))
     : [];
+  const libraryOnly = !!payload.libraryOnly;
+  // คลาสที่ใช้สกิลนี้ได้ (ไม่บังคับ) — แก้ไขได้เหมือนกัน ดูรายละเอียดที่ dndSanitizeAllowedClasses
+  const allowedClasses = dndSanitizeAllowedClasses(payload.allowedClasses);
 
-  skill.name = name; skill.icon = dndSanitizeSkillIcon(payload.icon); skill.color = dndSanitizeStatusColor(payload.color); skill.stat = stat; skill.desc = desc;
+  // สกิลอัญเชิญ (isSummon) — DM แก้ไขได้ตลอด รวมถึงสกิลจากสมุดเวทย์ที่ seed มาให้ตั้งแต่แรก (เช่น "Summon Beast") เปลี่ยนตัวที่อัญเชิญ
+  // ได้จริงในเกมผ่านปุ่ม "✏️ แก้ไข/มอบสกิล" ตรงนี้เลย ไม่ต้องแก้ไฟล์ข้อมูลฝั่งเซิร์ฟเวอร์ ดูรายละเอียดที่ dndHandleSkillCreate
+  const isSummon = !!payload.isSummon;
+  const summonTemplateKeyRaw = (payload.summonTemplateKey || '').toString();
+  const summonTemplateKey = isSummon && DND_SUMMON_TEMPLATES[summonTemplateKeyRaw] ? summonTemplateKeyRaw : '';
+  const summonDurationSec = Math.max(0, Math.min(3600, Math.round(Number(payload.summonDurationSec) || 0)));
+  const summonMaxActive = Math.max(1, Math.min(10, Math.round(Number(payload.summonMaxActive) || 1)));
+  // เหตุผลเดียวกับ dndHandleSkillCreate — บังคับ 'self' เสมอสำหรับสกิลอัญเชิญ กันหาเป้าหมายไม่เจอ
+  if (isSummon) targetMode = 'self';
+
+  skill.name = name; skill.icon = dndSanitizeSkillIcon(payload.icon); skill.color = dndSanitizeStatusColor(payload.color); skill.stat = stat; skill.desc = desc; skill.level = level;
   skill.dmgDie = dmgDie; skill.dmgCount = dmgCount; skill.dmgMod = dmgMod;
   skill.healDie = healDie; skill.healCount = healCount; skill.healMod = healMod; skill.healRevive = healRevive;
   skill.statusName = status.name; skill.statusNote = status.note; skill.statusChance = status.chance; skill.buffAlly = buffAlly; skill.targetMode = targetMode;
-  skill.statusDurationSec = status.durationSec; skill.statusAtkMod = status.atkMod; skill.statusDmgMod = status.dmgMod; skill.statusDefMod = status.defMod;
+  skill.statusDurationSec = status.durationSec; skill.statusAtkMod = status.atkMod; skill.statusDmgMod = status.dmgMod; skill.statusDefMod = status.defMod; skill.statusVisionMod = status.visionMod;
   skill.statusTickValue = status.tickValue; skill.statusTickIntervalSec = status.tickIntervalSec; skill.statusIcon = status.icon; skill.statusColor = status.color;
+  skill.reqItemName = reqItem.reqItemName; skill.reqItemQty = reqItem.reqItemQty;
   skill.cooldownSec = cooldownSec; skill.maxUses = maxUses; skill.spCost = spCost; skill.hitChance = hitChance; skill.guaranteedHit = guaranteedHit;
-  skill.assignedIds = assignedIds;
-  skill.aoeRadius = aoeRadius; skill.range = range;
+  skill.assignedIds = assignedIds; skill.libraryOnly = libraryOnly; skill.allowedClasses = allowedClasses;
+  skill.aoeRadius = aoeRadius; skill.aoeShape = aoeShape; skill.range = range;
   skill.cleanseEnabled = cleanseEnabled; skill.cleanseName = cleanseName;
+  skill.isSummon = isSummon; skill.summonTemplateKey = summonTemplateKey; skill.summonDurationSec = summonDurationSec; skill.summonMaxActive = summonMaxActive;
 
   const assignedNames = assignedIds.map(id => { const pp = dndPlayers.find(pp => pp.id === id); return pp ? (pp.character.charName || pp.name) : null; }).filter(Boolean);
   const assignText = assignedNames.length ? ` — มอบให้: ${assignedNames.join(', ')}` : ' — ทั้งปาร์ตี้ใช้ได้';
+  const classText = allowedClasses.length ? ` (🎓 เฉพาะคลาส: ${dndAllowedClassesText(allowedClasses)})` : '';
   const healText = healDie ? ` (${healRevive ? '🌟 ชุบชีวิต' : '💚 ฟื้นฟู'} HP ${healCount}d${healDie}${healMod ? (healMod > 0 ? '+' + healMod : healMod) : ''})` : '';
-  dndAddLog(`✏️ DM แก้ไขสกิล: ${name}${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${range ? ` (📏 ระยะโจมตี ${range})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec)})` : ''}${assignText}`);
+  const reqItemText = reqItem.reqItemName ? ` (ต้องมี ${reqItem.reqItemName} x${reqItem.reqItemQty})` : '';
+  const summonText = isSummon ? ` (🔮 อัญเชิญ: ${summonTemplateKey ? DND_SUMMON_TEMPLATES[summonTemplateKey].name : 'ยังไม่เลือกตัว'}${summonMaxActive > 1 ? ` x${summonMaxActive}` : ''}${summonDurationSec ? ` อยู่ได้ ${summonDurationSec}วิ` : ''})` : '';
+  dndAddLog(`✏️ DM แก้ไขสกิล: ${name} (📖 เวทย์เลเวล ${level === 0 ? 'แคนทริป' : level})${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${range ? ` (📏 ระยะโจมตี ${range} ช่อง)` : ''}${aoeRadius ? ` (💥 AOE${aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${aoeRadius})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec, status.visionMod)})` : ''}${reqItemText}${classText}${assignText}${summonText}`);
 }
 function dndHandleSkillDelete(ws, skillId) {
   const p = dndFindByWs(ws);
@@ -1371,6 +1707,72 @@ function dndCheckTokenDefeat(token, killerPlayer) {
   dndGrantRewardsForDefeat(token, killerPlayer);
 }
 
+// ============================================================
+// โมดูล 4: Lifecycle / Despawn ของ token อัญเชิญ (summoned: true)
+// ครอบคลุม 3 เหตุตามที่ระบุไว้: หมดเวลา (summonExpiresAt), เจ้าของหมดสติ/ตาย, เจ้าของออกจากเกม/แผนที่เปลี่ยน
+// - หมดเวลา + เจ้าของหมดสติ/ตาย: เช็คจาก sweep tick นี้ทุก 1 วิ (รวมเข้ากับ dndSweepExpiredStatuses ที่ index.js เรียกอยู่แล้ว ดู dndSweepExpired ด้านล่าง)
+// - เจ้าของออกจากเกม (DM เตะออกถาวร): ลบทันทีตรงจุดนั้นเลยใน dndHandleDmKickPlayer (ไม่ต้องรอ tick)
+// - แผนที่เปลี่ยน (DM สลับแผนที่ที่แสดงอยู่): ลบทันทีตรงจุดนั้นเลยใน dndHandleMapSwitch (ไม่ต้องรอ tick)
+//   หมายเหตุการออกแบบ: ตีความ "แผนที่เปลี่ยน" แบบกว้าง คือสัตว์อัญเชิญที่ยังค้างอยู่ทั้งหมด (ทุกแผนที่) หายไปทันทีที่ DM สลับฉาก
+//   ไม่ใช่แค่ตัวที่อยู่บนแผนที่ที่กำลังจะออกจากไปเท่านั้น เพราะสัตว์อัญเชิญไม่ควร "ค้าง" ข้ามฉากรอเจ้าของย้อนกลับมาใช้งานทีหลัง
+// ============================================================
+// ลบ token อัญเชิญ 1 ตัวออกจากระบบให้ครบ (ตัด array + เอาออกจากลำดับเทิร์นถ้าอยู่ในนั้น) — ใช้ร่วมกันทั้ง sweep tick และปุ่มยกเลิกอัญเชิญเอง
+function dndRemoveSummonToken(token) {
+  const idx = dndTokens.findIndex(tt => tt.id === token.id);
+  if (idx === -1) return false;
+  dndTokens.splice(idx, 1);
+  dndCleanTurnOrder();
+  return true;
+}
+// ไล่เช็กทุกวินาทีว่ามีสัตว์อัญเชิญตัวไหนหมดเวลา หรือเจ้าของหมดสติ/ตายไปแล้วหรือยัง (หมดแล้วให้หายไปอัตโนมัติ)
+// เขียนตามแพทเทิร์นเดียวกับ dndSweepExpiredStatuses (server/dnd/status-effects.js): สะสม log แบบเงียบ (ไม่ broadcast ทีละบรรทัด)
+// แล้ว broadcast รวมครั้งเดียวท้ายสุดถ้ามีอะไรเปลี่ยนจริง กันสแปม broadcast ถ้ามีหลายตัวหมดอายุพร้อมกันในติ๊กเดียว
+function dndSweepExpiredSummons() {
+  const now = Date.now();
+  let changed = false;
+  for (let i = dndTokens.length - 1; i >= 0; i--) {
+    const t = dndTokens[i];
+    if (t.kind !== 'npc' || !t.summoned) continue;
+    const owner = dndPlayers.find(pp => pp.id === t.ownerId);
+    let reason = null;
+    if (t.summonExpiresAt && t.summonExpiresAt <= now) {
+      reason = 'หมดเวลาอัญเชิญแล้ว';
+    } else if (owner && dndIsCharDead(owner.character)) {
+      reason = `เจ้าของ (${owner.character.charName || owner.name}) หมดสติ/ตายไปแล้ว`;
+    } else if (!owner) {
+      // กันขยะค้าง เผื่อกรณีขอบ (เช่นโหลดไฟล์เซฟเก่าที่ ownerId ชี้ไปหาผู้เล่นที่ไม่มีอยู่แล้ว)
+      reason = 'ไม่พบเจ้าของในห้องแล้ว';
+    }
+    if (!reason) continue;
+    dndTokens.splice(i, 1);
+    dndLog.push({ text: `💨 สัตว์อัญเชิญ "${t.name}" หายไปแล้ว (${reason})`, visibleTo: null });
+    if (dndLog.length > 300) dndLog.shift();
+    changed = true;
+  }
+  if (changed) {
+    dndCleanTurnOrder();
+    dndBroadcastState();
+  }
+}
+// รวม sweep tick ทั้งสองระบบ (สถานะ + สัตว์อัญเชิญ) เข้าด้วยกัน — index.js ยังเรียกผ่านชื่อ export เดิม (sweepExpiredStatuses) เหมือนเดิมทุกประการ
+function dndSweepExpired() {
+  dndSweepExpiredStatuses();
+  dndSweepExpiredSummons();
+}
+// เจ้าของสัตว์อัญเชิญยกเลิกอัญเชิญเองได้ทุกเมื่อ ไม่ต้องรอหมดเวลา (DM ก็ยกเลิกแทนใครก็ได้เหมือนกัน) — ต่างจาก dndHandleTokenDelete ตรงที่ไม่ใช่ DM-only
+function dndHandleSummonDismiss(ws, tokenId) {
+  const p = dndFindByWs(ws);
+  if (!p) return;
+  const t = dndTokens.find(tt => tt.id === Number(tokenId) && tt.kind === 'npc' && !!tt.summoned);
+  if (!t) return;
+  const isOwner = t.ownerId === p.id;
+  if (!p.isDM && !isOwner) return;
+  const owner = dndPlayers.find(pp => pp.id === t.ownerId);
+  const ownerName = owner ? (owner.character.charName || owner.name) : '?';
+  dndRemoveSummonToken(t);
+  dndAddLog(p.isDM && !isOwner ? `💨 DM ยกเลิกอัญเชิญ "${t.name}" ของ ${ownerName}` : `💨 ${ownerName} ยกเลิกอัญเชิญ "${t.name}" เอง`);
+}
+
 // ส่งข้อมูลผลทอยแบบสด ๆ ให้ทุกคนเล่นแอนิเมชันทอยลูกเต๋าตอนโจมตี (แยกจาก log ข้อความ)
 function dndBroadcastAttackAnim(payload) {
   const data = JSON.stringify(Object.assign({ type: 'dndAttackAnim' }, payload));
@@ -1378,7 +1780,10 @@ function dndBroadcastAttackAnim(payload) {
     if (p.ws && p.ws.readyState === WebSocket.OPEN) p.ws.send(data);
   }
 }
-function dndFindCombatTarget(targetType, targetId) {
+// selfId (ไม่บังคับ): ถ้าเป้าหมายที่เลือกคือผู้เล่นคนเดียวกับ selfId (เช่นสกิล targetMode 'self' ที่ใช้กับตัวเอง)
+// จะข้ามการเช็ก dndMapAllowsPlayer ไปเลย — เพราะการ "เลือกเป้าหมายเป็นตัวเอง" ไม่ควรถูกบล็อกด้วยการตั้งค่าว่า
+// DM เพิ่มผู้เล่นคนนี้ลงในรายชื่อผู้เล่นของแผนที่ปัจจุบันหรือยัง (ค่านั้นมีไว้กันไม่ให้เลือก "คนอื่น" ที่ไม่ได้อยู่ในฉากนี้)
+function dndFindCombatTarget(targetType, targetId, selfId) {
   if (targetType === 'token') {
     const t = dndTokens.find(tt => tt.id === Number(targetId) && tt.kind === 'npc');
     if (!t) return null;
@@ -1392,17 +1797,33 @@ function dndFindCombatTarget(targetType, targetId) {
   if (targetType === 'player') {
     const target = dndPlayers.find(pp => pp.id === Number(targetId));
     if (!target) return null;
-    if (!dndMapAllowsPlayer(dndCurrentMap(), target.id)) return null; // ผู้เล่นคนนี้ไม่ได้อยู่ในแผนที่ปัจจุบัน เลือกเป็นเป้าหมายไม่ได้
+    const isSelf = selfId !== undefined && Number(selfId) === target.id;
+    if (!isSelf && !dndMapAllowsPlayer(dndCurrentMap(), target.id)) return null; // ผู้เล่นคนนี้ไม่ได้อยู่ในแผนที่ปัจจุบัน เลือกเป็นเป้าหมายไม่ได้ (ยกเว้นเลือกตัวเอง)
     const defMod = dndStatusMods(target.character.statuses).def;
-    const obj = { type: 'player', id: target.id, name: target.character.charName || target.name, hp: target.character.hp, maxHp: target.character.maxHp, ac: Math.max(0, target.character.ac + defMod), dead: dndIsCharDead(target.character) };
+    const obj = { type: 'player', id: target.id, name: target.character.charName || target.name, hp: target.character.hp, maxHp: target.character.maxHp, ac: Math.max(0, target.character.ac + defMod), dead: dndIsCharDead(target.character), permaDead: !!target.character.permaDead };
     obj.applyDamage = dmg => {
       const wasDead = dndIsCharDead(target.character);
+      const wasPermaDead = !!target.character.permaDead;
       target.character.hp = Math.max(0, Math.min(target.character.maxHp, target.character.hp - dmg));
       obj.hp = target.character.hp;
-      if (!wasDead && dndIsCharDead(target.character)) dndAddLog(`💀 ${obj.name} หมดสติ! ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้`);
+      // โดนโจมตีครั้งเดียวดาเมจ >= 2 เท่าของ "เลือดสูงสุด" ตัวเอง (โอเวอร์คิล) = ตายถาวร ฟื้นด้วยไอเทม/สกิลชุบธรรมดาไม่ได้อีกต่อไป
+      const overkillThreshold = DND_OVERKILL_MULT * (Number(target.character.maxHp) || 0);
+      if (!wasPermaDead && overkillThreshold > 0 && dmg >= overkillThreshold) {
+        target.character.permaDead = true;
+      }
+      obj.permaDead = !!target.character.permaDead;
+      if (!wasDead && dndIsCharDead(target.character)) {
+        if (target.character.permaDead) {
+          dndAddLog(`☠️ ${obj.name} โดนโจมตีแรงเกินไป (ดาเมจ ${dmg} ≥ 2 เท่าของเลือดสูงสุด ${target.character.maxHp}) ตายถาวร! ไอเทม/สกิลชุบใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้น`);
+        } else {
+          dndAddLog(`💀 ${obj.name} หมดสติ! ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้`);
+        }
+      }
     };
     // ชุบ HP ให้เป้าหมาย — ใช้กับสกิลชุบของ DM ได้ รวมถึงชุบคนหมดสติ (HP 0) ให้ฟื้นกลับมาได้ด้วย
+    // (แต่ถ้าตายถาวรจากการโอเวอร์คิลแล้ว ฟื้นด้วยวิธีนี้ไม่ได้เด็ดขาด — ต้องให้ DM เพิ่ม HP ให้โดยตรงเท่านั้น)
     obj.applyHeal = amount => {
+      if (target.character.permaDead) return { revived: false, permaDeadBlocked: true };
       const wasDead = dndIsCharDead(target.character);
       target.character.hp = Math.max(0, Math.min(target.character.maxHp, target.character.hp + amount));
       obj.hp = target.character.hp;
@@ -1417,18 +1838,34 @@ function dndFindCombatTarget(targetType, targetId) {
 function dndHandleSkillUse(ws, skillId, targetType, targetId) {
   const p = dndFindByWs(ws);
   if (!p) return;
-  if (!p.isDM && dndIsCharDead(p.character)) { dndSendError(ws, DND_DEAD_MSG); return; }
+  if (!p.isDM && dndIsCharDead(p.character)) { dndSendError(ws, dndDeadMsgFor(p.character)); return; }
   const skill = dndFindUsableSkill(p, skillId);
   if (!skill) return;
   if (skill.locked) { dndSendError(ws, `สกิล "${skill.name}" จะปลดล็อกตอนเลเวล ${skill.level}`); return; }
-  const allowed = p.isDM || !skill.assignedIds || skill.assignedIds.length === 0 || skill.assignedIds.includes(p.id);
+  const allowed = p.isDM || (skill.assignedIds && skill.assignedIds.includes(p.id)) || (!skill.libraryOnly && (!skill.assignedIds || skill.assignedIds.length === 0));
   if (!allowed) { dndSendError(ws, 'คุณไม่มีสิทธิ์ใช้สกิลนี้'); return; }
+  // จำกัดคลาส (ไม่บังคับ) — DM ใช้ได้เสมอไม่ถูกจำกัด ผู้เล่นต้องเป็นคลาสที่ระบุไว้ถึงจะใช้สกิลนี้ได้ (allowedClasses ว่างเปล่า = ทุกคลาสใช้ได้)
+  if (!p.isDM && !dndSkillClassAllowed(skill, p.character && p.character.classKey)) {
+    dndSendError(ws, `สกิล "${skill.name}" ใช้ได้เฉพาะคลาส: ${dndAllowedClassesText(skill.allowedClasses)}`);
+    return;
+  }
+  // จำกัดเลเวล (เฉพาะสกิลจากสมุดเวทย์ / ร้านห้องสมุด เท่านั้น) — เลเวลตัวละครต้อง >= เลเวลสกิลถึงจะร่ายได้ (แบบสะสม)
+  // สกิลประจำคลาสไม่โดนเงื่อนไขนี้ (มีระบบปลดล็อกตามเลเวลของตัวเองอยู่แล้วผ่าน skill.locked ด้านบน)
+  // DM แก้เกณฑ์นี้ได้อยู่แล้วผ่านช่อง "เวทย์เลเวล" ตอนสร้าง/แก้สกิลในร้านห้องสมุด (skill.level) — ไม่ต้องเพิ่มช่องใหม่
+  if (!p.isDM && skill.libraryOnly) {
+    const requiredLevel = Number(skill.level) || 0;
+    const myLevel = Math.max(1, Math.floor(Number(p.character && p.character.level) || 1));
+    if (myLevel < requiredLevel) {
+      dndSendError(ws, `สกิล "${skill.name}" ต้องเลเวลตัวละคร ${requiredLevel} ขึ้นไปถึงจะใช้ได้ (ตอนนี้เลเวล ${myLevel})`);
+      return;
+    }
+  }
   if (!p.isDM && dndTurnOrderModule.getTurnIndex() >= 0 && dndCurrentTurnPlayerId() !== p.id) {
     dndSendError(ws, 'ยังไม่ถึงตาคุณ รอให้ถึงตาก่อนถึงจะใช้สกิลได้');
     return;
   }
 
-  const target = dndFindCombatTarget(targetType, targetId);
+  const target = dndFindCombatTarget(targetType, targetId, p.id);
   if (!target) { dndSendError(ws, 'กรุณาเลือกเป้าหมายที่ถูกต้อง'); return; }
   const isHealSkill = skill.healDie > 0;
   const isCleanseSkill = !!skill.cleanseEnabled;
@@ -1437,8 +1874,14 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
   const skillTargetMode = dndSkillTargetMode(skill);
   if (skillTargetMode === 'player' && target.type !== 'player') { dndSendError(ws, `สกิล "${skill.name}" ตั้งค่าให้ใช้กับผู้เล่นเท่านั้น`); return; }
   if (skillTargetMode === 'monster' && target.type !== 'token') { dndSendError(ws, `สกิล "${skill.name}" ตั้งค่าให้ใช้กับมอนสเตอร์เท่านั้น`); return; }
+  if (skillTargetMode === 'self' && (target.type !== 'player' || target.id !== p.id)) { dndSendError(ws, `สกิล "${skill.name}" ใช้ได้กับตัวเองเท่านั้น`); return; }
   // สกิล "ฟื้นฟู" ธรรมดา (healRevive = false) ใช้ปลุกคนหมดสติไม่ได้เด็ดขาด — ต้องเป็นสกิล "ชุบชีวิต" ที่ DM ตั้งค่าไว้โดยเฉพาะเท่านั้น (เหมือนไอเทม heal/revive)
   // (มอนสเตอร์ไม่มีสถานะ "หมดสติ" แบบผู้เล่น จึงเช็คเฉพาะตอนเป้าหมายเป็นผู้เล่นเท่านั้น)
+  // เป้าหมายตายถาวรจากการโอเวอร์คิล (โดนดาเมจครั้งเดียว >= 2 เท่าของเลือดสูงสุด) — สกิลชุบใช้ปลุกไม่ได้เด็ดขาด แม้จะเป็นสกิล "ชุบชีวิต" ก็ตาม
+  if (isHealSkill && target.type === 'player' && target.permaDead) {
+    dndSendError(ws, `${target.name} ตายถาวรแล้ว (โดนโอเวอร์คิลเกิน 2 เท่าของเลือดสูงสุด) สกิล "${skill.name}" ใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้น`);
+    return;
+  }
   if (isHealSkill && target.type === 'player' && target.dead && !skill.healRevive) {
     dndSendError(ws, `สกิล "${skill.name}" ฟื้นฟู HP เท่านั้น ใช้ปลุก ${target.name} ที่หมดสติไม่ได้ — ต้องใช้สกิลชุบชีวิตแทน (ให้ DM ตั้งค่าสกิลประเภท "ชุบชีวิต")`);
     return;
@@ -1466,19 +1909,83 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
         return;
       }
     }
-    // ตรวจระยะโจมตี (skill.range, 0 = ไม่จำกัด) — วัดระยะห่างจริงบนแผนที่ระหว่าง token ผู้ใช้กับ token เป้าหมาย (พิกัดหน่วย % ของแผนที่ 0-100 ทั้งสองแกน เหมือน AOE)
+    // ตรวจไอเทมที่สกิลนี้ต้องใช้ประกอบ (ถ้ามี) — ต้องมีในกระเป๋าครบตามจำนวนที่ DM ตั้งไว้ถึงจะใช้สกิลได้ (เช็คก่อนใช้จริง ไม่หักถ้ายังไม่พอ)
+    if (skill.reqItemName) {
+      const bag = dndSanitizeBag(p.character.bag);
+      const have = (bag.find(it => it.name === skill.reqItemName) || {}).qty || 0;
+      if (have < skill.reqItemQty) {
+        dndSendError(ws, `ต้องมี "${skill.reqItemName}" x${skill.reqItemQty} ถึงจะใช้สกิล "${skill.name}" ได้ (ตอนนี้มี ${have} ชิ้น)`);
+        return;
+      }
+    }
+    // ตรวจระยะโจมตี (skill.range หน่วยจำนวนช่องตาราง, 0 = ไม่จำกัด) — วัดระยะห่างจริงบนแผนที่ระหว่าง token ผู้ใช้กับ token เป้าหมาย (พิกัดหน่วย % ของแผนที่ 0-100 ทั้งสองแกน เหมือน AOE)
+    // แปลงระยะที่ DM ตั้งไว้ (ช่อง) เป็น % ของแผนที่ปัจจุบันก่อนเทียบ โดยอิงขนาดช่องตาราง (gridSize) ของแผนที่ปัจจุบันเสมอ (ดู dndRangeCellsToPercent)
     // ถ้าฝ่ายใดฝ่ายหนึ่งไม่มี token อยู่บนแผนที่ปัจจุบัน (ยังไม่ได้วาง/เล่นแบบไม่ใช้แผนที่) จะไม่ตรวจระยะให้ ปล่อยผ่านเหมือนเดิม
     if (skill.range > 0) {
       const casterPos = dndTargetMapPos('player', p.id);
       const targetPos = dndTargetMapPos(target.type, target.id);
       if (casterPos && targetPos) {
         const dist = Math.hypot(targetPos.x - casterPos.x, targetPos.y - casterPos.y);
-        if (dist > skill.range) {
-          dndSendError(ws, `เป้าหมายอยู่ไกลเกินระยะโจมตีของสกิล "${skill.name}" (ระยะที่ตั้งไว้ ${skill.range} แต่ห่างจริง ${dist.toFixed(1)}) ให้เข้าใกล้เป้าหมายก่อนแล้วค่อยใช้สกิลนี้`);
+        const cellPct = dndRangeCellsToPercent(1);
+        if (dist > skill.range * cellPct) {
+          dndSendError(ws, `เป้าหมายอยู่ไกลเกินระยะโจมตีของสกิล "${skill.name}" (ระยะที่ตั้งไว้ ${skill.range} ช่อง แต่ห่างจริง ${(dist / cellPct).toFixed(1)} ช่อง) ให้เข้าใกล้เป้าหมายก่อนแล้วค่อยใช้สกิลนี้`);
           return;
         }
       }
     }
+  }
+
+  // ---- สกิลอัญเชิญ (isSummon): แยก flow ออกไปเลยตรงนี้ ก่อนเข้า logic โจมตี/ฮีล/ดีบัฟด้านล่างทั้งหมด
+  // เพราะการ์ตอนอัญเชิญไม่มีการทอยโจมตี/ดาเมจ/ติดสถานะแบบสกิลทั่วไป — สิ่งที่ต้องทำคือ spawn token มอนสเตอร์ตัวใหม่ลงแผนที่แทน
+  // (ผ่านการตรวจสอบทั่วไปทั้งหมดด้านบนมาแล้ว: สิทธิ์ใช้สกิล/คลาส/เลเวล/ตา/คูลดาวน์/จำนวนครั้ง/SP/ไอเทม/ระยะ เหลือแค่เช็คโควตาอัญเชิญ + สร้าง token จริง)
+  if (skill.isSummon) {
+    const tpl = DND_SUMMON_TEMPLATES[skill.summonTemplateKey];
+    if (!tpl) { dndSendError(ws, `สกิล "${skill.name}" ยังไม่มีข้อมูลสัตว์อัญเชิญผูกไว้ (ติดต่อ DM)`); return; }
+    const casterName = p.character.charName || p.name;
+    // จำกัดจำนวนที่อัญเชิญพร้อมกันได้ต่อสกิลนี้ (skill.summonMaxActive) — นับเฉพาะตัวที่ยังไม่หมดอายุ/ยังไม่ตายของผู้เล่นคนนี้จากสกิลนี้เท่านั้น
+    const maxActive = Math.max(1, Math.round(Number(skill.summonMaxActive) || 1));
+    const activeCount = dndTokens.filter(tt => tt.kind === 'npc' && tt.summoned && tt.ownerId === p.id && tt.summonSkillId === skill.id).length;
+    if (activeCount >= maxActive) {
+      dndSendError(ws, `อัญเชิญจากสกิล "${skill.name}" ได้พร้อมกันสูงสุด ${maxActive} ตัว (ตอนนี้มีอยู่ครบแล้ว) ต้องรอตัวเดิมหมดเวลาหรือถูกปราบก่อน`);
+      return;
+    }
+    // spawn ใกล้ตำแหน่ง token ของผู้ร่ายบนแผนที่ปัจจุบัน (เยื้องไปเล็กน้อยกันซ้อนทับพอดี) — ถ้าหาตำแหน่งผู้ร่ายไม่เจอ (ยังไม่มี token/ไม่อยู่แผนที่นี้) ใช้ตำแหน่งสุ่มแทนเหมือน token ทั่วไป
+    const casterPos = dndTargetMapPos('player', p.id);
+    const pos = casterPos
+      ? { x: Math.max(0, Math.min(100, casterPos.x + 4)), y: Math.max(0, Math.min(100, casterPos.y + 4)) }
+      : dndRandomTokenPos();
+    const attacks = (tpl.attacks || []).map(a => Object.assign({ id: dndNextAttackId++ }, dndSanitizeAttackPayload(a)));
+    const durationSec = Math.max(0, Math.round(Number(skill.summonDurationSec) || 0));
+    const newTokenId = dndNextTokenId++;
+    dndTokens.push({
+      id: newTokenId, kind: 'npc', ownerId: p.id, name: `${tpl.name} (${casterName})`, color: tpl.color, image: null,
+      x: pos.x, y: pos.y, mapId: dndCurrentMapId, size: tpl.size || 'normal',
+      hp: tpl.maxHp, maxHp: tpl.maxHp, ac: tpl.ac,
+      str: tpl.str, dex: tpl.dex, con: tpl.con, int: tpl.int, wis: tpl.wis, cha: tpl.cha,
+      attacks, statuses: [], expReward: 0, goldReward: 0, loot: [], statusResist: tpl.statusResist || 0,
+      // ฟิลด์เฉพาะ token อัญเชิญ — summonSkillId ไว้เช็คโควตาต่อสกิล (ด้านบน), summonExpiresAt ไว้ให้ระบบลบทิ้งอัตโนมัติเมื่อหมดเวลา (โมดูลถัดไป)
+      summoned: true, summonSkillId: skill.id,
+      summonExpiresAt: durationSec > 0 ? Date.now() + durationSec * 1000 : 0,
+    });
+    dndAppendTurnEntryIfActive('npc', newTokenId);
+
+    if (!p.isDM) {
+      p.skillUsedCount = p.skillUsedCount || {};
+      p.skillUsedCount[skill.id] = ((p.skillUsedCount[skill.id]) || 0) + 1;
+      if (skill.cooldownSec > 0) {
+        p.skillReadyAt = p.skillReadyAt || {};
+        p.skillReadyAt[skill.id] = Date.now() + skill.cooldownSec * 1000;
+      }
+      if (skill.spCost > 0) {
+        p.character.sp = Math.max(0, Math.round((Number(p.character.sp) || 0) - skill.spCost));
+      }
+      if (skill.reqItemName) {
+        dndBagRemove(p.character, skill.reqItemName, skill.reqItemQty);
+      }
+    }
+
+    dndAddLog(`🔮 ${casterName} ร่ายสกิล "${skill.name}" อัญเชิญ "${tpl.name}" เข้าสนามรบ! (HP ${tpl.maxHp}, AC ${tpl.ac}${durationSec > 0 ? `, อยู่ได้ ${durationSec} วิ` : ''})`);
+    return;
   }
 
   const charName = p.character.charName || p.name;
@@ -1545,16 +2052,18 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
     // ไม่บอกเลือดที่เหลือของมอนสเตอร์ในข้อความแชท — ผู้เล่นจะไม่รู้ HP มอนสเตอร์จากตรงนี้
     if (target.type !== 'token') parts.push(`❤️ ${target.name} HP ${oldHp} → ${target.hp}`);
 
-    // ---- AOE: ถ้าสกิลตั้งรัศมีไว้ (>0) ให้กระจายดาเมจไปยังเป้าหมายอื่น ๆ รอบเป้าหมายหลักบนแผนที่ด้วย
-    // ดาเมจจะลดหลั่นเป็นเส้นตรงตามระยะห่างจากจุดศูนย์กลาง (เป้าหมายหลัก): ระยะ 0 = โดนเต็ม ระยะเท่ารัศมี = ดาเมจ 0
+    // ---- AOE: ถ้าสกิลตั้งรัศมีไว้ (>0) ให้กระจายดาเมจไปยังเป้าหมายอื่น ๆ ในพื้นที่รอบเป้าหมายหลักบนแผนที่ด้วย (วงกลม หรือเส้นตรงจากตัวผู้ใช้ไปยังเป้าหมายหลัก)
+    // ดาเมจจะลดหลั่นเป็นเส้นตรงตามระยะห่างจากพื้นที่นั้น: ระยะ 0 = โดนเต็ม ระยะเท่ารัศมี(ความกว้าง) = ดาเมจ 0
     if (skill.aoeRadius > 0 && damage > 0) {
       const center = dndTargetMapPos(target.type, target.id);
-      if (center) {
+      const origin = skill.aoeShape === 'line' ? dndTargetMapPos('player', p.id) : null;
+      if (center && (skill.aoeShape !== 'line' || origin)) {
         const aoeParts = [];
         for (const cand of dndAoeCandidates()) {
           if (cand.type === target.type && cand.id === target.id) continue; // เป้าหมายหลักโดนดาเมจเต็มไปแล้วด้านบน ไม่ต้องนับซ้ำ
-          const dist = Math.hypot(cand.pos.x - center.x, cand.pos.y - center.y);
-          if (dist > skill.aoeRadius) continue; // อยู่นอกรัศมี ไม่โดน
+          if (skill.aoeShape === 'line' && cand.type === 'player' && cand.id === p.id) continue; // เส้นเริ่มจากตัวผู้ร่ายเอง กันไม่ให้โดนดาเมจตัวเอง
+          const dist = dndAoeDist(skill.aoeShape, origin, center, cand.pos);
+          if (dist > skill.aoeRadius) continue; // อยู่นอกพื้นที่ ไม่โดน
           const aoeDmg = Math.round(damage * Math.max(0, 1 - dist / skill.aoeRadius));
           if (aoeDmg <= 0) continue;
           const aoeTarget = dndFindCombatTarget(cand.type, cand.id);
@@ -1567,7 +2076,7 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
             ? `${aoeTarget.name} -${aoeDmg} (ระยะ ${dist.toFixed(1)})`
             : `${aoeTarget.name} -${aoeDmg} HP ${aoeOldHp}→${aoeTarget.hp} (ระยะ ${dist.toFixed(1)})`);
         }
-        if (aoeParts.length) parts.push(`🌊 AOE รัศมี ${skill.aoeRadius}: ${aoeParts.join(', ')}`);
+        if (aoeParts.length) parts.push(`🌊 AOE${skill.aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${skill.aoeRadius}: ${aoeParts.join(', ')}`);
       }
     }
   }
@@ -1611,6 +2120,10 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
     if (!isBuffApply && target.type === 'token') {
       const rawToken = dndTokens.find(tt => tt.id === target.id);
       resist = Math.max(0, Math.min(100, Number(rawToken && rawToken.statusResist) || 0));
+    } else if (!isBuffApply && target.type === 'player') {
+      // เดิมผู้เล่นไม่มีค่าต้านทานสถานะเลย (ไม่ว่าเผ่าไหน) ต่างจากมอนสเตอร์ที่ DM ตั้งได้ — ตอนนี้ผู้เล่นก็มี statusResist เหมือนกันแล้ว (ดู server/dnd/character.js)
+      const rawPlayer = dndPlayers.find(pp => pp.id === target.id);
+      resist = Math.max(0, Math.min(100, Number(rawPlayer && rawPlayer.character && rawPlayer.character.statusResist) || 0));
     }
     const effChance = isBuffApply ? 100 : Math.max(0, Math.min(100, chance - resist));
     const statusRoll = 1 + Math.floor(Math.random() * 100);
@@ -1629,11 +2142,11 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
         statusTarget.list.push({
           id: dndAllocStatusId(), name: skill.statusName, note: skill.statusNote,
           durationSec, expiresAt,
-          atkMod: Number(skill.statusAtkMod) || 0, dmgMod: Number(skill.statusDmgMod) || 0, defMod: Number(skill.statusDefMod) || 0,
+          atkMod: Number(skill.statusAtkMod) || 0, dmgMod: Number(skill.statusDmgMod) || 0, defMod: Number(skill.statusDefMod) || 0, visionMod: Number(skill.statusVisionMod) || 0,
           tickValue, tickIntervalSec, nextTickAt,
           icon: skill.statusIcon || '☠️', color: skill.statusColor || '',
         });
-        parts.push(`☠️ ติดสถานะ "${skill.statusName}"${skill.statusNote ? ` (${skill.statusNote})` : ''} ให้ ${target.name}${rollTag}${dndBuildStatusModText(skill.statusAtkMod, skill.statusDmgMod, skill.statusDefMod, tickValue, tickIntervalSec)}`);
+        parts.push(`☠️ ติดสถานะ "${skill.statusName}"${skill.statusNote ? ` (${skill.statusNote})` : ''} ให้ ${target.name}${rollTag}${dndBuildStatusModText(skill.statusAtkMod, skill.statusDmgMod, skill.statusDefMod, tickValue, tickIntervalSec, skill.statusVisionMod)}`);
       }
     } else {
       parts.push(`🛡️ ${target.name} ต้านทานสถานะ "${skill.statusName}" ได้สำเร็จ!${rollTag}`);
@@ -1647,7 +2160,7 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
       atkTokenId: dndPcTokenId(p.id), tgtTokenId: target.type === 'token' ? target.id : dndPcTokenId(target.id),
       attackRoll, attackMod, attackTotal, targetAC: target.ac, hit, crit, fumble,
       dmgDie: dealtDamage ? skill.dmgDie : null, dmgCount: dealtDamage ? dmgRolls.length : 0, dmgRolls: dealtDamage ? dmgRolls : null, dmgMod: (skill.dmgMod || 0) + passive.dmg + statusMods.dmg, damage: dealtDamage ? damage : null,
-      aoeRadius: skill.aoeRadius || 0, aoeHits: aoeHitsForAnim,
+      aoeRadius: skill.aoeRadius || 0, aoeShape: skill.aoeRadius > 0 ? (skill.aoeShape || 'circle') : 'circle', aoeHits: aoeHitsForAnim,
     });
   }
   if (!p.isDM) {
@@ -1662,6 +2175,11 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
       p.character.sp = Math.max(0, Math.round((Number(p.character.sp) || 0) - skill.spCost));
       parts.push(`🔵 ใช้ SP ${skill.spCost} (เหลือ ${p.character.sp}/${p.character.maxSp})`);
     }
+    // หักไอเทมที่สกิลนี้ต้องใช้ประกอบ (ถ้ามี) — เช็กว่ามีพอแล้วก่อนหน้านี้แล้วตอนต้นฟังก์ชัน
+    if (skill.reqItemName) {
+      dndBagRemove(p.character, skill.reqItemName, skill.reqItemQty);
+      parts.push(`📦 ใช้ "${skill.reqItemName}" x${skill.reqItemQty}`);
+    }
   }
 
   if (parts.length) dndAddLog(`✨ ${charName} ใช้สกิล "${skill.name}" ใส่ ${target.name}: ${parts.join(' | ')}`);
@@ -1671,7 +2189,7 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
 function dndHandleNormalAttack(ws, targetType, targetId) {
   const p = dndFindByWs(ws);
   if (!p || p.isDM) return;
-  if (dndIsCharDead(p.character)) { dndSendError(ws, DND_DEAD_MSG); return; }
+  if (dndIsCharDead(p.character)) { dndSendError(ws, dndDeadMsgFor(p.character)); return; }
   if (dndTurnOrderModule.getTurnIndex() >= 0 && dndCurrentTurnPlayerId() !== p.id) {
     dndSendError(ws, 'ยังไม่ถึงตาคุณ รอให้ถึงตาก่อนถึงจะโจมตีได้');
     return;
@@ -1686,15 +2204,28 @@ function dndHandleNormalAttack(ws, targetType, targetId) {
   const naDmgCount = Math.max(1, Math.min(20, Math.round(Number(na.dmgCount) || 1)));
   const naAtkBonus = Math.round(Number(na.atkBonus) || 0);
   const naDmgBonus = Math.round(Number(na.dmgBonus) || 0);
-  const naRange = Math.max(0, Math.min(100, Math.round(Number(na.range) || 0)));
-  // ระยะโจมตี: ถ้า DM ตั้งค่าไว้ (>0) ต้องเช็คระยะห่างบนแผนที่ปัจจุบันก่อนโจมตี — 0 = ไม่จำกัดระยะ (พฤติกรรมเดิม)
+  const naRange = dndSanitizeAttackRangeCells(na.range);
+  const naReqItemName = (na.reqItemName || '').toString();
+  const naReqItemQty = naReqItemName ? (Math.max(1, Math.min(999, Math.round(Number(na.reqItemQty) || 1)))) : 0;
+  // ตรวจไอเทมที่ท่าโจมตีปกตินี้ต้องใช้ประกอบ (ถ้ามี) — ต้องมีในกระเป๋าครบตามจำนวนที่ DM ตั้งไว้ถึงจะโจมตีได้ (เช็คก่อนโจมตีจริง ไม่หักถ้ายังไม่พอ) เหมือนระบบสกิล
+  if (naReqItemName) {
+    const bag = dndSanitizeBag(p.character.bag);
+    const have = (bag.find(it => it.name === naReqItemName) || {}).qty || 0;
+    if (have < naReqItemQty) {
+      dndSendError(ws, `ต้องมี "${naReqItemName}" x${naReqItemQty} ถึงจะใช้ "${naName}" ได้ (ตอนนี้มี ${have} ชิ้น)`);
+      return;
+    }
+  }
+  // ระยะโจมตี (หน่วยจำนวนช่องตาราง): ถ้า DM ตั้งค่าไว้ (>0) ต้องเช็คระยะห่างบนแผนที่ปัจจุบันก่อนโจมตี — 0 = ไม่จำกัดระยะ (พฤติกรรมเดิม)
+  // แปลงเป็น % ของแผนที่ปัจจุบันก่อนเทียบ โดยอิงขนาดช่องตาราง (gridSize) ปัจจุบันเสมอ (ดู dndRangeCellsToPercent)
   if (naRange > 0) {
     const atkPos = dndTargetMapPos('player', p.id);
     const tgtPos = dndTargetMapPos(target.type, target.id);
     if (atkPos && tgtPos) {
       const dist = Math.hypot(tgtPos.x - atkPos.x, tgtPos.y - atkPos.y);
-      if (dist > naRange) {
-        dndSendError(ws, `เป้าหมายอยู่นอกระยะโจมตี (ระยะโจมตี ${naRange}, ห่าง ${dist.toFixed(1)})`);
+      const cellPct = dndRangeCellsToPercent(1);
+      if (dist > naRange * cellPct) {
+        dndSendError(ws, `เป้าหมายอยู่นอกระยะโจมตี (ระยะโจมตี ${naRange} ช่อง, ห่าง ${(dist / cellPct).toFixed(1)} ช่อง)`);
         return;
       }
     }
@@ -1719,10 +2250,16 @@ function dndHandleNormalAttack(ws, targetType, targetId) {
     void oldHp;
   }
   const hitTag = res.fumble ? ' | 💨 พลาดสุด ๆ (ทอยได้ 1)' : (!res.hit ? ' | 🛡️ พลาด! หลบได้' : (res.crit ? ' | 🎯 คริติคอล!' : ' | ✅ โดน'));
+  // หักไอเทมที่ท่าโจมตีปกตินี้ต้องใช้ประกอบ (ถ้ามี) — เช็กว่ามีพอแล้วก่อนหน้านี้แล้วตอนต้นฟังก์ชัน หักไม่ว่าจะโจมตีโดนหรือพลาด (เหมือนระบบสกิล)
+  let itemPart = '';
+  if (naReqItemName) {
+    dndBagRemove(p.character, naReqItemName, naReqItemQty);
+    itemPart = ` | 📦 ใช้ "${naReqItemName}" x${naReqItemQty}`;
+  }
   // ไม่บอกเลือดที่เหลือของมอนสเตอร์ในข้อความแชท — ผู้เล่นจะไม่รู้ HP มอนสเตอร์จากตรงนี้
   const hpPart = (res.hit && target.type !== 'token') ? ` | ❤️ ${target.name} HP ${target.hp + damage} → ${target.hp}` : '';
   const dmgPart = res.hit ? ` | 💥 ${damageRolls.length}d${naDmgDie}${modStr} = [${damageRolls.join(', ')}]${modStr} = ${damage}` : '';
-  dndAddLog(`⚔️ ${c.charName || p.name} ใช้ "${naName}" ใส่ ${target.name}: 🎯 1d20${modStr} = [${attackRoll}] = ${res.total} vs AC ${target.ac}${hitTag}${dmgPart}${hpPart}`);
+  dndAddLog(`⚔️ ${c.charName || p.name} ใช้ "${naName}" ใส่ ${target.name}: 🎯 1d20${modStr} = [${attackRoll}] = ${res.total} vs AC ${target.ac}${hitTag}${dmgPart}${hpPart}${itemPart}`);
   dndBroadcastAttackAnim({
     atkKey: 'p' + p.id,
     attacker: c.charName || p.name, target: target.name, targetType: target.type,
@@ -1738,9 +2275,28 @@ function dndHandleTokenMove(ws, id, x, y) {
   if (!p) return;
   const t = dndTokens.find(tt => tt.id === Number(id));
   if (!t) return;
-  const isOwner = t.kind === 'pc' && t.ownerId === p.id;
+  // เจ้าของ token: ตัวละครผู้เล่นเอง (kind 'pc') หรือสัตว์อัญเชิญที่ตัวเองร่ายไว้ (kind 'npc' ที่ summoned + ownerId ตรงกัน)
+  const isOwner = (t.kind === 'pc' && t.ownerId === p.id) || (t.kind === 'npc' && !!t.summoned && t.ownerId === p.id);
   if (!p.isDM && !isOwner) return;
-  if (isOwner && dndIsCharDead(p.character)) { dndSendError(ws, DND_DEAD_MSG); return; }
+  if (isOwner && dndIsCharDead(p.character)) { dndSendError(ws, dndDeadMsgFor(p.character)); return; }
+  // ผู้เล่น (ไม่ใช่ DM) ขยับ token ตัวเองได้เฉพาะตอนที่กำลังนับเทิร์นอยู่ (turnIndex >= 0) และถึงตาของ "entry นี้โดยเฉพาะ" เท่านั้น
+  // ตัวละครผู้เล่นกับสัตว์อัญเชิญของเขาเป็นคนละ entry ในลำดับเทิร์น (kind ต่างกัน) จึงต้องเช็คให้ตรง entry จริงๆ ไม่ใช่แค่ "ถึงตาของผู้เล่นคนนี้หรือยัง" เฉยๆ
+  // แถมขยับได้แค่ "ครั้งเดียวต่อตา" (เทียบ step ปัจจุบันกับ step ล่าสุดที่เคยขยับไปแล้ว) กันลากวนไปมาไม่จำกัดตลอดทั้งตา
+  // ถ้ายังไม่ได้กด "เริ่มเทิร์น" เลย (turnIndex === -1) อนุญาตให้ขยับได้อิสระเหมือนเดิม (ตอนเตรียมฉาก/นอกรอบต่อสู้)
+  if (isOwner && !p.isDM && dndTurnOrderModule.getTurnIndex() >= 0) {
+    const entry = dndCurrentTurnEntry();
+    const myEntryNow = !!entry && ((t.kind === 'pc' && entry.kind === 'pc' && entry.id === p.id) || (t.kind === 'npc' && entry.kind === 'npc' && entry.id === t.id));
+    if (!myEntryNow) {
+      dndSendError(ws, t.kind === 'npc' ? 'ยังไม่ถึงตาของสัตว์อัญเชิญตัวนี้ รอให้ถึงตาก่อนถึงจะขยับได้' : 'ยังไม่ถึงตาคุณ รอให้ถึงตาก่อนถึงจะขยับ token ได้');
+      return;
+    }
+    const step = dndTurnOrderModule.getStepId();
+    if (p.dndMovedAtStep === step) {
+      dndSendError(ws, 'ขยับ token ได้แค่ครั้งเดียวต่อตา รอตาหน้าค่อยขยับใหม่');
+      return;
+    }
+    p.dndMovedAtStep = step;
+  }
   const nx = Number(x), ny = Number(y);
   if (!Number.isFinite(nx) || !Number.isFinite(ny)) return;
   const cx = Math.max(0, Math.min(100, nx));
@@ -1840,7 +2396,7 @@ function dndHandleTokenEdit(ws, id, updates) {
         t.visionRadius = null; // null = ใช้ค่ารัศมีตั้งต้นตามชนิดวิสัยทัศน์
       } else {
         const n = Number(updates.visionRadius);
-        if (Number.isFinite(n)) t.visionRadius = Math.max(5, Math.min(100, Math.round(n)));
+        if (Number.isFinite(n)) t.visionRadius = Math.max(DND_VISION_RADIUS_CELLS_MIN, Math.min(DND_VISION_RADIUS_CELLS_MAX, Math.round(n * 10) / 10));
       }
     }
   }
@@ -1896,9 +2452,19 @@ function dndSanitizeAttackPayload(payload) {
   const dmgDie = DND_VALID_DICE.includes(Number(payload.dmgDie)) ? Number(payload.dmgDie) : 0;
   const dmgCount = Math.max(1, Math.min(20, Math.round(Number(payload.dmgCount) || 1)));
   const dmgMod = Math.max(-100, Math.min(100, Math.round(Number(payload.dmgMod) || 0)));
-  // รัศมี AOE (0-100, 0 = เป้าเดี่ยวปกติเหมือนเดิม) — ถ้าตั้งไว้ ดาเมจจะกระจายไปโดนผู้เล่นคนอื่นที่อยู่รอบเป้าหมายหลักบนแผนที่ด้วย เหมือนกลไก AOE ของสกิลผู้เล่น
+  // รัศมี AOE (0-100, 0 = เป้าเดี่ยวปกติเหมือนเดิม) — ถ้าตั้งไว้ ดาเมจจะกระจายไปโดนผู้เล่นคนอื่นที่อยู่ในพื้นที่รอบเป้าหมายหลักบนแผนที่ด้วย เหมือนกลไก AOE ของสกิลผู้เล่น
   const aoeRadius = Math.max(0, Math.min(100, Math.round(Number(payload.aoeRadius) || 0)));
-  return { name, desc, stat, toHit, dmgDie, dmgCount, dmgMod, aoeRadius };
+  // รูปแบบพื้นที่ AOE: 'circle' (ค่าเริ่มต้น) = วงกลมรอบเป้าหมายหลัก, 'line' = เส้นตรงพุ่งจากตัวมอนสเตอร์ไปยังเป้าหมายหลัก
+  const aoeShape = dndSanitizeAoeShape(payload.aoeShape);
+  // สถานะ/ดีบัฟที่ผูกกับท่านี้ (ไม่บังคับ) — ใช้ sanitizer ตัวเดียวกับสกิลผู้เล่นทุกประการ (โอกาสติด/ระยะเวลา/บัฟ-ดีบัฟ/tick/ไอคอน/สี)
+  // เพื่อให้ท่าโจมตีมอนสเตอร์ติดสถานะให้ผู้เล่นได้เหมือนที่สกิลผู้เล่นติดสถานะให้มอนสเตอร์ได้ (ก่อนหน้านี้ท่าโจมตีมอนสเตอร์ไม่มีช่องนี้เลย มีแต่ดาเมจ)
+  const status = dndSanitizeSkillStatus(payload.status);
+  return {
+    name, desc, stat, toHit, dmgDie, dmgCount, dmgMod, aoeRadius, aoeShape,
+    statusName: status.name, statusNote: status.note, statusChance: status.chance, statusDurationSec: status.durationSec,
+    statusAtkMod: status.atkMod, statusDmgMod: status.dmgMod, statusDefMod: status.defMod, statusVisionMod: status.visionMod,
+    statusTickValue: status.tickValue, statusTickIntervalSec: status.tickIntervalSec, statusIcon: status.icon, statusColor: status.color,
+  };
 }
 function dndHandleTokenAttackAdd(ws, tokenId, payload) {
   const p = dndFindByWs(ws);
@@ -1954,12 +2520,24 @@ function dndHandleTokenAttackDelete(ws, tokenId, attackId) {
   t.attacks = t.attacks.filter(a => a.id !== Number(attackId));
   dndBroadcastState();
 }
-// DM ทอยท่าโจมตีของมอนสเตอร์ — ทอยแล้วประกาศผลลง log ให้ทุกคนเห็น (DM เป็นคนหักเลือดเป้าหมายเองหลังเห็นผล)
+// ทอยท่าโจมตีของมอนสเตอร์ (DM สั่งได้ทุกตัว, เจ้าของสัตว์อัญเชิญสั่งได้เฉพาะตัวเอง) — ทอยแล้วประกาศผลลง log ให้ทุกคนเห็น (คนสั่งเป็นคนหักเลือดเป้าหมายเองหลังเห็นผล)
 function dndHandleTokenAttackUse(ws, tokenId, attackId, targetType, targetId) {
   const p = dndFindByWs(ws);
-  if (!p || !p.isDM) return;
+  if (!p) return;
   const t = dndTokens.find(tt => tt.id === Number(tokenId) && tt.kind === 'npc');
   if (!t || !t.attacks) return;
+  // เจ้าของสัตว์อัญเชิญสั่งท่าโจมตีของสัตว์ตัวเองได้ด้วย (นอกจาก DM) — มอนสเตอร์ของ DM ทั่วไป (ไม่มี ownerId) ยังคง DM สั่งได้เท่านั้นเหมือนเดิม
+  const isOwner = !!t.summoned && t.ownerId === p.id;
+  if (!p.isDM && !isOwner) return;
+  if (isOwner && dndIsCharDead(p.character)) { dndSendError(ws, dndDeadMsgFor(p.character)); return; }
+  // เจ้าของสั่งโจมตีได้เฉพาะตอนถึงตาของสัตว์อัญเชิญตัวนี้โดยเฉพาะเท่านั้น (entry แยกจากตาตัวเอง) — DM ไม่ผูกกับเงื่อนไขนี้ สั่งได้ตลอดเหมือนเดิม
+  if (isOwner && !p.isDM && dndTurnOrderModule.getTurnIndex() >= 0) {
+    const entry = dndCurrentTurnEntry();
+    if (!entry || entry.kind !== 'npc' || entry.id !== t.id) {
+      dndSendError(ws, 'ยังไม่ถึงตาของสัตว์อัญเชิญตัวนี้ รอให้ถึงตาก่อนถึงจะสั่งโจมตีได้');
+      return;
+    }
+  }
   const atk = t.attacks.find(a => a.id === Number(attackId));
   if (!atk) return;
   const target = dndFindCombatTarget(targetType, targetId);
@@ -1996,17 +2574,18 @@ function dndHandleTokenAttackUse(ws, tokenId, attackId, targetType, targetId) {
     parts.push(`💥 ดาเมจ ${rolls.length}d${atk.dmgDie}${dmgModStr} = [${rolls.join(', ')}]${dmgModStr} = ${damage}`);
     parts.push(`❤️ ${target.name} HP ${oldHp} → ${target.hp}`);
 
-    // ---- AOE: ถ้าท่านี้ตั้งรัศมีไว้ (>0) ดาเมจจะกระจายไปโดนผู้เล่นคนอื่นที่อยู่รอบเป้าหมายหลักบนแผนที่ด้วย (ไม่โดนมอนสเตอร์ตัวอื่น กันมั่ว)
-    // ดาเมจลดหลั่นตามระยะห่างจากจุดศูนย์กลาง เหมือนกลไก AOE ของสกิลผู้เล่น
+    // ---- AOE: ถ้าท่านี้ตั้งรัศมีไว้ (>0) ดาเมจจะกระจายไปโดนผู้เล่นคนอื่นที่อยู่ในพื้นที่รอบเป้าหมายหลักบนแผนที่ด้วย (ไม่โดนมอนสเตอร์ตัวอื่น กันมั่ว)
+    // ดาเมจลดหลั่นตามระยะห่างจากพื้นที่นั้น (วงกลม หรือเส้นตรงจากตัวมอนสเตอร์ไปยังเป้าหมายหลัก) เหมือนกลไก AOE ของสกิลผู้เล่น
     if (atk.aoeRadius > 0 && damage > 0) {
       const center = dndTargetMapPos(target.type, target.id);
+      const origin = atk.aoeShape === 'line' ? { x: t.x, y: t.y } : null;
       if (center) {
         const aoeParts = [];
         for (const cand of dndAoeCandidates()) {
           if (cand.type !== 'player') continue; // มอนสเตอร์โจมตี AOE โดนเฉพาะผู้เล่น ไม่โดนมอนสเตอร์ด้วยกันเอง
           if (cand.id === Number(targetId)) continue; // เป้าหมายหลักโดนดาเมจเต็มไปแล้วด้านบน ไม่ต้องนับซ้ำ
-          const dist = Math.hypot(cand.pos.x - center.x, cand.pos.y - center.y);
-          if (dist > atk.aoeRadius) continue; // อยู่นอกรัศมี ไม่โดน
+          const dist = dndAoeDist(atk.aoeShape, origin, center, cand.pos);
+          if (dist > atk.aoeRadius) continue; // อยู่นอกพื้นที่ ไม่โดน
           const aoeDmg = Math.round(damage * Math.max(0, 1 - dist / atk.aoeRadius));
           if (aoeDmg <= 0) continue;
           const aoeTarget = dndFindCombatTarget(cand.type, cand.id);
@@ -2018,8 +2597,39 @@ function dndHandleTokenAttackUse(ws, tokenId, attackId, targetType, targetId) {
           aoeHitsForAnim.push({ tokenId: dndPcTokenId(cand.id), damage: aoeDmg });
           aoeParts.push(`${aoeTarget.name} -${aoeDmg} HP ${aoeOldHp}→${aoeTarget.hp} (ระยะ ${dist.toFixed(1)})${aoeWear ? (aoeWear.broken ? ` (เกราะ "${aoeWear.armor.name}" ชำรุด!)` : '') : ''}`);
         }
-        if (aoeParts.length) parts.push(`🌊 AOE รัศมี ${atk.aoeRadius}: ${aoeParts.join(', ')}`);
+        if (aoeParts.length) parts.push(`🌊 AOE${atk.aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${atk.aoeRadius}: ${aoeParts.join(', ')}`);
       }
+    }
+  }
+  // ติดสถานะ/ดีบัฟที่ผูกไว้กับท่านี้ (ถ้ามี) ให้ผู้เล่นเป้าหมาย — ต้องโจมตีโดนก่อน (res.hit) เหมือนดาเมจ ไม่ใช่ติดฟรีทุกครั้งที่ทอย
+  // มีโอกาสติด (atk.statusChance) หักด้วยค่าต้านทานสถานะของผู้เล่น (character.statusResist) แล้วทอย d100 เทียบ — กลไกเดียวกับตอนสกิลผู้เล่นติดสถานะใส่มอนสเตอร์ทุกประการ
+  if (atk.statusName && res.hit) {
+    const chance = Number(atk.statusChance) || 100;
+    const targetPlayer = dndPlayers.find(pp => pp.id === Number(targetId));
+    const resist = Math.max(0, Math.min(100, Number(targetPlayer && targetPlayer.character && targetPlayer.character.statusResist) || 0));
+    const effChance = Math.max(0, Math.min(100, chance - resist));
+    const statusRoll = 1 + Math.floor(Math.random() * 100);
+    const landed = statusRoll <= effChance;
+    const rollTag = (chance < 100 || resist > 0) ? ` (🎲 ${statusRoll} vs ${effChance}%${resist ? ` — โอกาส ${chance}% หักต้านทาน ${resist}%` : ''})` : '';
+    if (landed) {
+      const statusTarget = dndFindStatusTarget('player', targetId);
+      if (statusTarget) {
+        const durationSec = Number(atk.statusDurationSec) || 0;
+        const expiresAt = durationSec > 0 ? Date.now() + durationSec * 1000 : 0;
+        const tickValue = Number(atk.statusTickValue) || 0;
+        const tickIntervalSec = tickValue !== 0 ? (Number(atk.statusTickIntervalSec) || 6) : 0;
+        const nextTickAt = tickValue !== 0 ? Date.now() + tickIntervalSec * 1000 : 0;
+        statusTarget.list.push({
+          id: dndAllocStatusId(), name: atk.statusName, note: atk.statusNote,
+          durationSec, expiresAt,
+          atkMod: Number(atk.statusAtkMod) || 0, dmgMod: Number(atk.statusDmgMod) || 0, defMod: Number(atk.statusDefMod) || 0, visionMod: Number(atk.statusVisionMod) || 0,
+          tickValue, tickIntervalSec, nextTickAt,
+          icon: atk.statusIcon || '☠️', color: atk.statusColor || '',
+        });
+        parts.push(`☠️ ติดสถานะ "${atk.statusName}"${atk.statusNote ? ` (${atk.statusNote})` : ''} ให้ ${target.name}${rollTag}${dndBuildStatusModText(atk.statusAtkMod, atk.statusDmgMod, atk.statusDefMod, tickValue, tickIntervalSec, atk.statusVisionMod)}`);
+      }
+    } else {
+      parts.push(`🛡️ ${target.name} ต้านทานสถานะ "${atk.statusName}" ได้สำเร็จ!${rollTag}`);
     }
   }
   dndBroadcastAttackAnim({
@@ -2028,7 +2638,7 @@ function dndHandleTokenAttackUse(ws, tokenId, attackId, targetType, targetId) {
     atkTokenId: t.id, tgtTokenId: target.type === 'token' ? target.id : dndPcTokenId(target.id),
     attackRoll: hitRoll, attackMod: effToHit, attackTotal: res.total, targetAC: target.ac, hit: res.hit, crit: res.crit, fumble: res.fumble,
     dmgDie: dealtDamage ? atk.dmgDie : null, dmgCount: dealtDamage ? rolls.length : 0, dmgRolls: dealtDamage ? rolls : null, dmgMod: effDmgMod, damage: dealtDamage ? damage : null,
-    aoeRadius: atk.aoeRadius || 0, aoeHits: aoeHitsForAnim,
+    aoeRadius: atk.aoeRadius || 0, aoeShape: atk.aoeRadius > 0 ? (atk.aoeShape || 'circle') : 'circle', aoeHits: aoeHitsForAnim,
   });
   dndAddLog(`👹 "${t.name}" ใช้ท่า "${atk.name}" ใส่ ${target.name}: ${parts.join(' | ')}`);
 }
@@ -2065,10 +2675,10 @@ function dndHandleRestart(ws) {
   const everyone = dndPlayers.slice();
   dndPlayers = [];
   dndLog = [];
-  dndSkills = [];
   dndNextId = 1;
-  dndNextSkillId = 1;
+  dndSeedSpellbookLibrary(); // รีเซตกลับไปเป็นห้องสมุดเวทย์เริ่มต้น (สกิล+ร้านห้องสมุด) แทนที่จะล้างเป็นค่าว่างเปล่า
   dndCustomPassives = [];
+  dndRacePassiveOverrides = {};
   dndNextPassiveId = 1;
   dndScene = { location: '', situation: '' };
   dndGameTimeModule.reset();
@@ -2110,6 +2720,7 @@ function dndSerializeState() {
     skills: dndSkills,
     nextSkillId: dndNextSkillId,
     customPassives: dndCustomPassives,
+    racePassiveOverrides: dndRacePassiveOverrides,
     nextPassiveId: dndNextPassiveId,
     scene: dndScene,
     ...dndGameTimeModule.serialize(),
@@ -2176,12 +2787,32 @@ function dndHandleImportState(ws, data) {
   dndSkills = Array.isArray(data.skills) ? data.skills : [];
   dndNextSkillId = Number.isFinite(Number(data.nextSkillId)) ? Number(data.nextSkillId) : 1;
   dndCustomPassives = Array.isArray(data.customPassives) ? data.customPassives : [];
+  dndRacePassiveOverrides = {};
+  if (data.racePassiveOverrides && typeof data.racePassiveOverrides === 'object') {
+    for (const [key, ov] of Object.entries(data.racePassiveOverrides)) {
+      const [raceKey, passiveKey] = key.split(':');
+      const builtin = (DND_RACE_PASSIVES[raceKey] || []).find(bp => bp.key === passiveKey);
+      if (builtin && ov && typeof ov === 'object') {
+        dndRacePassiveOverrides[key] = {
+          name: (ov.name || '').toString().trim().slice(0, 40) || builtin.name,
+          icon: (ov.icon || '✨').toString().trim().slice(0, 4) || '✨',
+          desc: (ov.desc || '').toString().trim().slice(0, 150),
+          effect: dndSanitizePassiveEffect(ov.effect),
+        };
+      }
+    }
+  }
   dndNextPassiveId = Number.isFinite(Number(data.nextPassiveId)) ? Number(data.nextPassiveId) : 1;
   dndScene = (data.scene && typeof data.scene === 'object')
     ? { location: (data.scene.location || '').toString(), situation: (data.scene.situation || '').toString() }
     : { location: '', situation: '' };
   dndGameTimeModule.restore(data);
   dndMaps = (Array.isArray(data.maps) && data.maps.length) ? data.maps : cloneDefaultMaps();
+  // เซฟเก่าก่อนมีระบบ "ขนาดช่องแผนที่" จะไม่มีฟิลด์นี้ — ตั้งค่าเริ่มต้นให้เหมือนพฤติกรรมเดิม (10x10 ช่อง)
+  for (const m of dndMaps) {
+    const g = Number(m.gridSize);
+    m.gridSize = (Number.isFinite(g) && g >= DND_MAP_GRID_MIN && g <= DND_MAP_GRID_MAX) ? g : DND_MAP_GRID_DEFAULT;
+  }
   dndNextMapId = Number.isFinite(Number(data.nextMapId)) ? Number(data.nextMapId) : (Math.max(0, ...dndMaps.map(m => m.id)) + 1);
   dndCurrentMapId = (Number.isFinite(Number(data.currentMapId)) && dndMaps.some(m => m.id === Number(data.currentMapId)))
     ? Number(data.currentMapId)
@@ -2195,6 +2826,24 @@ function dndHandleImportState(ws, data) {
     : [];
   dndNextPartyVisionGroupId = Number.isFinite(Number(data.nextPartyVisionGroupId)) ? Number(data.nextPartyVisionGroupId) : (Math.max(0, ...dndPartyVisionGroups.map(g => g.id)) + 1);
   dndTokens = Array.isArray(data.tokens) ? data.tokens : [];
+  // โมดูล 6 (Save/Load backward-compat): เซฟเก่าก่อนมีระบบสัตว์อัญเชิญ (โมดูล 1-5) จะไม่มีฟิลด์ summoned/summonExpiresAt/summonSkillId
+  // เลยแม้แต่ตัวเดียว (และ token npc บางไฟล์เซฟเก่ามากๆ อาจไม่มี ownerId ด้วยซ้ำ) — เติมค่าเริ่มต้นให้ครบทุก token ตรงนี้
+  // ครั้งเดียวตอนโหลด กันไม่ให้โค้ดจุดอื่นในไฟล์ต้องเจอ undefined ที่ไม่ตั้งใจ (แม้ส่วนใหญ่จะเช็คแบบ truthy อยู่แล้วซึ่งปลอดภัยกับ
+  // undefined เหมือนกับ false แต่ normalize ให้ชัดเจนตรงนี้จุดเดียวย่อมกันเหนียวกว่าไปหวังพึ่ง falsy-check กระจายอยู่หลายที่)
+  for (const t of dndTokens) {
+    if (!t || typeof t !== 'object') continue;
+    if (t.kind === 'npc' && !('ownerId' in t)) t.ownerId = null; // เซฟเก่ามากๆ ก่อนมี ownerId บน npc เลยก็เป็นไปได้
+    t.summoned = !!t.summoned;
+    const exp = Number(t.summonExpiresAt);
+    t.summonExpiresAt = Number.isFinite(exp) && exp > 0 ? exp : 0;
+    if (!t.summoned) {
+      // token npc ปกติของ DM (ไม่ใช่สัตว์อัญเชิญ) ไม่ควรมีเศษฟิลด์อัญเชิญค้างอยู่ กันสับสนตอนอ่านข้อมูลทีหลัง
+      t.summonExpiresAt = 0;
+      delete t.summonSkillId;
+    } else if (!t.summonSkillId) {
+      t.summonSkillId = null;
+    }
+  }
   dndNextTokenId = Number.isFinite(Number(data.nextTokenId)) ? Number(data.nextTokenId) : 1;
   dndNextAttackId = Number.isFinite(Number(data.nextAttackId)) ? Number(data.nextAttackId) : 1;
   dndStatusEffectsModule.restore(data);
@@ -2208,6 +2857,8 @@ function dndHandleImportState(ws, data) {
   dndTradeModule.restore(data);
   dndItemEffects = (Array.isArray(data.itemEffects) && data.itemEffects.length) ? data.itemEffects : dndDefaultItemEffectsInit();
   dndNextItemEffectId = Number.isFinite(Number(data.nextItemEffectId)) ? Number(data.nextItemEffectId) : 1;
+
+  dndEnsureSpellbookLibraryPresent(); // เซฟเก่าที่ไม่มีห้องสมุดเวทย์อยู่ (บันทึกไว้ก่อนมีฟีเจอร์นี้) จะได้ห้องสมุด 574 เล่มกลับมาอัตโนมัติ
 
   const payload = JSON.stringify({ type: 'dndLeft' });
   for (const pp of everyone) {
@@ -2236,7 +2887,8 @@ function dndHandleDmKickPlayer(ws, targetId) {
     target.ws.send(JSON.stringify({ type: 'dndKicked' }));
     target.ws.close();
   }
-  dndTokens = dndTokens.filter(t => !(t.kind === 'pc' && t.ownerId === target.id));
+  // โมดูล 4 (Lifecycle/Despawn): เตะผู้เล่นออกจากห้องถาวร = "ออกจากเกม" ตามสเปก ลบทั้ง token ตัวละคร (pc) และสัตว์อัญเชิญที่ยังค้างอยู่ (npc summoned) ของคนนั้นทันที
+  dndTokens = dndTokens.filter(t => !(t.kind === 'pc' && t.ownerId === target.id) && !(t.kind === 'npc' && t.summoned && t.ownerId === target.id));
   dndSkills.forEach(s => { if (s.assignedIds) s.assignedIds = s.assignedIds.filter(id => id !== target.id); });
   dndPlayers.splice(idx, 1);
   dndCleanTurnOrder();
@@ -2319,6 +2971,8 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndPassiveCreate') dndHandlePassiveCreate(ws, msg.passive);
   else if (msg.type === 'dndPassiveEdit') dndHandlePassiveEdit(ws, msg.passiveId, msg.passive);
   else if (msg.type === 'dndPassiveDelete') dndHandlePassiveDelete(ws, msg.passiveId);
+  else if (msg.type === 'dndRacePassiveOverrideSave') dndHandleRacePassiveOverrideSave(ws, msg.raceKey, msg.passiveKey, msg.passive);
+  else if (msg.type === 'dndRacePassiveOverrideReset') dndHandleRacePassiveOverrideReset(ws, msg.raceKey, msg.passiveKey);
   else if (msg.type === 'dndSkillUse') dndHandleSkillUse(ws, msg.skillId, msg.targetType, msg.targetId);
   else if (msg.type === 'dndNormalAttack') dndHandleNormalAttack(ws, msg.targetType, msg.targetId);
   else if (msg.type === 'dndEquipUpdate') dndHandleEquipUpdate(ws, msg.equipment);
@@ -2348,6 +3002,7 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndTokenEdit') dndHandleTokenEdit(ws, msg.id, msg.updates);
   else if (msg.type === 'dndTokenDelete') dndHandleTokenDelete(ws, msg.id);
   else if (msg.type === 'dndTokenDuplicate') dndHandleTokenDuplicate(ws, msg.id);
+  else if (msg.type === 'dndSummonDismiss') dndHandleSummonDismiss(ws, msg.tokenId);
   else if (msg.type === 'dndMapCreate') dndHandleMapCreate(ws, msg.name);
   else if (msg.type === 'dndVisionToggle') dndHandleVisionToggle(ws, msg.enabled);
   else if (msg.type === 'dndPartyVisionToggle') dndHandlePartyVisionToggle(ws, msg.enabled);
@@ -2356,6 +3011,7 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndPartyVisionGroupPlayersUpdate') dndHandlePartyVisionGroupPlayersUpdate(ws, msg.groupId, msg.playerIds);
   else if (msg.type === 'dndMapSwitch') dndHandleMapSwitch(ws, msg.mapId);
   else if (msg.type === 'dndMapRename') dndHandleMapRename(ws, msg.mapId, msg.name);
+  else if (msg.type === 'dndMapGridSizeUpdate') dndHandleMapGridSizeUpdate(ws, msg.mapId, msg.gridSize);
   else if (msg.type === 'dndMapDelete') dndHandleMapDelete(ws, msg.mapId);
   else if (msg.type === 'dndMapPlayersUpdate') dndHandleMapPlayersUpdate(ws, msg.mapId, msg.playerIds);
   else if (msg.type === 'dndWallCreate') dndHandleWallCreate(ws, msg.wall);
@@ -2390,5 +3046,7 @@ function dndHandleMessage(ws, msg) {
 module.exports = {
   handleMessage: dndHandleMessage,
   handleDisconnect: dndHandleDisconnect,
-  sweepExpiredStatuses: dndSweepExpiredStatuses,
+  // โมดูล 4: sweepExpiredStatuses (เดิมของสถานะ/บัฟ-ดีบัฟ) รวมเข้ากับ dndSweepExpiredSummons (เช็คสัตว์อัญเชิญหมดเวลา/เจ้าของหมดสติ-ตาย) ผ่าน dndSweepExpired
+  // — ยัง export ชื่อเดิม sweepExpiredStatuses เหมือนเดิมทุกประการ เพราะ index.js เรียกผ่านชื่อนี้อยู่แล้ว (setInterval(dnd.sweepExpiredStatuses, 1000)) ไม่ต้องแก้ index.js
+  sweepExpiredStatuses: dndSweepExpired,
 };

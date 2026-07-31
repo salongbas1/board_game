@@ -102,6 +102,13 @@
         <div id="dndPartyList"></div>
       </div>
 
+      <!-- ผู้เล่น: แผงควบคุมสัตว์อัญเชิญของตัวเอง — ซ่อนอัตโนมัติถ้ายังไม่มีตัวไหนอยู่ (ดูตรรกะที่ renderDndMySummonsPanel ใน dnd-map.js) -->
+      <div id="dndMySummonsBox" style="display:none;">
+        <h3>🐾 สัตว์อัญเชิญของฉัน</h3>
+        <div id="dndMySummonsList"></div>
+        <div class="dndRangeHint" style="margin-top:4px;">ขยับได้บนแผนที่ตอนถึงตาของมัน (ลากบน 🗺️ แผนที่) · กด 🎲 โจมตี เพื่อสั่งใช้ท่าโจมตี · กด 💨 ยกเลิก เพื่อไล่กลับได้ทุกเมื่อ</div>
+      </div>
+
       <!-- มุมมองการ์ดตัวละครหลังล็อกแล้ว (อ่านอย่างเดียว) — อยู่ทางซ้ายคู่กับปาร์ตี้ -->
       <div id="dndMySheetBox" style="display:none;">
         <h3>การ์ดตัวละครของฉัน 🔒</h3>
@@ -331,6 +338,7 @@
                 <option value="both" selected>ทั้งคู่ (มอนสเตอร์ + ผู้เล่น — ใช้กับใครก็ได้)</option>
                 <option value="monster">มอนสเตอร์เท่านั้น</option>
                 <option value="player">ผู้เล่นเท่านั้น</option>
+                <option value="self">ตัวเองเท่านั้น (ใช้ได้เฉพาะกับผู้ใช้สกิล)</option>
               </select>
             </div>
           </div>
@@ -340,6 +348,7 @@
             <div class="dndField"><label>🎯 โจมตี ± ระหว่างติดสถานะ</label><input id="dndSkillStatusAtkMod" type="number" min="-20" max="20" value="0"></div>
             <div class="dndField"><label>💥 ดาเมจ ± ระหว่างติดสถานะ</label><input id="dndSkillStatusDmgMod" type="number" min="-20" max="20" value="0"></div>
             <div class="dndField"><label>🛡️ ป้องกัน (AC) ± ระหว่างติดสถานะ</label><input id="dndSkillStatusDefMod" type="number" min="-20" max="20" value="0"></div>
+            <div class="dndField"><label>👁️ วิสัยทัศน์ ± ช่อง ระหว่างติดสถานะ (มองไกล/แคบลง)</label><input id="dndSkillStatusVisionMod" type="number" min="-20" max="20" step="0.1" value="0"></div>
           </div>
           <div class="dndFieldRow">
             <div class="dndField"><label>☠️/💚 HP ต่อวิ (tick) — ลบ=โดนดาเมจต่อเนื่อง (พิษ/ไฟลุก), บวก=ฟื้น HP ต่อเนื่อง (รีเจน), 0=ไม่มี</label><input id="dndSkillStatusTick" type="number" min="-1000" max="1000" value="0"></div>
@@ -348,7 +357,8 @@
           <div class="dndRangeHint" style="margin-bottom:6px;">ตั้งค่าด้านบนเพื่อทำสถานะ/ดีบัฟแบบต่อเนื่องได้ เช่น พิษที่โดนดาเมจทุก 6 วิ นาน 30 วิ หรือบัฟป้องกันที่อยู่ 60 วิ — เหมือนระบบสถานะที่ DM ใส่มือให้มอนสเตอร์ทุกประการ</div>
           <div class="dndFieldRow">
             <div class="dndField"><label>💥 รัศมี AOE (0-100, 0 = เป้าเดี่ยวปกติ)</label><input id="dndSkillAoeRadius" type="number" min="0" max="100" value="0"></div>
-            <div class="dndField"><label>📏 ระยะโจมตี (0-100, 0 = ไม่จำกัดระยะ)</label><input id="dndSkillRange" type="number" min="0" max="100" value="0"></div>
+            <div class="dndField"><label>📐 รูปแบบ AOE</label><select id="dndSkillAoeShape"><option value="circle">⭕ วงกลม (รอบเป้าหมายหลัก)</option><option value="line">📏 เส้นตรง (พุ่งจากตัวเองไปเป้าหมายหลัก)</option></select></div>
+            <div class="dndField"><label>📏 ระยะโจมตี (ช่อง, 0 = ไม่จำกัดระยะ)</label><input id="dndSkillRange" type="number" min="0" max="50" step="0.1" value="0"></div>
           </div>
           <div class="dndRangeHint" style="margin-bottom:6px;">ระยะห่างจริงบนแผนที่ระหว่าง token ผู้ใช้สกิลกับ token เป้าหมาย ถ้าไกลเกินระยะนี้จะใช้สกิลไม่ได้ — ถ้าฝ่ายใดฝ่ายหนึ่งไม่มี token อยู่บนแผนที่ปัจจุบัน จะไม่ตรวจระยะให้ (ปล่อยผ่าน)</div>
           <div class="dndRangeHint" style="margin-bottom:6px;">เลือกเป้าหมายหลักเหมือนเดิม แต่ถ้าตั้งรัศมีไว้ ดาเมจจะกระจายไปโดนเป้าหมายอื่น ๆ (ทั้งผู้เล่นและมอนสเตอร์) ที่อยู่ในระยะรอบเป้าหมายหลักบนแผนที่ด้วย — ยิ่งอยู่ไกลจากจุดศูนย์กลางยิ่งโดนดาเมจน้อยลง ห่างเกินรัศมีจะไม่โดน (ต้องตั้งค่าดาเมจไว้ด้วยถึงจะมีผล)</div>
@@ -360,10 +370,26 @@
           <div class="dndFieldRow">
             <div class="dndField"><label>คูลดาวน์ (วินาที, 0 = ไม่มี)</label><input id="dndSkillCooldown" type="number" min="0" max="3600" value="0"></div>
             <div class="dndField"><label>จำนวนครั้งที่ใช้ได้ (0 = ไม่จำกัด)</label><input id="dndSkillMaxUses" type="number" min="0" max="99" value="0"></div>
+            <div class="dndField"><label>📖 เวทย์เลเวล (0 = แคนทริป, 1-9)</label><input id="dndSkillLevel" type="number" min="0" max="9" value="0"></div>
             <div class="dndField"><label>🔵 ใช้ SP เท่าไหร่ (0 = ไม่ใช้ SP)</label><input id="dndSkillSpCost" type="number" min="0" max="999" value="0"></div>
+            <div class="dndField"><label>📦 ต้องมีไอเทม (ไม่บังคับ — ชื่อต้องตรงกับในกระเป๋าเป๊ะๆ)</label><input id="dndSkillReqItemName" maxlength="40" placeholder="เช่น ผงเวทมนตร์"></div>
+            <div class="dndField"><label>จำนวนไอเทมที่ต้องมี</label><input id="dndSkillReqItemQty" type="number" min="1" max="999" value="1"></div>
+          </div>
+          <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#c9d1e0; margin-bottom:8px;">
+            <input type="checkbox" id="dndSkillIsSummon"> 🔮 สกิลอัญเชิญ — ใช้แล้วสร้างมอนสเตอร์ (สัตว์อัญเชิญ) ขึ้นสู้แทนตัว แทนที่จะโจมตี/ฮีล/ดีบัฟตรงๆ
+          </label>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>อัญเชิญตัวไหน</label><select id="dndSkillSummonTemplateKey"><option value="">— ยังไม่เลือกตัว —</option></select></div>
+            <div class="dndField"><label>อยู่ได้กี่วินาที (0 = ไม่มีกำหนดหมดเอง)</label><input id="dndSkillSummonDuration" type="number" min="0" max="3600" value="60"></div>
+            <div class="dndField"><label>อัญเชิญพร้อมกันได้สูงสุดกี่ตัว</label><input id="dndSkillSummonMaxActive" type="number" min="1" max="10" value="1"></div>
           </div>
           <label style="display:block; font-size:11px; color:#9aa4b2; margin:8px 0 6px 0;">มอบสกิลให้ผู้เล่น (ไม่เลือกใคร = ทั้งปาร์ตี้ใช้ได้หมด)</label>
           <div id="dndSkillAssignBox" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;"></div>
+          <label style="display:block; font-size:11px; color:#9aa4b2; margin:8px 0 6px 0;">🎓 จำกัดคลาสที่ใช้สกิลนี้ได้ (ไม่เลือกคลาสใดเลย = ทุกคลาสใช้ได้)</label>
+          <div id="dndSkillClassBox" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;"></div>
+          <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#c9d1e0; margin-bottom:8px;">
+            <input type="checkbox" id="dndSkillLibraryOnly"> 🔒 ล็อกไว้ก่อน — ยังไม่มีใครใช้ได้จนกว่าจะเรียนรู้ (เหมาะกับสกิลที่ให้เรียนจากสมุดเวทย์ในร้านห้องสมุด)
+          </label>
           <div id="dndSkillFormError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
           <button id="dndSkillAddBtn" type="button">+ เพิ่มสกิล</button>
         </div>
@@ -394,10 +420,22 @@
             <div class="dndField"><label>ขยายช่วงคริติคอล (0-5)</label><input id="dndPassiveCritRange" type="number" min="0" max="5" value="0"></div>
             <div class="dndField"><label>ทองเริ่มต้น</label><input id="dndPassiveGold" type="number" value="0"></div>
           </div>
+          <div class="dndFieldRow">
+            <div class="dndField"><label>ต้านทานสถานะ (%)</label><input id="dndPassiveResist" type="number" min="-30" max="30" value="0"></div>
+          </div>
           <div id="dndPassiveFormError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
           <button id="dndPassiveAddBtn" type="button">+ เพิ่มสกิลติดตัว</button>
           <div id="dndPassiveEmptyHint" class="dndRangeHint" style="display:none; margin-top:8px;">ยังไม่มีสกิลติดตัวที่ DM สร้างเอง — ผู้เล่นยังเลือกได้จากสกิลติดตัวประจำเผ่าที่มีมาให้ในระบบ</div>
           <div id="dndPassiveList" style="margin-top:10px;"></div>
+
+          <div style="margin-top:18px; padding-top:14px; border-top:1px dashed #2a3550;">
+            <h4 style="margin:0 0 6px 0;">✏️ แก้ไขค่าเริ่มต้นสกิลติดตัวประจำเผ่า</h4>
+            <div class="dndRangeHint" style="margin-bottom:6px;">แก้ไขสกิลติดตัวที่มีมาให้ในระบบของเผ่านั้นได้โดยตรง (มีผลกับตัวละครทุกคนของเผ่านี้ที่เลือกสกิลติดตัวนั้นไว้) — กด "รีเซ็ต" เพื่อกลับไปเป็นค่าเริ่มต้นของระบบ</div>
+            <div class="dndFieldRow">
+              <div class="dndField"><label>เลือกเผ่าพันธุ์</label><select id="dndBuiltinPassiveRace"></select></div>
+            </div>
+            <div id="dndBuiltinPassiveList" style="margin-top:10px;"></div>
+          </div>
         </div>
       </div>
 
@@ -455,6 +493,13 @@
             <button type="button" id="dndMapBgClearBtn" class="linkBtn" style="font-size:11px !important;">ลบพื้นหลัง</button>
           </div>
           <div class="dndRangeHint">อัปโหลดภาพพื้นหลังของแผนที่ที่กำลังเลือกอยู่ ได้ไม่เกิน ~300KB และผู้เล่นทุกคนจะเห็นเหมือนกัน</div>
+          <div class="dndFieldRow" style="margin-top:10px; align-items:center;">
+            <div class="dndField" style="flex:1;">
+              <label for="dndMapGridSizeInput">📐 ขนาดตาราง (ช่องต่อด้าน)</label>
+              <input type="number" id="dndMapGridSizeInput" min="2" max="100" step="1" style="width:100%;">
+            </div>
+          </div>
+          <div class="dndRangeHint">ยิ่งเลขน้อย ช่องยิ่งใหญ่ ยิ่งเลขมาก ช่องยิ่งเล็ก/ถี่ — มีผลกับตารางกริดของแผนที่ที่กำลังเลือกอยู่เท่านั้น</div>
           <h4 style="margin-top:12px;">📖 มอนสเตอร์สำเร็จรูป (สร้างได้เลย)</h4>
           <div class="dndFieldRow">
             <div class="dndField" style="flex:1;">
@@ -492,13 +537,14 @@
       <div id="dndShopBox" style="display:none;">
         <h3>🛍️ ร้านค้า</h3>
         <div id="dndShopDmForm" style="display:none;">
-          <div class="dndRangeHint" style="margin-bottom:6px;">DM เท่านั้นที่เปิด/ปิดร้านและจัดการไอเทมในร้านได้ — ร้านไอเทมใหม่จะมี Red Potion (ยาแดง) ให้เริ่มต้นเสมอ, ร้านตีบวกใหม่จะมีระดับ +1/+2/+3 ให้เริ่มต้นเสมอ</div>
+          <div class="dndRangeHint" style="margin-bottom:6px;">DM เท่านั้นที่เปิด/ปิดร้านและจัดการไอเทมในร้านได้ — ร้านไอเทมใหม่จะมี Red Potion (ยาแดง) ให้เริ่มต้นเสมอ, ร้านตีบวกใหม่จะมีระดับ +1/+2/+3 ให้เริ่มต้นเสมอ, ห้องสมุดต้องมีสกิลที่ออกแบบไว้แล้ว (ในแท็บสกิล) ก่อนถึงจะเพิ่มสมุดเวทย์ผูกกับสกิลนั้นได้</div>
           <div class="dndFieldRow">
             <div class="dndField"><label>ชื่อร้านใหม่</label><input id="dndShopNameInput" maxlength="40" placeholder="เช่น ร้านขายยาในเมือง"></div>
             <div class="dndField"><label>ประเภทร้าน</label>
               <select id="dndShopTypeInput">
                 <option value="item">🛍️ ร้านไอเทม (ซื้อ/ขาย)</option>
                 <option value="forge">⚒️ ร้านตีบวก (อัปเกรดอุปกรณ์)</option>
+                <option value="library">📚 ห้องสมุด (สมุดเวทย์ อ่านแล้วได้สกิล)</option>
               </select>
             </div>
           </div>
@@ -567,12 +613,16 @@
                 <option value="revive">🌟 ชุบชีวิต (ปลุกจากหมดสติ + ฟื้นฟู HP)</option>
                 <option value="gold">ให้ทอง</option>
                 <option value="equip">สวมใส่ (อุปกรณ์)</option>
+                <option value="vision">👁️ เพิ่มวิสัยทัศน์ (ชั่วคราว/ถาวร)</option>
                 <option value="none">ไม่มีผลพิเศษ (ใช้แล้วหายไป)</option>
               </select>
             </div>
           </div>
           <div class="dndFieldRow" id="dndItemEffectValueRow">
-            <div class="dndField"><label>จำนวน</label><input id="dndItemEffectValue" type="number" min="0" value="0"></div>
+            <div class="dndField"><label id="dndItemEffectValueLabel">จำนวน</label><input id="dndItemEffectValue" type="number" min="0" value="0"></div>
+          </div>
+          <div class="dndFieldRow" id="dndItemEffectVisionRow" style="display:none;">
+            <div class="dndField"><label>ระยะเวลา (วินาที, 0=ถาวรจนกว่า DM จะถอน)</label><input id="dndItemEffectVisionDuration" type="number" min="0" value="0"></div>
           </div>
           <div class="dndFieldRow" id="dndItemEffectNoneRow" style="display:none;">
             <div class="dndField"><label>ข้อความตอนใช้ (ไม่บังคับ)</label><input id="dndItemEffectDesc" maxlength="100" placeholder="เช่น กินอิ่มท้องแล้ว / เปิดประตูลับได้แล้ว"></div>
@@ -714,6 +764,10 @@
       <div class="dndField"><label>EXP</label><input id="dndEditExp" type="number" min="0"></div>
       <div class="dndField"><label>ทอง</label><input id="dndEditGold" type="number" min="0"></div>
     </div>
+    <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">🛡️ ต้านทานสถานะ/ดีบัฟ</h4>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ค่าต้านทานสถานะ (%) — หักออกจากโอกาสติดสถานะของท่าโจมตีมอนสเตอร์ที่ใส่ผู้เล่นคนนี้</label><input id="dndEditStatusResist" type="number" min="0" max="100" value="0"></div>
+    </div>
     <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">🎒 อุปกรณ์สวมใส่</h4>
     <div id="dndEditEquipGrid" class="dndEquipGrid"></div>
     <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">⚔️ โจมตีปกติ (ตีธรรมดา)</h4>
@@ -730,7 +784,11 @@
       <div class="dndField"><label>โบนัสดาเมจ ±</label><input id="dndEditNaDmgBonus" type="number" min="-100" max="100"></div>
     </div>
     <div class="dndFieldRow">
-      <div class="dndField"><label>ระยะโจมตี (0 = ไม่จำกัด)</label><input id="dndEditNaRange" type="number" min="0" max="100" placeholder="0"></div>
+      <div class="dndField"><label>ระยะโจมตี (ช่อง, 0 = ไม่จำกัด)</label><input id="dndEditNaRange" type="number" min="0" max="50" step="0.1" placeholder="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>📦 ต้องมีไอเทม (ไม่บังคับ — ชื่อต้องตรงกับในกระเป๋าเป๊ะๆ)</label><input id="dndEditNaReqItemName" maxlength="40" placeholder="เช่น ลูกธนู"></div>
+      <div class="dndField"><label>จำนวนไอเทมที่ต้องมี</label><input id="dndEditNaReqItemQty" type="number" min="1" max="999" value="1"></div>
     </div>
     <button type="button" id="dndEditNaResetBtn" class="dndDmEditCancelBtn" style="margin-bottom:10px;">↺ รีเซ็ตโจมตีปกติเป็นค่าเริ่มต้น</button>
     <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">✨ สกิลของผู้เล่นคนนี้</h4>
@@ -747,6 +805,7 @@
         <input id="dndEditStatusAtk" type="number" min="-20" max="20" placeholder="โจมตี ±" style="max-width:110px;" title="ปรับค่าทอยโจมตี ระหว่างติดสถานะนี้">
         <input id="dndEditStatusDmg" type="number" min="-20" max="20" placeholder="ดาเมจ ±" style="max-width:110px;" title="ปรับค่าดาเมจ ระหว่างติดสถานะนี้">
         <input id="dndEditStatusDef" type="number" min="-20" max="20" placeholder="ป้องกัน(AC) ±" style="max-width:120px;" title="ปรับค่า AC ระหว่างติดสถานะนี้">
+        <input id="dndEditStatusVision" type="number" min="-80" max="80" placeholder="วิสัยทัศน์ ±" style="max-width:120px;" title="ปรับระยะวิสัยทัศน์ (มองเห็นไกล/แคบลง) ระหว่างติดสถานะนี้ — ใช้ % เดียวกับที่ตั้งวิสัยทัศน์ของ token">
         <input id="dndEditStatusTick" type="number" min="-1000" max="1000" placeholder="HP/ติ๊ก ±" style="max-width:110px;" title="ลบ=โดนดาเมจต่อเนื่อง (พิษ/ไฟลุก) บวก=ฟื้น HP ต่อเนื่อง (รีเจน) ทุกกี่วินาทีตั้งช่องถัดไป">
         <input id="dndEditStatusTickInterval" type="number" min="1" max="3600" placeholder="ทุกกี่วิ" style="max-width:90px;" title="ระยะห่างระหว่างแต่ละติ๊ก (วินาที) ใช้ก็ต่อเมื่อตั้ง HP/ติ๊ก ไว้">
       </div>
@@ -760,7 +819,7 @@
     </div>
     <div class="dndFieldRow">
       <div class="dndField"><label>👁️ วิสัยทัศน์</label><select id="dndEditVisionType"><option value="normal">ปกติ</option><option value="dark">มองในที่มืด (Darkvision)</option></select></div>
-      <div class="dndField"><label>รัศมีวิสัยทัศน์ (ว่าง = ค่าเริ่มต้นตามชนิด)</label><input id="dndEditVisionRadius" type="number" min="5" max="100" placeholder="ค่าเริ่มต้น"></div>
+      <div class="dndField"><label>รัศมีวิสัยทัศน์ (จำนวนช่อง — ว่าง = ค่าเริ่มต้นตามชนิด)</label><input id="dndEditVisionRadius" type="number" min="0.5" max="20" step="0.1" placeholder="ค่าเริ่มต้น"></div>
     </div>
     <label class="dndLockRow"><input type="checkbox" id="dndEditLocked"> ล็อกการ์ดตัวละคร (ผู้เล่นแก้ไขเองไม่ได้)</label>
     <button id="dndDmEditSaveBtn">บันทึกการแก้ไข</button>
@@ -806,7 +865,8 @@
       <div class="dndField"><label>ไอคอนสถานะ (ไม่บังคับ)</label><input id="dndClassSkillEditStatusIcon" maxlength="4" placeholder="เช่น ☠️ ปล่อยว่าง = ☠️"></div>
       <div class="dndField"><label>สีของสถานะ (ไม่บังคับ)</label><input id="dndClassSkillEditStatusColor" type="color" value="#ff6b6b" style="width:100%; height:32px; padding:0; border:none; background:none;"></div>
       <div class="dndField"><label>💥 รัศมี AOE (0-100, 0 = เป้าเดี่ยวปกติ)</label><input id="dndClassSkillEditAoeRadius" type="number" min="0" max="100" value="0"></div>
-      <div class="dndField"><label>📏 ระยะโจมตี (0-100, 0 = ไม่จำกัดระยะ)</label><input id="dndClassSkillEditRange" type="number" min="0" max="100" value="0"></div>
+      <div class="dndField"><label>📐 รูปแบบ AOE</label><select id="dndClassSkillEditAoeShape"><option value="circle">⭕ วงกลม (รอบเป้าหมายหลัก)</option><option value="line">📏 เส้นตรง (พุ่งจากตัวเองไปเป้าหมายหลัก)</option></select></div>
+      <div class="dndField"><label>📏 ระยะโจมตี (ช่อง, 0 = ไม่จำกัดระยะ)</label><input id="dndClassSkillEditRange" type="number" min="0" max="50" step="0.1" value="0"></div>
       <div class="dndField"><label><input id="dndClassSkillEditCleanseEnabled" type="checkbox" style="width:auto; margin-right:6px;">✨ สกิลลบล้างสถานะผิดปกติ</label></div>
       <div class="dndField"><label>ชื่อสถานะที่จะลบ (ว่าง = ล้างทั้งหมด)</label><input id="dndClassSkillEditCleanseName" maxlength="24" placeholder="เช่น พิษ (ว่าง = ล้างทุกสถานะ)"></div>
       <div class="dndField"><label><input id="dndClassSkillEditBuffAlly" type="checkbox" style="width:auto; margin-right:6px;">🛡️ สกิลนี้ใช้กับเพื่อน (บัฟ)</label></div>
@@ -816,6 +876,7 @@
           <option value="both">ทั้งคู่ (มอนสเตอร์ + ผู้เล่น)</option>
           <option value="monster">มอนสเตอร์เท่านั้น</option>
           <option value="player">ผู้เล่นเท่านั้น</option>
+          <option value="self">ตัวเองเท่านั้น</option>
         </select>
       </div>
     </div>
@@ -824,6 +885,7 @@
       <div class="dndField"><label>🎯 โจมตี ± ระหว่างติดสถานะ</label><input id="dndClassSkillEditStatusAtkMod" type="number" min="-20" max="20" value="0"></div>
       <div class="dndField"><label>💥 ดาเมจ ± ระหว่างติดสถานะ</label><input id="dndClassSkillEditStatusDmgMod" type="number" min="-20" max="20" value="0"></div>
       <div class="dndField"><label>🛡️ ป้องกัน (AC) ± ระหว่างติดสถานะ</label><input id="dndClassSkillEditStatusDefMod" type="number" min="-20" max="20" value="0"></div>
+            <div class="dndField"><label>👁️ วิสัยทัศน์ ± ช่อง ระหว่างติดสถานะ (มองไกล/แคบลง)</label><input id="dndClassSkillEditStatusVisionMod" type="number" min="-20" max="20" step="0.1" value="0"></div>
       <div class="dndField"><label>☠️/💚 HP ต่อวิ (tick, 0=ไม่มี)</label><input id="dndClassSkillEditStatusTick" type="number" min="-1000" max="1000" value="0"></div>
       <div class="dndField"><label>ติ๊กทุกกี่วินาที</label><input id="dndClassSkillEditStatusTickInterval" type="number" min="1" max="3600" value="6"></div>
     </div>
@@ -831,6 +893,8 @@
       <div class="dndField"><label>คูลดาวน์ (วินาที, 0 = ไม่มี)</label><input id="dndClassSkillEditCooldown" type="number" min="0" max="3600" value="0"></div>
       <div class="dndField"><label>จำนวนครั้งที่ใช้ได้ (0 = ไม่จำกัด)</label><input id="dndClassSkillEditMaxUses" type="number" min="0" max="99" value="0"></div>
       <div class="dndField"><label>🔵 ใช้ SP เท่าไหร่ (0 = ไม่ใช้ SP)</label><input id="dndClassSkillEditSpCost" type="number" min="0" max="999" value="0"></div>
+      <div class="dndField"><label>📦 ต้องมีไอเทม (ไม่บังคับ — ชื่อต้องตรงกับในกระเป๋าเป๊ะๆ)</label><input id="dndClassSkillEditReqItemName" maxlength="40" placeholder="เช่น ผงเวทมนตร์"></div>
+      <div class="dndField"><label>จำนวนไอเทมที่ต้องมี</label><input id="dndClassSkillEditReqItemQty" type="number" min="1" max="999" value="1"></div>
     </div>
     <div id="dndClassSkillEditError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
     <button id="dndClassSkillEditSaveBtn">บันทึกการแก้ไข (เฉพาะคนนี้)</button>
@@ -878,7 +942,8 @@
       <div class="dndField"><label>ไอคอนสถานะ (ไม่บังคับ)</label><input id="dndSkillEditStatusIcon" maxlength="4" placeholder="เช่น ☠️ ปล่อยว่าง = ☠️"></div>
       <div class="dndField"><label>สีของสถานะ (ไม่บังคับ)</label><input id="dndSkillEditStatusColor" type="color" value="#ff6b6b" style="width:100%; height:32px; padding:0; border:none; background:none;"></div>
       <div class="dndField"><label>💥 รัศมี AOE (0-100, 0 = เป้าเดี่ยวปกติ)</label><input id="dndSkillEditAoeRadius" type="number" min="0" max="100" value="0"></div>
-      <div class="dndField"><label>📏 ระยะโจมตี (0-100, 0 = ไม่จำกัดระยะ)</label><input id="dndSkillEditRange" type="number" min="0" max="100" value="0"></div>
+      <div class="dndField"><label>📐 รูปแบบ AOE</label><select id="dndSkillEditAoeShape"><option value="circle">⭕ วงกลม (รอบเป้าหมายหลัก)</option><option value="line">📏 เส้นตรง (พุ่งจากตัวเองไปเป้าหมายหลัก)</option></select></div>
+      <div class="dndField"><label>📏 ระยะโจมตี (ช่อง, 0 = ไม่จำกัดระยะ)</label><input id="dndSkillEditRange" type="number" min="0" max="50" step="0.1" value="0"></div>
       <div class="dndField"><label><input id="dndSkillEditCleanseEnabled" type="checkbox" style="width:auto; margin-right:6px;">✨ สกิลลบล้างสถานะผิดปกติ</label></div>
       <div class="dndField"><label>ชื่อสถานะที่จะลบ (ว่าง = ล้างทั้งหมด)</label><input id="dndSkillEditCleanseName" maxlength="24" placeholder="เช่น พิษ (ว่าง = ล้างทุกสถานะ)"></div>
       <div class="dndField"><label><input id="dndSkillEditBuffAlly" type="checkbox" style="width:auto; margin-right:6px;">🛡️ สกิลนี้ใช้กับเพื่อน (บัฟ)</label></div>
@@ -888,6 +953,7 @@
           <option value="both">ทั้งคู่ (มอนสเตอร์ + ผู้เล่น)</option>
           <option value="monster">มอนสเตอร์เท่านั้น</option>
           <option value="player">ผู้เล่นเท่านั้น</option>
+          <option value="self">ตัวเองเท่านั้น</option>
         </select>
       </div>
     </div>
@@ -896,16 +962,33 @@
       <div class="dndField"><label>🎯 โจมตี ± ระหว่างติดสถานะ</label><input id="dndSkillEditStatusAtkMod" type="number" min="-20" max="20" value="0"></div>
       <div class="dndField"><label>💥 ดาเมจ ± ระหว่างติดสถานะ</label><input id="dndSkillEditStatusDmgMod" type="number" min="-20" max="20" value="0"></div>
       <div class="dndField"><label>🛡️ ป้องกัน (AC) ± ระหว่างติดสถานะ</label><input id="dndSkillEditStatusDefMod" type="number" min="-20" max="20" value="0"></div>
+            <div class="dndField"><label>👁️ วิสัยทัศน์ ± ช่อง ระหว่างติดสถานะ (มองไกล/แคบลง)</label><input id="dndSkillEditStatusVisionMod" type="number" min="-20" max="20" step="0.1" value="0"></div>
       <div class="dndField"><label>☠️/💚 HP ต่อวิ (tick, 0=ไม่มี)</label><input id="dndSkillEditStatusTick" type="number" min="-1000" max="1000" value="0"></div>
       <div class="dndField"><label>ติ๊กทุกกี่วินาที</label><input id="dndSkillEditStatusTickInterval" type="number" min="1" max="3600" value="6"></div>
     </div>
     <div class="dndFieldRow">
       <div class="dndField"><label>คูลดาวน์ (วินาที, 0 = ไม่มี)</label><input id="dndSkillEditCooldown" type="number" min="0" max="3600" value="0"></div>
       <div class="dndField"><label>จำนวนครั้งที่ใช้ได้ (0 = ไม่จำกัด)</label><input id="dndSkillEditMaxUses" type="number" min="0" max="99" value="0"></div>
+      <div class="dndField"><label>📖 เวทย์เลเวล (0 = แคนทริป, 1-9)</label><input id="dndSkillEditLevel" type="number" min="0" max="9" value="0"></div>
       <div class="dndField"><label>🔵 ใช้ SP เท่าไหร่ (0 = ไม่ใช้ SP)</label><input id="dndSkillEditSpCost" type="number" min="0" max="999" value="0"></div>
+      <div class="dndField"><label>📦 ต้องมีไอเทม (ไม่บังคับ — ชื่อต้องตรงกับในกระเป๋าเป๊ะๆ)</label><input id="dndSkillEditReqItemName" maxlength="40" placeholder="เช่น ผงเวทมนตร์"></div>
+      <div class="dndField"><label>จำนวนไอเทมที่ต้องมี</label><input id="dndSkillEditReqItemQty" type="number" min="1" max="999" value="1"></div>
+    </div>
+    <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#c9d1e0; margin-bottom:8px;">
+      <input type="checkbox" id="dndSkillEditIsSummon"> 🔮 สกิลอัญเชิญ — ใช้แล้วสร้างมอนสเตอร์ (สัตว์อัญเชิญ) ขึ้นสู้แทนตัว แทนที่จะโจมตี/ฮีล/ดีบัฟตรงๆ
+    </label>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>อัญเชิญตัวไหน</label><select id="dndSkillEditSummonTemplateKey"><option value="">— ยังไม่เลือกตัว —</option></select></div>
+      <div class="dndField"><label>อยู่ได้กี่วินาที (0 = ไม่มีกำหนดหมดเอง)</label><input id="dndSkillEditSummonDuration" type="number" min="0" max="3600" value="60"></div>
+      <div class="dndField"><label>อัญเชิญพร้อมกันได้สูงสุดกี่ตัว</label><input id="dndSkillEditSummonMaxActive" type="number" min="1" max="10" value="1"></div>
     </div>
     <label style="display:block; font-size:11px; color:#9aa4b2; margin:8px 0 6px 0;">มอบสกิลให้ผู้เล่น (ไม่เลือกใคร = ทั้งปาร์ตี้ใช้ได้หมด) — เปลี่ยนได้ตลอด</label>
     <div id="dndSkillEditAssignBox" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;"></div>
+    <label style="display:block; font-size:11px; color:#9aa4b2; margin:8px 0 6px 0;">🎓 จำกัดคลาสที่ใช้สกิลนี้ได้ (ไม่เลือกคลาสใดเลย = ทุกคลาสใช้ได้)</label>
+    <div id="dndSkillEditClassBox" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;"></div>
+    <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#c9d1e0; margin-bottom:8px;">
+      <input type="checkbox" id="dndSkillEditLibraryOnly"> 🔒 ล็อกไว้ก่อน — ยังไม่มีใครใช้ได้จนกว่าจะเรียนรู้ (เหมาะกับสกิลที่ให้เรียนจากสมุดเวทย์ในร้านห้องสมุด)
+    </label>
     <div id="dndSkillEditError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
     <button id="dndSkillEditSaveBtn">บันทึกการแก้ไข</button>
     <button id="dndSkillEditCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
@@ -936,8 +1019,12 @@
       <div class="dndField"><label>ขยายช่วงคริติคอล</label><input id="dndPassiveEditCritRange" type="number" min="0" max="5"></div>
       <div class="dndField"><label>ทองเริ่มต้น</label><input id="dndPassiveEditGold" type="number"></div>
     </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ต้านทานสถานะ (%)</label><input id="dndPassiveEditResist" type="number" min="-30" max="30"></div>
+    </div>
     <div id="dndPassiveEditError" style="color:#ff8080; font-size:12px; min-height:16px;"></div>
     <button id="dndPassiveEditSaveBtn">บันทึกการแก้ไข</button>
+    <button id="dndPassiveEditResetBtn" type="button" style="display:none;">♻️ รีเซ็ตเป็นค่าเริ่มต้น</button>
     <button id="dndPassiveEditCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
   </div>
 </div>
@@ -1018,8 +1105,26 @@ Goblin Fang x2"></textarea></div></div>
     <div class="dndFieldRow">
       <div class="dndField"><label>คำอธิบาย (ไม่บังคับ)</label><input id="dndAtkDescInput" maxlength="150"></div>
       <div class="dndField"><label>💥 รัศมี AOE (0-100, 0 = เป้าเดี่ยวปกติ)</label><input id="dndAtkAoeRadiusInput" type="number" min="0" max="100" value="0"></div>
+      <div class="dndField"><label>📐 รูปแบบ AOE</label><select id="dndAtkAoeShapeInput"><option value="circle">⭕ วงกลม (รอบเป้าหมายหลัก)</option><option value="line">📏 เส้นตรง (พุ่งจากตัวมอนสเตอร์ไปเป้าหมายหลัก)</option></select></div>
     </div>
     <div class="dndRangeHint" style="margin-bottom:6px;">เลือกเป้าหมายหลักเหมือนเดิม แต่ถ้าตั้งรัศมีไว้ ดาเมจจะกระจายไปโดนผู้เล่นคนอื่นที่อยู่ในระยะรอบเป้าหมายหลักบนแผนที่ด้วย ยิ่งอยู่ไกลจากจุดศูนย์กลางยิ่งโดนดาเมจน้อยลง (ไม่โดนมอนสเตอร์ตัวอื่น)</div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>☠️ สถานะที่จะติด (ไม่บังคับ — เว้นว่าง = ท่านี้ไม่ติดสถานะ)</label><input id="dndAtkStatusName" maxlength="24" placeholder="เช่น ติดพิษ"></div>
+      <div class="dndField"><label>โอกาสติด (%)</label><input id="dndAtkStatusChance" type="number" min="1" max="100" value="100"></div>
+      <div class="dndField"><label>ระยะเวลา (วิ, 0=ไม่มี)</label><input id="dndAtkStatusDuration" type="number" min="0" max="86400" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>หมายเหตุสถานะ (ไม่บังคับ)</label><input id="dndAtkStatusNote" maxlength="100"></div>
+      <div class="dndField"><label>โจมตี ±</label><input id="dndAtkStatusAtk" type="number" min="-20" max="20" value="0"></div>
+      <div class="dndField"><label>ดาเมจ ±</label><input id="dndAtkStatusDmg" type="number" min="-20" max="20" value="0"></div>
+      <div class="dndField"><label>ป้องกัน(AC) ±</label><input id="dndAtkStatusDef" type="number" min="-20" max="20" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>HP/ติ๊ก ± (ลบ=พิษ/ไฟลุก)</label><input id="dndAtkStatusTick" type="number" min="-1000" max="1000" value="0"></div>
+      <div class="dndField"><label>ทุกกี่วิ (ใช้ถ้าตั้ง HP/ติ๊ก)</label><input id="dndAtkStatusTickInterval" type="number" min="1" max="3600" value="6"></div>
+      <div class="dndField"><label>ไอคอน</label><input id="dndAtkStatusIcon" maxlength="4" placeholder="☠️" style="max-width:80px;"></div>
+      <div class="dndField" style="max-width:80px;"><label>สี</label><input id="dndAtkStatusColor" type="color" value="#ff6b6b" style="width:100%; height:34px; padding:0; border:none; background:none;"></div>
+    </div>
     <button id="dndAtkAddBtn" type="button">+ เพิ่มท่าโจมตี</button>
 
     <div class="dndStatusManagerBox">
