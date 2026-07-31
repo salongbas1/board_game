@@ -64,6 +64,35 @@ function sortHand(hand) {
   const order = { '♣': 0, '♦': 1, '♠': 2, '♥': 3 };
   return hand.slice().sort((a, b) => order[a.suit] - order[b.suit] || a.value - b.value);
 }
+function dealHands(deck, numPlayers, handSize) {
+  // แจกไพ่แบบสุ่ม แต่การันตีว่าผู้เล่นคนเดียวจะไม่ได้ไพ่ใบเดียวกัน (ดอก+แต้มเดียวกัน) ซ้ำอยู่ในมือตัวเอง
+  // สำคัญมากในโหมด 8 คนที่ใช้ 2 สำรับรวมกัน เพราะไพ่แต่ละใบมี 2 ใบซ้ำกันอยู่ในกอง
+  // (ถ้าแจกแบบสุ่มธรรมดา จะมีโอกาสกว่า 50% ที่ผู้เล่นคนหนึ่งจะได้ไพ่ใบเดียวกัน 2 ใบในมือเดียว)
+  const maxAttempts = 300;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const shuffled = shuffle(deck.slice());
+    const hands = Array.from({ length: numPlayers }, () => []);
+    const heldKeys = Array.from({ length: numPlayers }, () => new Set());
+    let ok = true;
+    for (const card of shuffled) {
+      const key = card.suit + card.rank;
+      const candidates = [];
+      for (let p = 0; p < numPlayers; p++) {
+        if (hands[p].length < handSize && !heldKeys[p].has(key)) candidates.push(p);
+      }
+      if (candidates.length === 0) { ok = false; break; }
+      const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+      hands[chosen].push(card);
+      heldKeys[chosen].add(key);
+    }
+    if (ok) return hands;
+  }
+  // fallback (แทบไม่มีทางเกิดขึ้นจริง): แจกแบบเรียงลำดับปกติถ้าลองหลายรอบแล้วยังหาชุดที่ไม่ซ้ำไม่ได้
+  const shuffled = shuffle(deck.slice());
+  const hands = Array.from({ length: numPlayers }, () => []);
+  for (let i = 0; i < shuffled.length; i++) hands[i % numPlayers].push(shuffled[i]);
+  return hands;
+}
 function cardPublic(c) { return { suit: c.suit, rank: c.rank, value: c.value, uid: c.uid }; }
 function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
@@ -419,9 +448,9 @@ function handleSubmitPass(seat, uids) {
 // ---------------- Main game loop ----------------
 async function runGame() {
   while (!gameOver) {
-    const deck = shuffle(createDeck(DECK_COUNT));
-    players.forEach(p => { p.hand = []; p.collected = []; });
-    for (let i = 0; i < deck.length; i++) players[i % NUM_PLAYERS].hand.push(deck[i]);
+    const deck = createDeck(DECK_COUNT);
+    const dealt = dealHands(deck, NUM_PLAYERS, Math.floor(deck.length / NUM_PLAYERS));
+    players.forEach((p, i) => { p.hand = dealt[i]; p.collected = []; });
     heartsBroken = false;
     tricksPlayed = 0;
     phase = 'playing';

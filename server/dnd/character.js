@@ -25,20 +25,25 @@ function dndStarterGearForClass(classKey) {
 // แต่ละเผ่ามีให้เลือก 2 แบบ — เลือกได้ตอนสร้างตัวละครครั้งเดียว (ล็อกไปพร้อมการ์ดตัวละคร)
 // effect ที่รองรับ: atk (โบนัสทอยโจมตี), dmg (โบนัสดาเมจ), ac (โบนัสป้องกัน), hp (โบนัส HP สูงสุด), critRange (ขยายช่วงคริติคอล เช่น 1 = โดนคริตที่ 19-20), gold (ทองเริ่มต้นเพิ่ม)
 // customPassives: dndCustomPassives จาก dnd.js (สกิลติดตัวที่ DM ออกแบบเอง) — ส่งเข้ามาเป็นพารามิเตอร์เพราะ state ตัวนี้ยังอยู่ที่ dnd.js
-function dndRacePassivesFor(raceKey, customPassives) {
-  const builtin = DND_RACE_PASSIVES[raceKey] || [];
+// raceOverrides: dndRacePassiveOverrides จาก dnd.js — DM แก้ไขค่าเริ่มต้นของสกิลติดตัวประจำเผ่าที่มีมาให้ในระบบ (คีย์ `${raceKey}:${passiveKey}`)
+// ทับเฉพาะฟิลด์ของสกิลติดตัวเดิม (name/icon/desc/effect) ไม่กระทบ key เดิม เพื่อไม่ให้ตัวละครที่เลือกไว้แล้วหลุดออกจากพาสซีฟ
+function dndRacePassivesFor(raceKey, customPassives, raceOverrides) {
+  const builtin = (DND_RACE_PASSIVES[raceKey] || []).map(base => {
+    const ov = raceOverrides && raceOverrides[`${raceKey}:${base.key}`];
+    return ov ? Object.assign({}, base, ov, { overridden: true }) : base;
+  });
   // สกิลติดตัวที่ DM สร้างเอง: ผูกกับเผ่าใดเผ่าหนึ่งโดยเฉพาะ หรือ raceKey === 'any' = ใช้ได้ทุกเผ่า
   const custom = (customPassives || []).filter(cp => cp.raceKey === raceKey || cp.raceKey === 'any');
   return builtin.concat(custom);
 }
-function dndRacePassiveByKey(raceKey, passiveKey, customPassives) {
-  return dndRacePassivesFor(raceKey, customPassives).find(p => p.key === passiveKey) || null;
+function dndRacePassiveByKey(raceKey, passiveKey, customPassives, raceOverrides) {
+  return dndRacePassivesFor(raceKey, customPassives, raceOverrides).find(p => p.key === passiveKey) || null;
 }
 // คืนโบนัสจากสกิลติดตัวของตัวละคร (ค่าเริ่มต้นเป็น 0 ทุกช่องถ้ายังไม่ได้เลือก/หาไม่เจอ)
-function dndCharPassiveEffect(character, customPassives) {
-  const passive = character && dndRacePassiveByKey(character.raceKey, character.passiveKey, customPassives);
+function dndCharPassiveEffect(character, customPassives, raceOverrides) {
+  const passive = character && dndRacePassiveByKey(character.raceKey, character.passiveKey, customPassives, raceOverrides);
   const eff = (passive && passive.effect) || {};
-  return { atk: eff.atk || 0, dmg: eff.dmg || 0, ac: eff.ac || 0, hp: eff.hp || 0, critRange: eff.critRange || 0, gold: eff.gold || 0 };
+  return { atk: eff.atk || 0, dmg: eff.dmg || 0, ac: eff.ac || 0, hp: eff.hp || 0, critRange: eff.critRange || 0, gold: eff.gold || 0, resist: eff.resist || 0 };
 }
 
 // ---- สกิลประจำคลาส: ทุกคลาสมีสกิลเริ่มต้น (เลเวล 1) ให้อัตโนมัติ แล้วปลดสกิลใหม่เพิ่มตามเลเวล ----
@@ -158,9 +163,12 @@ function newDndCharacter(displayName) {
     hp: 10, maxHp: 10, ac: 10, sp: DND_STARTING_SP, maxSp: DND_STARTING_SP,
     str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10,
     inventory: '', backstory: '', locked: false, pointBuy: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
-    equipment: dndSanitizeEquipment(null), statuses: [], exp: 0, gold: 0, statPoints: 0,
+    equipment: dndSanitizeEquipment(null), statuses: [], exp: 0, gold: 0, statPoints: 0, permaDead: false,
     appearance: dndSanitizeAppearance(null), bag: [], normalAttack: null,
     skillOverrides: {}, // DM ปรับสกิลประจำคลาสเฉพาะผู้เล่นคนนี้คนเดียว — คีย์ = id สกิลคลาส, ค่า = ฟิลด์ที่ทับค่าเริ่มต้นของคลาส
+    // ค่าต้านทานสถานะ (%) — เหมือน statusResist ของ token มอนสเตอร์ทุกประการ แต่ฝั่งผู้เล่น: หักออกจากโอกาสติดสถานะของ
+    // ท่าโจมตีมอนสเตอร์ที่ใส่ผู้เล่นคนนี้ (DM ปรับได้จากหน้าต่างแก้ไขตัวละคร) — ก่อนหน้านี้ผู้เล่นไม่มีช่องนี้เลย มีแต่ฝั่งมอนสเตอร์
+    statusResist: 0,
   };
 }
 // เติมฟิลด์ที่อาจขาดหายไปให้ตัวละคร (เช่นไฟล์เซฟเก่าที่บันทึกไว้ก่อนจะมีระบบ SP)
@@ -169,6 +177,9 @@ function dndEnsureCharacterDefaults(character) {
   const c = character || newDndCharacter('ผู้เล่น');
   if (c.maxSp == null || !Number.isFinite(Number(c.maxSp))) c.maxSp = DND_STARTING_SP;
   if (c.sp == null || !Number.isFinite(Number(c.sp))) c.sp = c.maxSp;
+  if (c.permaDead == null) c.permaDead = false;
+  // ไฟล์เซฟเก่าก่อนมีระบบต้านทานสถานะฝั่งผู้เล่น — เติม 0 ให้ (ไม่ต้านทานอะไรเลย เหมือนพฤติกรรมเดิมก่อนมีฟีเจอร์นี้)
+  if (c.statusResist == null || !Number.isFinite(Number(c.statusResist))) c.statusResist = 0;
   return c;
 }
 

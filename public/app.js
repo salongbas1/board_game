@@ -196,6 +196,7 @@ function dndStatusModSummary(s) {
   if (s.atkMod) bits.push(`🎯${s.atkMod > 0 ? '+' : ''}${s.atkMod}`);
   if (s.dmgMod) bits.push(`💥${s.dmgMod > 0 ? '+' : ''}${s.dmgMod}`);
   if (s.defMod) bits.push(`🛡️${s.defMod > 0 ? '+' : ''}${s.defMod}`);
+  if (s.visionMod) bits.push(`👁️${s.visionMod > 0 ? '+' : ''}${s.visionMod}`);
   if (s.tickValue) bits.push(`${s.tickValue > 0 ? '💚+' : '☠️'}${s.tickValue}/${s.tickIntervalSec || 6}วิ`);
   return bits.join(' ');
 }
@@ -216,6 +217,14 @@ function dndTickStatusCooldowns() {
     if (!expiresAt) return;
     const remain = Math.max(0, Math.ceil((expiresAt - now) / 1000));
     el.textContent = remain > 0 ? `⏳${remain}วิ` : '⏳หมดแล้ว';
+  });
+  // นับถอยหลังเวลาที่เหลือของสัตว์อัญเชิญในแผงควบคุมของผู้เล่นด้วย (โมดูล 5) — ไม่ต้องรอ state อัปเดตเหมือนกัน
+  document.querySelectorAll('.dndSummonCd[data-summon-expires-at]').forEach(el => {
+    const expiresAt = Number(el.dataset.summonExpiresAt || 0);
+    if (!expiresAt) return;
+    const remain = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+    const m = Math.floor(remain / 60), s = remain % 60;
+    el.textContent = remain > 0 ? `⏳${m}:${String(s).padStart(2, '0')}` : '⏳หมดเวลาแล้ว';
   });
 }
 setInterval(dndTickStatusCooldowns, 1000);
@@ -509,9 +518,21 @@ let dndTurnIndexClient = -1;
 let dndCurrentTurnPlayerId = null;
 let dndRaces = [];
 let dndClasses = [];
+let dndSummonTemplates = {}; // แคตตาล็อกสัตว์อัญเชิญ (key -> {name, icon, ...}) จากเซิร์ฟเวอร์ — ใช้เติม dropdown ตอน DM สร้าง/แก้สกิลอัญเชิญ
+function fillSummonTemplateSelect(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— ยังไม่เลือกตัว —</option>' + Object.keys(dndSummonTemplates).map(key => {
+    const tpl = dndSummonTemplates[key];
+    return `<option value="${key}">${escapeHtml(tpl.icon || '')} ${escapeHtml(tpl.name || key)}</option>`;
+  }).join('');
+  sel.value = current; // คงค่าที่เลือกไว้เดิม ถ้ายังมีอยู่ในลิสต์ (ไม่งั้นกลับไปเป็นตัวเลือกว่างอัตโนมัติ)
+}
 let dndClassStarterGear = {}; // { classKey: { weapon:{name,atk,def,maxDurability}, armor:{...}, shoes:{...}, accessory:{...} } }
 let dndPassives = {}; // { raceKey: [{key,name,icon,desc,effect}, ...] }
 let dndCustomPassives = []; // [{id,key,raceKey,name,icon,desc,effect}] — created by DM, on top of the built-in ones
+let dndRacePassiveOverrides = {}; // { `${raceKey}:${passiveKey}`: {name,icon,desc,effect} } — DM edits to a built-in race passive's default values
 let dndPointBuyMin = 8;
 let dndPointBuyBudget = 27;
 let dndPointBuyCost = { 8: 0, 9: 1, 10: 2, 11: 3, 12: 4, 13: 5, 14: 7, 15: 9 };
@@ -565,10 +586,16 @@ let dndCreateManualEquip = {};
 //  ถูกย้ายไปไว้ที่ public/js/dnd-map.js ทั้งหมดแล้ว — ดูที่ไฟล์นั้นเพื่อแก้ไขส่วนแมพ)
 let dndDmEditTargetId = null;
 let dndSkills = [];
+let dndLibrarySkillCatalog = []; // ข้อมูลแสดงผลของสกิล libraryOnly ทุกตัว (โชว์ในร้านห้องสมุดก่อนซื้อ) — ไม่ใช่สกิลที่ใช้ได้จริง ดู dndAnySkillById
+// หาข้อมูลสกิลไว้ "แสดงผล" (ชื่อ/ดาเมจ/SP ฯลฯ) — เช็ก dndSkills (สกิลที่ใช้ได้จริง/DM เห็นทั้งหมด) ก่อน แล้วค่อย fallback ไปแคตตาล็อกร้านห้องสมุด
+function dndAnySkillById(id) {
+  const sid = Number(id);
+  return dndSkills.find(s => s.id === sid) || dndLibrarySkillCatalog.find(s => s.id === sid) || null;
+}
 let dndActiveTool = 'dice';
 const DND_STAT_LABELS = { str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA' };
 // ค่าตั้งต้นของ "โจมตีปกติ" ฝั่งไคลเอนต์ — ต้องตรงกับ DND_NORMAL_ATTACK_DEFAULT ฝั่งเซิร์ฟเวอร์ (server/dnd.js)
-const DND_NORMAL_ATTACK_DEFAULT_CLIENT = { name: 'โจมตีปกติ', stat: 'auto', dmgDie: 6, dmgCount: 1, atkBonus: 0, dmgBonus: 0, range: 0 };
+const DND_NORMAL_ATTACK_DEFAULT_CLIENT = { name: 'โจมตีปกติ', stat: 'auto', dmgDie: 6, dmgCount: 1, atkBonus: 0, dmgBonus: 0, range: 0, reqItemName: '', reqItemQty: 0 };
 // ค่าเฉลี่ยคนทั่วไป ~10 — ตัวปรับ (modifier) คำนวณจาก floor((ค่าสเตตัส-10)/2) ยิ่งค่าสูงยิ่งได้ตัวปรับบวกมาก ยิ่งค่าต่ำยิ่งโดนหักลบตอนทอยเต๋า
 const DND_STAT_TIPS = {
   str: '💪 พละกำลัง (STR) — พลังกายภาพและระยะประชิด เพิ่มพลังโจมตีและดาเมจระยะประชิด ค่าเฉลี่ยคนทั่วไป ~10',
@@ -588,6 +615,13 @@ let dndEquipSlots = ['weapon', 'armor', 'shoes', 'accessory'];
 let dndEquipSlotLabels = { weapon: 'อาวุธ', armor: 'เกราะ', shoes: 'รองเท้า', accessory: 'เครื่องประดับ' };
 let dndBagCapacity = 20;
 let dndShopEditKey = null; // "shopId:itemId" ของไอเทมร้านค้าที่กำลังแก้ไขอยู่ (null = ไม่มี) — ใช้ตอน DM กดแก้ไขไอเทมในร้าน
+// เก็บสถานะค้นหา/กลุ่มที่เปิดอยู่ของแต่ละร้าน (คีย์ = shop.id) ไว้แยกจาก DOM เพราะ renderDndShops() rebuild HTML ทั้งกล่องทุกครั้งที่ state อัปเดตจากเซิร์ฟเวอร์
+// ถ้าไม่เก็บแยกไว้แบบนี้ พิมพ์ค้นหาอยู่ดีๆ พอมีคนอื่นซื้อของในห้อง ข้อความค้นหาจะหายเพราะโดน rebuild ทับ
+let dndShopUIState = {};
+function dndGetShopUIState(shopId) {
+  if (!dndShopUIState[shopId]) dndShopUIState[shopId] = { search: '', openLevels: new Set() };
+  return dndShopUIState[shopId];
+}
 const DND_EQUIP_SLOT_ICONS = { weapon: '⚔️', armor: '🛡️', shoes: '👢', accessory: '💍' };
 let dndScene = { location: '', situation: '' };
 let dndSceneEditInitialized = false;
@@ -1129,6 +1163,10 @@ function applyNormalAttackToEditForm(na) {
   document.getElementById('dndEditNaDmgBonus').value = cfg.dmgBonus || 0;
   const rangeEl = document.getElementById('dndEditNaRange');
   if (rangeEl) rangeEl.value = cfg.range || 0;
+  const reqItemNameEl = document.getElementById('dndEditNaReqItemName');
+  if (reqItemNameEl) reqItemNameEl.value = cfg.reqItemName || '';
+  const reqItemQtyEl = document.getElementById('dndEditNaReqItemQty');
+  if (reqItemQtyEl) reqItemQtyEl.value = cfg.reqItemQty || 1;
 }
 document.getElementById('dndEditNaResetBtn').onclick = (ev) => {
   flashBtn(ev.currentTarget);
@@ -1156,6 +1194,23 @@ function renderDndSkillAssignBox() {
     cb.onchange = () => {
       const id = Number(cb.dataset.id);
       if (cb.checked) dndSkillAssignSelected.add(id); else dndSkillAssignSelected.delete(id);
+    };
+  });
+}
+
+// จำกัดคลาสที่ใช้สกิลนี้ได้ (ไม่บังคับ) — ไม่เลือกคลาสใดเลย = ทุกคลาสใช้ได้ ใช้ Set แบบเดียวกับ dndSkillAssignSelected ด้านบน
+let dndSkillClassSelected = new Set();
+function renderDndSkillClassBox() {
+  const box = document.getElementById('dndSkillClassBox');
+  if (!box) return;
+  box.innerHTML = dndClasses.map(cls => {
+    const checked = dndSkillClassSelected.has(cls.key) ? 'checked' : '';
+    return `<label class="dndAssignChip"><input type="checkbox" data-classkey="${cls.key}" ${checked}> ${escapeHtml(cls.icon || '')} ${escapeHtml(cls.name)}</label>`;
+  }).join('');
+  box.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.onchange = () => {
+      const key = cb.dataset.classkey;
+      if (cb.checked) dndSkillClassSelected.add(key); else dndSkillClassSelected.delete(key);
     };
   });
 }
@@ -1198,6 +1253,7 @@ document.getElementById('dndSkillAddBtn').onclick = (ev) => {
         atkMod: document.getElementById('dndSkillStatusAtkMod').value,
         dmgMod: document.getElementById('dndSkillStatusDmgMod').value,
         defMod: document.getElementById('dndSkillStatusDefMod').value,
+        visionMod: document.getElementById('dndSkillStatusVisionMod').value,
         tickValue: document.getElementById('dndSkillStatusTick').value,
         tickIntervalSec: document.getElementById('dndSkillStatusTickInterval').value,
         icon: document.getElementById('dndSkillStatusIcon').value,
@@ -1207,16 +1263,28 @@ document.getElementById('dndSkillAddBtn').onclick = (ev) => {
       targetMode: document.getElementById('dndSkillTargetMode').value,
       aoe: {
         radius: document.getElementById('dndSkillAoeRadius').value,
+        shape: document.getElementById('dndSkillAoeShape').value,
       },
       range: document.getElementById('dndSkillRange').value,
       cleanse: {
         enabled: document.getElementById('dndSkillCleanseEnabled').checked,
         name: document.getElementById('dndSkillCleanseName').value,
       },
+      level: document.getElementById('dndSkillLevel').value,
       cooldownSec: document.getElementById('dndSkillCooldown').value,
       maxUses: document.getElementById('dndSkillMaxUses').value,
       spCost: document.getElementById('dndSkillSpCost').value,
+      reqItem: {
+        name: document.getElementById('dndSkillReqItemName').value,
+        qty: document.getElementById('dndSkillReqItemQty').value,
+      },
       assignedIds: Array.from(dndSkillAssignSelected),
+      libraryOnly: document.getElementById('dndSkillLibraryOnly').checked,
+      allowedClasses: Array.from(dndSkillClassSelected),
+      isSummon: document.getElementById('dndSkillIsSummon').checked,
+      summonTemplateKey: document.getElementById('dndSkillSummonTemplateKey').value,
+      summonDurationSec: document.getElementById('dndSkillSummonDuration').value,
+      summonMaxActive: document.getElementById('dndSkillSummonMaxActive').value,
     },
   });
   document.getElementById('dndSkillName').value = '';
@@ -1243,17 +1311,29 @@ document.getElementById('dndSkillAddBtn').onclick = (ev) => {
   document.getElementById('dndSkillStatusAtkMod').value = '0';
   document.getElementById('dndSkillStatusDmgMod').value = '0';
   document.getElementById('dndSkillStatusDefMod').value = '0';
+  document.getElementById('dndSkillStatusVisionMod').value = '0';
   document.getElementById('dndSkillStatusTick').value = '0';
   document.getElementById('dndSkillStatusTickInterval').value = '6';
   document.getElementById('dndSkillAoeRadius').value = '0';
+  document.getElementById('dndSkillAoeShape').value = 'circle';
   document.getElementById('dndSkillRange').value = '0';
   document.getElementById('dndSkillCleanseEnabled').checked = false;
   document.getElementById('dndSkillCleanseName').value = '';
+  document.getElementById('dndSkillLevel').value = '0';
   document.getElementById('dndSkillCooldown').value = '0';
   document.getElementById('dndSkillMaxUses').value = '0';
   document.getElementById('dndSkillSpCost').value = '0';
+  document.getElementById('dndSkillReqItemName').value = '';
+  document.getElementById('dndSkillReqItemQty').value = '1';
+  document.getElementById('dndSkillLibraryOnly').checked = false;
+  document.getElementById('dndSkillIsSummon').checked = false;
+  document.getElementById('dndSkillSummonTemplateKey').value = '';
+  document.getElementById('dndSkillSummonDuration').value = '60';
+  document.getElementById('dndSkillSummonMaxActive').value = '1';
   dndSkillAssignSelected = new Set();
   renderDndSkillAssignBox();
+  dndSkillClassSelected = new Set();
+  renderDndSkillClassBox();
 };
 
 let dndPendingTargetAction = null;
@@ -1280,7 +1360,9 @@ function openDndTargetPicker(action) {
     dndPlayersList.filter(p => !p.isDM && p.connected !== false).forEach(p => {
       const isMe = dndYou && p.id === dndYou.id;
       const dead = Number(p.character.hp) <= 0;
+      const permaDead = !!p.character.permaDead;
       if (dead && !allowDead) return; // ไอเทมฟื้นฟู HP ธรรมดา เลือกเป้าหมายที่หมดสติไม่ได้เลย
+      if (permaDead) return; // ตายถาวรแล้ว ไอเทม (แม้แต่ชุบชีวิต) ใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้น
       rows.push({ type: 'player', id: p.id, name: (p.character.charName || p.name) + (isMe ? ' (ตัวเอง)' : '') + (dead ? ' 💀' : ''), hp: p.character.hp, maxHp: p.character.maxHp, ac: p.character.ac });
     });
     hint.textContent = allowDead ? 'เลือกคนที่จะใช้ไอเทมนี้ให้ (เลือกเพื่อนที่หมดสติเพื่อชุบชีวิตให้ฟื้น)' : 'เลือกเพื่อนที่จะฟื้นฟู HP ให้ (ใช้กับคนที่หมดสติไม่ได้ ต้องใช้ไอเทมชุบชีวิตแทน)';
@@ -1294,9 +1376,22 @@ function openDndTargetPicker(action) {
         const isMe = dndYou && p.id === dndYou.id;
         if (action.mode === 'normalAttack' && isMe) return; // โจมตีปกติเลือกโจมตีตัวเองไม่ได้
         const dead = Number(p.character.hp) <= 0;
+        const permaDead = !!p.character.permaDead;
         if (dead && isPlainHeal) return;
+        if (permaDead && action.isHeal) return; // ตายถาวรแล้ว สกิลชุบ (แม้แต่ชุบชีวิต) ใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้น
         rows.push({ type: 'player', id: p.id, name: (p.character.charName || p.name) + (isMe ? ' (ตัวเอง)' : '') + (dead ? ' 💀' : ''), hp: p.character.hp, maxHp: p.character.maxHp, ac: p.character.ac });
       });
+    }
+    if (tMode === 'self') {
+      // สกิลนี้ใช้ได้กับตัวเองเท่านั้น — แสดงให้เลือกแค่ตัวผู้เล่นเอง ไม่มีตัวเลือกอื่น
+      const me = dndYou && dndPlayersList.find(p => p.id === dndYou.id);
+      if (me) {
+        const dead = Number(me.character.hp) <= 0;
+        const permaDead = !!me.character.permaDead;
+        if (!(dead && isPlainHeal) && !(permaDead && action.isHeal)) {
+          rows.push({ type: 'player', id: me.id, name: (me.character.charName || me.name) + ' (ตัวเอง)' + (dead ? ' 💀' : ''), hp: me.character.hp, maxHp: me.character.maxHp, ac: me.character.ac });
+        }
+      }
     }
     if (tMode === 'monster' || tMode === 'both') {
       dndTokens.filter(t => t.kind === 'npc' && Number(t.hp) > 0).forEach(t => {
@@ -1308,13 +1403,13 @@ function openDndTargetPicker(action) {
     } else if (action.isCleanse) {
       hint.textContent = 'เลือกเป้าหมายที่จะลบล้างสถานะให้';
     } else if (action.isBuff) {
-      hint.textContent = tMode === 'both' ? 'เลือกเป้าหมายที่จะบัฟให้ (มอนสเตอร์หรือผู้เล่น)' : 'เลือกเพื่อนที่จะบัฟให้';
+      hint.textContent = tMode === 'both' ? 'เลือกเป้าหมายที่จะบัฟให้ (มอนสเตอร์หรือผู้เล่น)' : (tMode === 'self' ? 'ยืนยันใช้กับตัวเอง' : 'เลือกเพื่อนที่จะบัฟให้');
     } else if (action.isRevive) {
       hint.textContent = 'เลือกเป้าหมายที่จะชุบ HP ให้ (เลือกคนที่หมดสติเพื่อชุบชีวิตให้ฟื้น)';
     } else if (action.isHeal) {
-      hint.textContent = tMode === 'both' ? 'เลือกเป้าหมายที่จะฟื้นฟู HP ให้ (ใช้กับคนที่หมดสติไม่ได้ ต้องใช้สกิลชุบชีวิตแทน)' : 'เลือกเพื่อนที่จะฟื้นฟู HP ให้ (ใช้กับคนที่หมดสติไม่ได้ ต้องใช้สกิลชุบชีวิตแทน)';
+      hint.textContent = tMode === 'both' ? 'เลือกเป้าหมายที่จะฟื้นฟู HP ให้ (ใช้กับคนที่หมดสติไม่ได้ ต้องใช้สกิลชุบชีวิตแทน)' : (tMode === 'self' ? 'ยืนยันใช้กับตัวเอง' : 'เลือกเพื่อนที่จะฟื้นฟู HP ให้ (ใช้กับคนที่หมดสติไม่ได้ ต้องใช้สกิลชุบชีวิตแทน)');
     } else {
-      hint.textContent = tMode === 'both' ? 'เลือกเป้าหมาย (มอนสเตอร์หรือผู้เล่น)' : (tMode === 'player' ? 'เลือกผู้เล่นที่จะเป็นเป้าหมาย' : 'เลือกมอนสเตอร์/เป้าหมายบนแผนที่');
+      hint.textContent = tMode === 'both' ? 'เลือกเป้าหมาย (มอนสเตอร์หรือผู้เล่น)' : (tMode === 'self' ? 'สกิลนี้ใช้ได้กับตัวเองเท่านั้น — กดยืนยัน' : (tMode === 'player' ? 'เลือกผู้เล่นที่จะเป็นเป้าหมาย' : 'เลือกมอนสเตอร์/เป้าหมายบนแผนที่'));
     }
   } else {
     dndTokens.filter(t => t.kind === 'npc' && Number(t.hp) > 0).forEach(t => {
@@ -1402,7 +1497,7 @@ document.getElementById('dndTargetConfirmBtn').onclick = (ev) => {
 
 document.getElementById('dndNormalAttackBtn').onclick = (ev) => {
   if (!dndYou || dndYou.isDM) return;
-  if (amIDead()) { showDndErrorToast('คุณหมดสติอยู่ ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้'); return; }
+  if (amIDead()) { showDndErrorToast(dndDeadMsgForMe()); return; }
   flashBtn(ev.currentTarget);
   openDndTargetPicker({ mode: 'normalAttack', title: 'เลือกเป้าหมายสำหรับโจมตีปกติ (มอนสเตอร์หรือผู้เล่น)' });
 };
@@ -1412,7 +1507,6 @@ function renderDndNormalAttackInfo() {
   const me = myDndEntry();
   if (!el || !me) return;
   const btn = document.getElementById('dndNormalAttackBtn');
-  if (btn) btn.disabled = amIDead();
   const c = me.character || {};
   const na = c.normalAttack || DND_NORMAL_ATTACK_DEFAULT_CLIENT;
   const naStat = (na.stat === 'auto' || DND_STAT_LABELS[na.stat]) ? na.stat : 'auto';
@@ -1431,8 +1525,24 @@ function renderDndNormalAttackInfo() {
   const statTag = naStat === 'auto' ? 'STR/DEX' : DND_STAT_LABELS[naStat];
   const nameTag = na.name || DND_NORMAL_ATTACK_DEFAULT_CLIENT.name;
   const naRange = Number(na.range) || 0;
-  const rangeTag = naRange > 0 ? `<br>📏 ระยะโจมตี: <b>${naRange}</b>` : '';
-  el.innerHTML = `⚔️ ${escapeHtml(nameTag)} (${statTag})<br>🎯 โจมตี: <b>1d20 ${modStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b><br>💥 ดาเมจ: <b>${dmgCount}d${dmgDie} ${dmgModStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b>${rangeTag}`;
+  const rangeTag = naRange > 0 ? `<br>📏 ระยะโจมตี: <b>${naRange}</b> ช่อง` : '';
+  const myBag = (me.character && me.character.bag) || [];
+  const myReqItemQty = na.reqItemName ? ((myBag.find(it => it.name === na.reqItemName) || {}).qty || 0) : 0;
+  const notEnoughItem = dndYou && !dndYou.isDM && !!na.reqItemName && myReqItemQty < (na.reqItemQty || 1);
+  const reqItemTag = na.reqItemName ? `<br>📦 ต้องมี: <b>${escapeHtml(na.reqItemName)} x${na.reqItemQty}</b>${notEnoughItem ? ' (ไม่พอ!)' : ''}` : '';
+  el.innerHTML = `⚔️ ${escapeHtml(nameTag)} (${statTag})<br>🎯 โจมตี: <b>1d20 ${modStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b><br>💥 ดาเมจ: <b>${dmgCount}d${dmgDie} ${dmgModStr} ${equipAtk ? `+ ${equipAtk} อุปกรณ์` : ''}</b>${rangeTag}${reqItemTag}`;
+  if (btn) {
+    if (amIDead()) {
+      btn.disabled = true;
+      btn.textContent = '⚔️ โจมตีปกติ';
+    } else if (notEnoughItem) {
+      btn.disabled = true;
+      btn.textContent = `📦 ไอเทมไม่พอ (ต้องมี ${na.reqItemName} x${na.reqItemQty})`;
+    } else {
+      btn.disabled = false;
+      btn.textContent = '⚔️ โจมตีปกติ';
+    }
+  }
 }
 
 function amIDead() {
@@ -1440,9 +1550,19 @@ function amIDead() {
   const me = myDndEntry();
   return !!(me && Number(me.character && me.character.hp) <= 0);
 }
+function amIPermaDead() {
+  if (!dndYou || dndYou.isDM) return false;
+  const me = myDndEntry();
+  return !!(me && me.character && me.character.permaDead);
+}
+function dndDeadMsgForMe() {
+  return amIPermaDead()
+    ? 'คุณตายถาวรแล้ว (โดนดาเมจครั้งเดียวเกิน 2 เท่าของเลือดสูงสุด) ไอเทม/สกิลชุบใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้นถึงจะฟื้นได้'
+    : 'คุณหมดสติอยู่ ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้';
+}
 function renderDndSkillList() {
   document.getElementById('dndSkillDmForm').style.display = (dndYou && dndYou.isDM) ? 'block' : 'none';
-  if (dndYou && dndYou.isDM) renderDndSkillAssignBox();
+  if (dndYou && dndYou.isDM) { renderDndSkillAssignBox(); renderDndSkillClassBox(); fillSummonTemplateSelect('dndSkillSummonTemplateKey'); }
   const emptyHint = document.getElementById('dndSkillEmptyHint');
   emptyHint.style.display = dndSkills.length ? 'none' : 'block';
   const list = document.getElementById('dndSkillList');
@@ -1457,25 +1577,32 @@ function renderDndSkillList() {
     if (skill.statusAtkMod) statusModBits.push(`🎯${skill.statusAtkMod > 0 ? '+' : ''}${skill.statusAtkMod}`);
     if (skill.statusDmgMod) statusModBits.push(`💥${skill.statusDmgMod > 0 ? '+' : ''}${skill.statusDmgMod}`);
     if (skill.statusDefMod) statusModBits.push(`🛡️${skill.statusDefMod > 0 ? '+' : ''}${skill.statusDefMod}`);
+    if (skill.statusVisionMod) statusModBits.push(`👁️${skill.statusVisionMod > 0 ? '+' : ''}${skill.statusVisionMod}`);
     if (skill.statusTickValue) statusModBits.push(`${skill.statusTickValue > 0 ? '💚+' : '☠️'}${skill.statusTickValue}/${skill.statusTickIntervalSec || 6}วิ`);
     const statusIconPreview = skill.statusIcon || '☠️';
     const statusColorStyle = skill.statusColor ? ` style="color:${skill.statusColor};"` : '';
     const statusText = skill.statusName ? `<span${statusColorStyle}>${escapeHtml(statusIconPreview)} ติดสถานะ "${escapeHtml(skill.statusName)}"</span>${skill.statusNote ? ` — ${escapeHtml(skill.statusNote)}` : ''}${skill.buffAlly ? ' (🛡️ บัฟ — เลือกเป้าหมายเป็นเพื่อน)' : (skill.statusChance && skill.statusChance < 100 ? ` (🎯 โอกาสติด ${skill.statusChance}%)` : '')}${statusModBits.length ? ` [${statusModBits.join(' · ')}]` : ''}` : '';
-    const aoeText = skill.aoeRadius ? `💥 AOE รัศมี ${skill.aoeRadius} (ดาเมจกระจายรอบเป้าหมายหลัก ยิ่งไกลยิ่งเบา)` : '';
-    const rangeText = skill.range ? `📏 ระยะโจมตี ${skill.range} (ต้องอยู่ในระยะนี้บนแผนที่ถึงจะใช้ได้)` : '';
+    const aoeText = skill.aoeRadius ? (skill.aoeShape === 'line'
+      ? `💥 AOE เส้นตรง กว้าง ${skill.aoeRadius} (ดาเมจกระจายเป็นเส้นจากตัวเองไปเป้าหมายหลัก ยิ่งไกลจากเส้นยิ่งเบา)`
+      : `💥 AOE รัศมี ${skill.aoeRadius} (ดาเมจกระจายรอบเป้าหมายหลัก ยิ่งไกลยิ่งเบา)`) : '';
+    const rangeText = skill.range ? `📏 ระยะโจมตี ${skill.range} ช่อง (ต้องอยู่ในระยะนี้บนแผนที่ถึงจะใช้ได้)` : '';
     const cleanseText = skill.cleanseEnabled ? `✨ ลบล้างสถานะ${skill.cleanseName ? ` "${escapeHtml(skill.cleanseName)}"` : 'ทั้งหมด'} (เลือกเป้าหมายเป็นผู้เล่น)` : '';
     const tMode = dndSkillTargetModeOf(skill);
-    const targetModeText = tMode === 'both' ? '🎯 เป้าหมาย: มอนสเตอร์/ผู้เล่น (เลือกได้ทั้งคู่)' : (tMode === 'player' ? '🎯 เป้าหมาย: ผู้เล่นเท่านั้น' : '🎯 เป้าหมาย: มอนสเตอร์เท่านั้น');
+    const targetModeText = tMode === 'both' ? '🎯 เป้าหมาย: มอนสเตอร์/ผู้เล่น (เลือกได้ทั้งคู่)' : (tMode === 'self' ? '🎯 เป้าหมาย: ตัวเองเท่านั้น' : (tMode === 'player' ? '🎯 เป้าหมาย: ผู้เล่นเท่านั้น' : '🎯 เป้าหมาย: มอนสเตอร์เท่านั้น'));
     const assignedNames = (!skill.classSkill && skill.assignedIds && skill.assignedIds.length)
       ? skill.assignedIds.map(id => { const pp = dndPlayersList.find(p => p.id === id); return pp ? (pp.character.charName || pp.name) : null; }).filter(Boolean)
       : [];
     const assignedText = skill.classSkill
       ? `🎓 สกิลประจำคลาส (ปลดล็อกเลเวล ${skill.level})`
-      : (assignedNames.length ? `🔒 เฉพาะ: ${assignedNames.map(escapeHtml).join(', ')}` : '👥 ทั้งปาร์ตี้ใช้ได้');
+      : (assignedNames.length ? `🔒 เฉพาะ: ${assignedNames.map(escapeHtml).join(', ')}` : (skill.libraryOnly ? '🔒 ยังไม่มีใครเรียนรู้ (ต้องเรียนก่อนถึงจะใช้ได้)' : '👥 ทั้งปาร์ตี้ใช้ได้'));
+    const classRestrictText = (!skill.classSkill && skill.allowedClasses && skill.allowedClasses.length)
+      ? `🎓 เฉพาะคลาส: ${dndAllowedClassesTextClient(skill.allowedClasses)}` : '';
     const ruleBits = [];
+    if (!skill.classSkill && skill.level) ruleBits.push(`📖 เวทย์เลเวล ${skill.level}`);
     if (skill.cooldownSec) ruleBits.push(`⏱ คูลดาวน์ ${skill.cooldownSec} วิ`);
     if (skill.maxUses) ruleBits.push(`🔁 ใช้ได้ ${skill.maxUses} ครั้ง${(dndYou && !dndYou.isDM && skill.usesLeft != null) ? ` (เหลือ ${skill.usesLeft})` : ''}`);
     if (skill.spCost) ruleBits.push(`🔵 ใช้ SP ${skill.spCost}`);
+    if (skill.reqItemName) ruleBits.push(`📦 ต้องมี ${escapeHtml(skill.reqItemName)} x${skill.reqItemQty}`);
     const ruleText = ruleBits.join(' · ');
     const skillIcon = skill.classSkill ? '🎓' : (skill.icon || '✨');
     const skillColorStyle = (!skill.classSkill && skill.color) ? ` style="color:${skill.color};"` : '';
@@ -1498,12 +1625,19 @@ function renderDndSkillList() {
       <div class="dndSkillCardDmg" style="color:#9fd0ff;">${targetModeText}</div>
       ${ruleText ? `<div class="dndSkillCardRules">${ruleText}</div>` : ''}
       <div class="dndSkillCardAssigned">${assignedText}</div>
+      ${classRestrictText ? `<div class="dndSkillCardAssigned" style="color:#ffb86b;">${classRestrictText}</div>` : ''}
       <div class="dndSkillCardBtns"></div>`;
     const btnRow = card.querySelector('.dndSkillCardBtns');
-    const canUse = dndYou && !skill.locked && !amIDead() && (dndYou.isDM || skill.classSkill || assignedNames.length === 0 || (skill.assignedIds || []).includes(dndYou.id));
+    const classOk = dndSkillAllowedForMyClass(skill);
+    const myCharLevel = (() => { const m = myDndEntry(); return Math.max(1, Math.floor(Number(m && m.character && m.character.level) || 1)); })();
+    const levelOk = dndYou && dndYou.isDM ? true : (!skill.libraryOnly || myCharLevel >= (Number(skill.level) || 0));
+    const canUse = classOk && levelOk && dndYou && !skill.locked && !amIDead() && (dndYou.isDM || skill.classSkill || (skill.assignedIds || []).includes(dndYou.id) || (assignedNames.length === 0 && !skill.libraryOnly));
     const me = myDndEntry();
     const mySp = (me && me.character && me.character.sp != null) ? Number(me.character.sp) : 0;
     const notEnoughSp = dndYou && !dndYou.isDM && skill.spCost > 0 && mySp < skill.spCost;
+    const myBag = (me && me.character && me.character.bag) || [];
+    const myReqItemQty = skill.reqItemName ? ((myBag.find(it => it.name === skill.reqItemName) || {}).qty || 0) : 0;
+    const notEnoughItem = dndYou && !dndYou.isDM && !!skill.reqItemName && myReqItemQty < skill.reqItemQty;
     const useBtn = document.createElement('button');
     useBtn.type = 'button';
     useBtn.className = 'dndSkillUseBtn';
@@ -1515,8 +1649,20 @@ function renderDndSkillList() {
       useBtn.textContent = '💀 หมดสติอยู่';
       useBtn.disabled = true;
       useBtn.classList.add('dndSkillLockedBtn');
+    } else if (!classOk) {
+      useBtn.textContent = `🎓 คลาสไม่ตรง (ต้องเป็น: ${dndAllowedClassesTextClient(skill.allowedClasses)})`;
+      useBtn.disabled = true;
+      useBtn.classList.add('dndSkillLockedBtn');
+    } else if (!levelOk) {
+      useBtn.textContent = `🔒 ต้องเลเวลตัวละคร ${skill.level} ขึ้นไป (ตอนนี้เลเวล ${myCharLevel})`;
+      useBtn.disabled = true;
+      useBtn.classList.add('dndSkillLockedBtn');
     } else if (canUse && notEnoughSp) {
       useBtn.textContent = `🔵 SP ไม่พอ (ต้องใช้ ${skill.spCost})`;
+      useBtn.disabled = true;
+      useBtn.classList.add('dndSkillLockedBtn');
+    } else if (canUse && notEnoughItem) {
+      useBtn.textContent = `📦 ไอเทมไม่พอ (ต้องมี ${skill.reqItemName} x${skill.reqItemQty})`;
       useBtn.disabled = true;
       useBtn.classList.add('dndSkillLockedBtn');
     } else if (canUse) {
@@ -1584,18 +1730,66 @@ function dndPassiveEffectSummary(effect) {
   if (effect.hp) bits.push(`HP ${effect.hp > 0 ? '+' : ''}${effect.hp}`);
   if (effect.critRange) bits.push(`คริติคอลกว้างขึ้น ${effect.critRange}`);
   if (effect.gold) bits.push(`ทอง ${effect.gold > 0 ? '+' : ''}${effect.gold}`);
+  if (effect.resist) bits.push(`ต้านทานสถานะ ${effect.resist > 0 ? '+' : ''}${effect.resist}%`);
   return bits.length ? bits.join(' · ') : 'ไม่มีผลกลไก';
 }
 function showDndPassiveFormError(msg) {
   const el = document.getElementById('dndPassiveFormError');
   if (el) el.textContent = msg || '';
 }
+function fillRaceSelectPlain(id, selectedKey) {
+  const sel = document.getElementById(id);
+  if (!sel) return;
+  sel.innerHTML = dndRaces.map(r => `<option value="${r.key}">${r.icon} ${escapeHtml(r.name)}</option>`).join('');
+  sel.value = selectedKey && dndRaceByKey(selectedKey) ? selectedKey : (dndRaces[0] ? dndRaces[0].key : '');
+}
+function renderDndBuiltinPassiveList() {
+  const sel = document.getElementById('dndBuiltinPassiveRace');
+  if (!sel) return;
+  fillRaceSelectPlain('dndBuiltinPassiveRace', sel.value);
+  const raceKey = sel.value;
+  const list = document.getElementById('dndBuiltinPassiveList');
+  list.innerHTML = '';
+  const builtin = (dndPassives && dndPassives[raceKey]) || [];
+  builtin.forEach(base => {
+    const ov = dndRacePassiveOverrides && dndRacePassiveOverrides[`${raceKey}:${base.key}`];
+    const passive = ov ? Object.assign({}, base, ov) : base;
+    const card = document.createElement('div');
+    card.className = 'dndSkillCard';
+    card.innerHTML = `
+      <div class="dndSkillCardTop">
+        <span class="dndSkillCardName">${passive.icon || '✨'} ${escapeHtml(passive.name)}</span>
+        <span class="dndSkillCardStat">${ov ? '✏️ แก้ไขแล้ว' : 'ค่าเริ่มต้น'}</span>
+      </div>
+      ${passive.desc ? `<div class="dndSkillCardDesc">${escapeHtml(passive.desc)}</div>` : ''}
+      <div class="dndSkillCardDmg">${dndPassiveEffectSummary(passive.effect || {})}</div>
+      <div class="dndSkillCardBtns"></div>`;
+    const btnRow = card.querySelector('.dndSkillCardBtns');
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'dndEditBtn';
+    editBtn.textContent = '✏️ แก้ไข';
+    editBtn.onclick = () => openDndBuiltinPassiveEdit(raceKey, base.key);
+    btnRow.appendChild(editBtn);
+    if (ov) {
+      const resetBtn = document.createElement('button');
+      resetBtn.type = 'button';
+      resetBtn.className = 'dndSkillDelBtn';
+      resetBtn.textContent = '♻️ รีเซ็ต';
+      resetBtn.onclick = () => { if (confirm(`รีเซ็ต "${base.name}" กลับเป็นค่าเริ่มต้น?`)) send({ type: 'dndRacePassiveOverrideReset', raceKey, passiveKey: base.key }); };
+      btnRow.appendChild(resetBtn);
+    }
+    list.appendChild(card);
+  });
+}
+document.getElementById('dndBuiltinPassiveRace').onchange = renderDndBuiltinPassiveList;
 function renderDndPassiveManageList() {
   const section = document.getElementById('dndPassiveManageSection');
   const isDM = !!(dndYou && dndYou.isDM);
   section.style.display = isDM ? 'block' : 'none';
   if (!isDM) return;
   fillRaceSelectWithAny('dndPassiveRace', document.getElementById('dndPassiveRace').value);
+  renderDndBuiltinPassiveList();
   const emptyHint = document.getElementById('dndPassiveEmptyHint');
   emptyHint.style.display = (dndCustomPassives || []).length ? 'none' : 'block';
   const list = document.getElementById('dndPassiveList');
@@ -1648,6 +1842,7 @@ document.getElementById('dndPassiveAddBtn').onclick = (ev) => {
         hp: document.getElementById('dndPassiveHp').value,
         critRange: document.getElementById('dndPassiveCritRange').value,
         gold: document.getElementById('dndPassiveGold').value,
+        resist: document.getElementById('dndPassiveResist').value,
       },
     },
   });
@@ -1660,16 +1855,23 @@ document.getElementById('dndPassiveAddBtn').onclick = (ev) => {
   document.getElementById('dndPassiveHp').value = '0';
   document.getElementById('dndPassiveCritRange').value = '0';
   document.getElementById('dndPassiveGold').value = '0';
+  document.getElementById('dndPassiveResist').value = '0';
 };
 let dndPassiveEditTargetId = null;
+let dndPassiveEditMode = 'custom'; // 'custom' = สกิลติดตัวที่ DM สร้างเอง, 'builtin' = แก้ไขค่าเริ่มต้นสกิลติดตัวประจำเผ่าที่มีมาให้ในระบบ
+let dndPassiveEditBuiltin = null; // { raceKey, passiveKey } เมื่ออยู่โหมด 'builtin'
 function openDndPassiveEdit(passiveId) {
   const passive = (dndCustomPassives || []).find(cp => cp.id === passiveId);
   if (!passive) return;
+  dndPassiveEditMode = 'custom';
+  dndPassiveEditBuiltin = null;
   dndPassiveEditTargetId = passiveId;
   const eff = passive.effect || {};
+  document.getElementById('dndPassiveEditTitle').textContent = 'แก้ไขสกิลติดตัว (DM)';
   document.getElementById('dndPassiveEditName').value = passive.name || '';
   document.getElementById('dndPassiveEditIcon').value = passive.icon || '';
   fillRaceSelectWithAny('dndPassiveEditRace', passive.raceKey);
+  document.getElementById('dndPassiveEditRace').disabled = false;
   document.getElementById('dndPassiveEditDesc').value = passive.desc || '';
   document.getElementById('dndPassiveEditAtk').value = eff.atk || 0;
   document.getElementById('dndPassiveEditDmg').value = eff.dmg || 0;
@@ -1677,32 +1879,77 @@ function openDndPassiveEdit(passiveId) {
   document.getElementById('dndPassiveEditHp').value = eff.hp || 0;
   document.getElementById('dndPassiveEditCritRange').value = eff.critRange || 0;
   document.getElementById('dndPassiveEditGold').value = eff.gold || 0;
+  document.getElementById('dndPassiveEditResist').value = eff.resist || 0;
   document.getElementById('dndPassiveEditError').textContent = '';
+  document.getElementById('dndPassiveEditResetBtn').style.display = 'none';
+  document.getElementById('dndPassiveEditOverlay').style.display = 'flex';
+}
+function openDndBuiltinPassiveEdit(raceKey, passiveKey) {
+  const base = ((dndPassives && dndPassives[raceKey]) || []).find(bp => bp.key === passiveKey);
+  if (!base) return;
+  const ov = dndRacePassiveOverrides && dndRacePassiveOverrides[`${raceKey}:${passiveKey}`];
+  const passive = ov ? Object.assign({}, base, ov) : base;
+  dndPassiveEditMode = 'builtin';
+  dndPassiveEditBuiltin = { raceKey, passiveKey };
+  dndPassiveEditTargetId = null;
+  const raceInfo = dndRaceByKey(raceKey);
+  const eff = passive.effect || {};
+  document.getElementById('dndPassiveEditTitle').textContent = `แก้ไขค่าเริ่มต้นสกิลติดตัว: ${raceInfo ? raceInfo.name : raceKey} (DM)`;
+  document.getElementById('dndPassiveEditName').value = passive.name || '';
+  document.getElementById('dndPassiveEditIcon').value = passive.icon || '';
+  fillRaceSelectWithAny('dndPassiveEditRace', raceKey);
+  document.getElementById('dndPassiveEditRace').disabled = true; // ผูกกับเผ่านี้ตายตัว แก้ไม่ได้
+  document.getElementById('dndPassiveEditDesc').value = passive.desc || '';
+  document.getElementById('dndPassiveEditAtk').value = eff.atk || 0;
+  document.getElementById('dndPassiveEditDmg').value = eff.dmg || 0;
+  document.getElementById('dndPassiveEditAc').value = eff.ac || 0;
+  document.getElementById('dndPassiveEditHp').value = eff.hp || 0;
+  document.getElementById('dndPassiveEditCritRange').value = eff.critRange || 0;
+  document.getElementById('dndPassiveEditGold').value = eff.gold || 0;
+  document.getElementById('dndPassiveEditResist').value = eff.resist || 0;
+  document.getElementById('dndPassiveEditError').textContent = '';
+  document.getElementById('dndPassiveEditResetBtn').style.display = ov ? 'inline-block' : 'none';
   document.getElementById('dndPassiveEditOverlay').style.display = 'flex';
 }
 document.getElementById('dndPassiveEditSaveBtn').onclick = (ev) => {
-  if (dndPassiveEditTargetId == null) return;
   const name = document.getElementById('dndPassiveEditName').value.trim();
   if (!name) { document.getElementById('dndPassiveEditError').textContent = 'กรุณาตั้งชื่อสกิลติดตัว'; return; }
+  const effect = {
+    atk: document.getElementById('dndPassiveEditAtk').value,
+    dmg: document.getElementById('dndPassiveEditDmg').value,
+    ac: document.getElementById('dndPassiveEditAc').value,
+    hp: document.getElementById('dndPassiveEditHp').value,
+    critRange: document.getElementById('dndPassiveEditCritRange').value,
+    gold: document.getElementById('dndPassiveEditGold').value,
+    resist: document.getElementById('dndPassiveEditResist').value,
+  };
   flashBtn(ev.currentTarget);
-  send({
-    type: 'dndPassiveEdit',
-    passiveId: dndPassiveEditTargetId,
-    passive: {
-      name,
-      icon: document.getElementById('dndPassiveEditIcon').value,
-      raceKey: document.getElementById('dndPassiveEditRace').value,
-      desc: document.getElementById('dndPassiveEditDesc').value,
-      effect: {
-        atk: document.getElementById('dndPassiveEditAtk').value,
-        dmg: document.getElementById('dndPassiveEditDmg').value,
-        ac: document.getElementById('dndPassiveEditAc').value,
-        hp: document.getElementById('dndPassiveEditHp').value,
-        critRange: document.getElementById('dndPassiveEditCritRange').value,
-        gold: document.getElementById('dndPassiveEditGold').value,
+  if (dndPassiveEditMode === 'builtin' && dndPassiveEditBuiltin) {
+    send({
+      type: 'dndRacePassiveOverrideSave',
+      raceKey: dndPassiveEditBuiltin.raceKey,
+      passiveKey: dndPassiveEditBuiltin.passiveKey,
+      passive: { name, icon: document.getElementById('dndPassiveEditIcon').value, desc: document.getElementById('dndPassiveEditDesc').value, effect },
+    });
+  } else if (dndPassiveEditTargetId != null) {
+    send({
+      type: 'dndPassiveEdit',
+      passiveId: dndPassiveEditTargetId,
+      passive: {
+        name,
+        icon: document.getElementById('dndPassiveEditIcon').value,
+        raceKey: document.getElementById('dndPassiveEditRace').value,
+        desc: document.getElementById('dndPassiveEditDesc').value,
+        effect,
       },
-    },
-  });
+    });
+  }
+  closeDndModals();
+};
+document.getElementById('dndPassiveEditResetBtn').onclick = () => {
+  if (dndPassiveEditMode === 'builtin' && dndPassiveEditBuiltin) {
+    send({ type: 'dndRacePassiveOverrideReset', raceKey: dndPassiveEditBuiltin.raceKey, passiveKey: dndPassiveEditBuiltin.passiveKey });
+  }
   closeDndModals();
 };
 document.getElementById('dndPassiveEditCancelBtn').onclick = () => closeDndModals();
@@ -1724,9 +1971,25 @@ function renderDndSkillEditAssignBox() {
     };
   });
 }
+// จำกัดคลาสที่ใช้สกิลนี้ได้ (แก้ไขได้) — ใช้ Set แบบเดียวกับ dndSkillEditAssignSelected ด้านบน
+let dndSkillEditClassSelected = new Set();
+function renderDndSkillEditClassBox() {
+  const box = document.getElementById('dndSkillEditClassBox');
+  if (!box) return;
+  box.innerHTML = dndClasses.map(cls => {
+    const checked = dndSkillEditClassSelected.has(cls.key) ? 'checked' : '';
+    return `<label class="dndAssignChip"><input type="checkbox" data-classkey="${cls.key}" ${checked}> ${escapeHtml(cls.icon || '')} ${escapeHtml(cls.name)}</label>`;
+  }).join('');
+  box.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.onchange = () => {
+      const key = cb.dataset.classkey;
+      if (cb.checked) dndSkillEditClassSelected.add(key); else dndSkillEditClassSelected.delete(key);
+    };
+  });
+}
 // เป้าหมายที่สกิลนี้เลือกได้: 'monster' / 'player' / 'both' — สกิลเก่าที่ยังไม่มีช่องนี้จะ fallback ตามกฎเดิม (ตรงกับฝั่งเซิร์ฟเวอร์)
 function dndSkillTargetModeOf(skill) {
-  if (skill.targetMode === 'monster' || skill.targetMode === 'player' || skill.targetMode === 'both') return skill.targetMode;
+  if (skill.targetMode === 'monster' || skill.targetMode === 'player' || skill.targetMode === 'both' || skill.targetMode === 'self') return skill.targetMode;
   return (skill.buffAlly || skill.healDie || skill.cleanseEnabled) ? 'player' : 'monster';
 }
 function openDndSkillEdit(skillId) {
@@ -1740,6 +2003,7 @@ function openDndSkillEdit(skillId) {
   document.getElementById('dndSkillEditStat').value = skill.stat || '';
   document.getElementById('dndSkillEditGuaranteedHit').checked = !!skill.guaranteedHit;
   document.getElementById('dndSkillEditDesc').value = skill.desc || '';
+  document.getElementById('dndSkillEditLevel').value = skill.level || 0;
   document.getElementById('dndSkillEditDmgDie').value = String(skill.dmgDie || 0);
   document.getElementById('dndSkillEditDmgCount').value = skill.dmgCount || 1;
   document.getElementById('dndSkillEditDmgMod').value = skill.dmgMod || 0;
@@ -1758,17 +2022,29 @@ function openDndSkillEdit(skillId) {
   document.getElementById('dndSkillEditStatusAtkMod').value = skill.statusAtkMod || 0;
   document.getElementById('dndSkillEditStatusDmgMod').value = skill.statusDmgMod || 0;
   document.getElementById('dndSkillEditStatusDefMod').value = skill.statusDefMod || 0;
+  document.getElementById('dndSkillEditStatusVisionMod').value = skill.statusVisionMod || 0;
   document.getElementById('dndSkillEditStatusTick').value = skill.statusTickValue || 0;
   document.getElementById('dndSkillEditStatusTickInterval').value = skill.statusTickIntervalSec || 6;
   document.getElementById('dndSkillEditAoeRadius').value = skill.aoeRadius || 0;
+  document.getElementById('dndSkillEditAoeShape').value = skill.aoeShape === 'line' ? 'line' : 'circle';
   document.getElementById('dndSkillEditRange').value = skill.range || 0;
   document.getElementById('dndSkillEditCleanseEnabled').checked = !!skill.cleanseEnabled;
   document.getElementById('dndSkillEditCleanseName').value = skill.cleanseName || '';
   document.getElementById('dndSkillEditCooldown').value = skill.cooldownSec || 0;
   document.getElementById('dndSkillEditMaxUses').value = skill.maxUses || 0;
   document.getElementById('dndSkillEditSpCost').value = skill.spCost || 0;
+  document.getElementById('dndSkillEditReqItemName').value = skill.reqItemName || '';
+  document.getElementById('dndSkillEditReqItemQty').value = skill.reqItemQty || 1;
+  document.getElementById('dndSkillEditIsSummon').checked = !!skill.isSummon;
+  fillSummonTemplateSelect('dndSkillEditSummonTemplateKey');
+  document.getElementById('dndSkillEditSummonTemplateKey').value = skill.summonTemplateKey || '';
+  document.getElementById('dndSkillEditSummonDuration').value = skill.summonDurationSec || 0;
+  document.getElementById('dndSkillEditSummonMaxActive').value = skill.summonMaxActive || 1;
   dndSkillEditAssignSelected = new Set(skill.assignedIds || []);
   renderDndSkillEditAssignBox();
+  dndSkillEditClassSelected = new Set(skill.allowedClasses || []);
+  renderDndSkillEditClassBox();
+  document.getElementById('dndSkillEditLibraryOnly').checked = !!skill.libraryOnly;
   document.getElementById('dndSkillEditError').textContent = '';
   document.getElementById('dndSkillEditOverlay').style.display = 'flex';
 }
@@ -1810,6 +2086,7 @@ document.getElementById('dndSkillEditSaveBtn').onclick = (ev) => {
         atkMod: document.getElementById('dndSkillEditStatusAtkMod').value,
         dmgMod: document.getElementById('dndSkillEditStatusDmgMod').value,
         defMod: document.getElementById('dndSkillEditStatusDefMod').value,
+        visionMod: document.getElementById('dndSkillEditStatusVisionMod').value,
         tickValue: document.getElementById('dndSkillEditStatusTick').value,
         tickIntervalSec: document.getElementById('dndSkillEditStatusTickInterval').value,
         icon: document.getElementById('dndSkillEditStatusIcon').value,
@@ -1819,16 +2096,28 @@ document.getElementById('dndSkillEditSaveBtn').onclick = (ev) => {
       targetMode: document.getElementById('dndSkillEditTargetMode').value,
       aoe: {
         radius: document.getElementById('dndSkillEditAoeRadius').value,
+        shape: document.getElementById('dndSkillEditAoeShape').value,
       },
       range: document.getElementById('dndSkillEditRange').value,
       cleanse: {
         enabled: document.getElementById('dndSkillEditCleanseEnabled').checked,
         name: document.getElementById('dndSkillEditCleanseName').value,
       },
+      level: document.getElementById('dndSkillEditLevel').value,
       cooldownSec: document.getElementById('dndSkillEditCooldown').value,
       maxUses: document.getElementById('dndSkillEditMaxUses').value,
       spCost: document.getElementById('dndSkillEditSpCost').value,
+      reqItem: {
+        name: document.getElementById('dndSkillEditReqItemName').value,
+        qty: document.getElementById('dndSkillEditReqItemQty').value,
+      },
       assignedIds: Array.from(dndSkillEditAssignSelected),
+      libraryOnly: document.getElementById('dndSkillEditLibraryOnly').checked,
+      allowedClasses: Array.from(dndSkillEditClassSelected),
+      isSummon: document.getElementById('dndSkillEditIsSummon').checked,
+      summonTemplateKey: document.getElementById('dndSkillEditSummonTemplateKey').value,
+      summonDurationSec: document.getElementById('dndSkillEditSummonDuration').value,
+      summonMaxActive: document.getElementById('dndSkillEditSummonMaxActive').value,
     },
   });
   document.getElementById('dndSkillEditOverlay').style.display = 'none';
@@ -1965,6 +2254,22 @@ function myDndEntry() {
   return dndPlayersList.find(p => dndYou && p.id === dndYou.id);
 }
 
+// จำกัดคลาสที่ใช้สกิลนี้ได้ (ฝั่งไคลเอ็นต์ — mirror ของ dndAllowedClassesText/dndSkillClassAllowed ใน server/dnd.js)
+// ใช้แสดงแบดจ์และปิดปุ่มใช้/ซื้อล่วงหน้าก่อนจะยิงไปเซิร์ฟเวอร์ (เซิร์ฟเวอร์เช็คซ้ำอีกทีเป็นด่านสุดท้ายเสมอ)
+function dndAllowedClassesTextClient(allowedClasses) {
+  const allowed = Array.isArray(allowedClasses) ? allowedClasses : [];
+  if (!allowed.length) return '';
+  return allowed.map(key => { const cls = dndClassByKey(key); return cls ? `${cls.icon} ${cls.name}` : key; }).join(', ');
+}
+function dndSkillAllowedForMyClass(skill) {
+  if (!dndYou || dndYou.isDM) return true;
+  const allowed = Array.isArray(skill.allowedClasses) ? skill.allowedClasses : [];
+  if (!allowed.length) return true;
+  const me = myDndEntry();
+  const myClassKey = me && me.character && me.character.classKey;
+  return allowed.includes(myClassKey);
+}
+
 
 // ---- shared ability-score math (mirrors server.js so the UI can show live ranges before saving) ----
 function dndAbilityMod(score) { return Math.floor((score - 10) / 2); }
@@ -1989,16 +2294,118 @@ const DND_CLASS_AVATAR_COLOR = {
   fighter: '#c0392b', wizard: '#8e44ad', cleric: '#f1c40f', rogue: '#34495e',
   ranger: '#27ae60', barbarian: '#a0522d', paladin: '#ecf0f1', bard: '#e67e22',
 };
-// สีผิว + ขนาดตัว + ลักษณะเด่นของแต่ละเผ่าพันธุ์ (เรียบง่าย แค่พอแยกออกว่าเป็นเผ่าไหน)
+// ไลบรารีลักษณะเด่นของอวาตาร์ ใช้ผสมกันได้หลายอย่างต่อเผ่า (วาดรอบหัว/ลำตัวหลังผมและหน้า)
+function dndAvatarFeatureSVG(feature, skin) {
+  switch (feature) {
+    case 'ears': return `<polygon points="36,30 26,22 34,42" fill="${skin}"/><polygon points="84,30 94,22 86,42" fill="${skin}"/>`;
+    case 'earsBig': return `<polygon points="38,28 18,10 36,44" fill="${skin}"/><polygon points="82,28 102,10 84,44" fill="${skin}"/>`;
+    case 'beard': return `<rect x="48" y="46" width="24" height="14" rx="6" fill="#c9c9c9"/>`;
+    case 'beardDark': return `<rect x="48" y="46" width="24" height="14" rx="6" fill="#3b2a1e"/>`;
+    case 'horns': return `<polygon points="46,14 40,0 50,10" fill="#3a2a2a"/><polygon points="74,14 80,0 70,10" fill="#3a2a2a"/>`;
+    case 'hornsSmall': return `<polygon points="50,12 47,2 53,10" fill="#6b4a2a"/><polygon points="70,12 73,2 67,10" fill="#6b4a2a"/>`;
+    case 'hornsBull': return `<path d="M42,16 Q30,4 34,-6" stroke="#3a2a2a" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M78,16 Q90,4 86,-6" stroke="#3a2a2a" stroke-width="5" fill="none" stroke-linecap="round"/>`;
+    case 'hat': return `<polygon points="40,14 60,-12 80,14" fill="#5b3fae"/>`;
+    case 'halo': return `<ellipse cx="60" cy="2" rx="16" ry="5" fill="none" stroke="#f6e27a" stroke-width="3"/>`;
+    case 'wingsFeather': return `<path d="M30,20 Q8,8 14,34 Q22,30 30,26 Z" fill="#eef0e8"/><path d="M90,20 Q112,8 106,34 Q98,30 90,26 Z" fill="#eef0e8"/>`;
+    case 'wingsBat': return `<path d="M30,20 Q6,14 12,36 Q20,32 30,26 Z" fill="#4a3b4a"/><path d="M90,20 Q114,14 108,36 Q100,32 90,26 Z" fill="#4a3b4a"/>`;
+    case 'beak': return `<polygon points="55,32 65,32 60,42" fill="#e0a838"/>`;
+    case 'scalePattern': return `<circle cx="50" cy="24" r="1.6" fill="#000" opacity="0.18"/><circle cx="70" cy="24" r="1.6" fill="#000" opacity="0.18"/><circle cx="60" cy="18" r="1.6" fill="#000" opacity="0.18"/>`;
+    case 'mane': return `<circle cx="60" cy="34" r="30" fill="none" stroke="#c9922b" stroke-width="9" opacity="0.55"/>`;
+    case 'catEars': return `<polygon points="42,16 37,-2 51,12" fill="${skin}"/><polygon points="78,16 83,-2 69,12" fill="${skin}"/>`;
+    case 'rabbitEars': return `<ellipse cx="46" cy="-2" rx="6" ry="20" fill="${skin}"/><ellipse cx="74" cy="-2" rx="6" ry="20" fill="${skin}"/>`;
+    case 'mechanical': return `<rect x="40" y="16" width="8" height="8" rx="1" fill="#8b8f96"/><rect x="72" y="16" width="8" height="8" rx="1" fill="#8b8f96"/><rect x="52" y="8" width="16" height="4" fill="#6c7078"/>`;
+    case 'shell': return `<ellipse cx="60" cy="84" rx="32" ry="26" fill="#6b8a4a" opacity="0.9"/><path d="M40 84 Q60 68 80 84" stroke="#4a6a34" stroke-width="2" fill="none" opacity="0.6"/>`;
+    case 'trunk': return `<path d="M58 40 Q52 62 62 70 Q69 72 66 63" stroke="${skin}" stroke-width="7" fill="none" stroke-linecap="round"/>`;
+    case 'snakeHair': return `<path d="M40 12 Q32 22 40 30" stroke="#3d6b3d" stroke-width="4" fill="none" stroke-linecap="round"/><path d="M80 12 Q88 22 80 30" stroke="#3d6b3d" stroke-width="4" fill="none" stroke-linecap="round"/><path d="M60 6 Q54 18 62 26" stroke="#3d6b3d" stroke-width="4" fill="none" stroke-linecap="round"/>`;
+    case 'antennae': return `<path d="M52 8 Q46 -8 38 -10" stroke="#3a2a2a" stroke-width="2.4" fill="none" stroke-linecap="round"/><path d="M68 8 Q74 -8 82 -10" stroke="#3a2a2a" stroke-width="2.4" fill="none" stroke-linecap="round"/>`;
+    case 'earsSmall': return `<polygon points="38,30 32,24 36,40" fill="${skin}"/><polygon points="82,30 88,24 84,40" fill="${skin}"/>`;
+    case 'tusks': return `<polygon points="52,44 49,54 55,50" fill="#eee4d3"/><polygon points="68,44 71,54 65,50" fill="#eee4d3"/>`;
+    case 'tusksSmall': return `<polygon points="54,43 52,50 57,47" fill="#eee4d3"/><polygon points="66,43 68,50 63,47" fill="#eee4d3"/>`;
+    case 'fangs': return `<polygon points="55,41 54,47 58,42" fill="#f5f0e6"/><polygon points="65,41 66,47 62,42" fill="#f5f0e6"/>`;
+    case 'scar': return `<path d="M50 16 L58 46" stroke="#8a5a5a" stroke-width="1.6" opacity="0.7" stroke-linecap="round"/>`;
+    case 'gills': return `<path d="M32 30 L38 30 M32 35 L38 35 M32 40 L38 40" stroke="#3a6b7a" stroke-width="2" stroke-linecap="round"/><path d="M88 30 L82 30 M88 35 L82 35 M88 40 L82 40" stroke="#3a6b7a" stroke-width="2" stroke-linecap="round"/>`;
+    case 'stitches': return `<path d="M42 30 L48 30 M45 27 L45 33" stroke="#5a4a42" stroke-width="1.6"/><path d="M70 40 L78 40 M74 37 L74 43" stroke="#5a4a42" stroke-width="1.6"/>`;
+    case 'furPatches': return `<path d="M38 40 Q34 46 38 52" stroke="#6b5238" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M82 40 Q86 46 82 52" stroke="#6b5238" stroke-width="3" fill="none" stroke-linecap="round"/>`;
+    case 'tribalMarks': return `<path d="M46 16 L42 24" stroke="#5a3a2a" stroke-width="2" stroke-linecap="round"/><path d="M74 16 L78 24" stroke="#5a3a2a" stroke-width="2" stroke-linecap="round"/>`;
+    case 'freckles': return `<circle cx="48" cy="34" r="1.1" fill="#8a6a4a" opacity="0.6"/><circle cx="52" cy="37" r="1.1" fill="#8a6a4a" opacity="0.6"/><circle cx="68" cy="34" r="1.1" fill="#8a6a4a" opacity="0.6"/><circle cx="72" cy="37" r="1.1" fill="#8a6a4a" opacity="0.6"/>`;
+    case 'thirdEye': return `<ellipse cx="60" cy="18" rx="3.4" ry="2.2" fill="#9ab8d8"/><circle cx="60" cy="18" r="1" fill="#2b2b2b"/>`;
+    case 'foreheadGem': return `<circle cx="60" cy="18" r="3" fill="#7a5ac9"/><circle cx="60" cy="18" r="1.2" fill="#c9b8f0"/>`;
+    case 'elementalMarks': return `<path d="M48 18 Q52 26 48 32" stroke="#5ab0d8" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M72 18 Q68 26 72 32" stroke="#5ab0d8" stroke-width="2" fill="none" stroke-linecap="round"/>`;
+    case 'tail': return `<path d="M84 108 Q106 116 100 138" stroke="#8a7458" stroke-width="7" fill="none" stroke-linecap="round"/>`;
+    case 'bubbles': return `<circle cx="46" cy="26" r="3" fill="#fff" opacity="0.3"/><circle cx="74" cy="22" r="2.2" fill="#fff" opacity="0.3"/><circle cx="58" cy="46" r="2.6" fill="#fff" opacity="0.25"/>`;
+    case 'snout': return `<ellipse cx="60" cy="42" rx="9" ry="6" fill="${skin}"/><circle cx="56" cy="42" r="1" fill="#2b2b2b"/><circle cx="64" cy="42" r="1" fill="#2b2b2b"/>`;
+    case 'leafMark': return `<path d="M56 20 Q60 12 64 20 Q60 24 56 20" fill="#6ba05a" opacity="0.75"/>`;
+    case 'mole': return `<circle cx="70" cy="38" r="1.3" fill="#5a3a2a" opacity="0.7"/>`;
+    case 'earring': return `<circle cx="36" cy="34" r="2.2" fill="none" stroke="#d8b84a" stroke-width="1.4"/><circle cx="84" cy="34" r="2.2" fill="none" stroke="#d8b84a" stroke-width="1.4"/>`;
+    case 'glowEyes': return `<circle cx="52" cy="30" r="3.4" fill="none" stroke="#f0d878" stroke-width="1.2" opacity="0.8"/><circle cx="68" cy="30" r="3.4" fill="none" stroke="#f0d878" stroke-width="1.2" opacity="0.8"/>`;
+    case 'wrinkles': return `<path d="M48 22 Q60 18 72 22" stroke="#000" stroke-width="1" opacity="0.2" fill="none"/><path d="M47 46 Q60 50 73 46" stroke="#000" stroke-width="1" opacity="0.2" fill="none"/>`;
+    case 'jewelBand': return `<path d="M38 20 Q60 12 82 20" stroke="#d8b84a" stroke-width="2.4" fill="none"/><circle cx="60" cy="15" r="2" fill="#7ab8d8"/>`;
+    case 'clawMarks': return `<path d="M46 32 L50 44" stroke="#000" stroke-width="1" opacity="0.25" stroke-linecap="round"/><path d="M50 30 L54 44" stroke="#000" stroke-width="1" opacity="0.25" stroke-linecap="round"/><path d="M54 28 L58 44" stroke="#000" stroke-width="1" opacity="0.25" stroke-linecap="round"/>`;
+    case 'whiskers': return `<path d="M40 38 L28 36 M40 40 L28 41" stroke="#3a3a3a" stroke-width="1" opacity="0.6"/><path d="M80 38 L92 36 M80 40 L92 41" stroke="#3a3a3a" stroke-width="1" opacity="0.6"/>`;
+    case 'stripes': return `<path d="M46 18 L44 26" stroke="#3a2a1a" stroke-width="2" opacity="0.55" stroke-linecap="round"/><path d="M74 18 L76 26" stroke="#3a2a1a" stroke-width="2" opacity="0.55" stroke-linecap="round"/>`;
+    default: return '';
+  }
+}
+// สีผิว + ขนาดตัว + ลักษณะเด่นของแต่ละเผ่าพันธุ์ (ครบทุกเผ่าใน DND_RACES)
 const DND_RACE_AVATAR = {
-  human:      { skin: '#f0c8a0', scale: 1,    extra: null },
-  elf:        { skin: '#f3d9b8', scale: 1.05, extra: 'ears' },
-  dwarf:      { skin: '#e8b98c', scale: 0.85, extra: 'beard' },
-  halfling:   { skin: '#f0c8a0', scale: 0.72, extra: null },
-  orc:        { skin: '#8fae6b', scale: 1.12, extra: null },
-  tiefling:   { skin: '#c97b6b', scale: 1,    extra: 'horns' },
-  gnome:      { skin: '#f0c8a0', scale: 0.68, extra: 'hat' },
-  dragonborn: { skin: '#7a9a7a', scale: 1.08, extra: null },
+  human:       { skin: '#f0c8a0', scale: 1,    features: ['mole'] },
+  elf:         { skin: '#f3d9b8', scale: 1.05, features: ['ears', 'earring'] },
+  dwarf:       { skin: '#e8b98c', scale: 0.85, features: ['beard', 'scar'] },
+  halfling:    { skin: '#f0c8a0', scale: 0.72, features: ['earsSmall', 'freckles'] },
+  orc:         { skin: '#8fae6b', scale: 1.12, features: ['tusks', 'scar'] },
+  tiefling:    { skin: '#c97b6b', scale: 1,    features: ['horns', 'glowEyes'] },
+  gnome:       { skin: '#f0c8a0', scale: 0.68, features: ['hat', 'freckles'] },
+  dragonborn:  { skin: '#7a9a7a', scale: 1.08, features: ['scalePattern', 'hornsSmall'] },
+  medusa:      { skin: '#a8c48a', scale: 1,    features: ['snakeHair', 'glowEyes'] },
+  aasimar:     { skin: '#f3e0c8', scale: 1,    features: ['halo', 'glowEyes'] },
+  goliath:     { skin: '#b89a7a', scale: 1.15, features: ['tribalMarks', 'scar'] },
+  halfElf:     { skin: '#f3d9b8', scale: 1,    features: ['ears', 'freckles'] },
+  halfOrc:     { skin: '#a0956b', scale: 1.1,  features: ['tusksSmall', 'scar'] },
+  aarakocra:   { skin: '#c9a876', scale: 0.95, features: ['wingsFeather', 'beak'] },
+  astralElf:   { skin: '#d8cbe8', scale: 1,    features: ['ears', 'glowEyes'] },
+  autognome:   { skin: '#b0b0b0', scale: 0.7,  features: ['mechanical', 'glowEyes'] },
+  bugbear:     { skin: '#8a7458', scale: 1.15, features: ['earsBig', 'furPatches'] },
+  centaur:     { skin: '#d8a878', scale: 1.1,  features: ['tail', 'tribalMarks'] },
+  changeling:  { skin: '#c8b8a0', scale: 1,    features: ['freckles'] },
+  deepGnome:   { skin: '#9a8a7a', scale: 0.68, features: ['hat', 'wrinkles'] },
+  dhampir:     { skin: '#d8c8c8', scale: 1,    features: ['fangs', 'glowEyes'] },
+  duergar:     { skin: '#8a8a8a', scale: 0.85, features: ['beard', 'wrinkles'] },
+  eladrin:     { skin: '#f3d9b8', scale: 1,    features: ['ears', 'earring'] },
+  fairy:       { skin: '#f0d8c8', scale: 0.65, features: ['wingsFeather', 'freckles'] },
+  firbolg:     { skin: '#b0c090', scale: 1.2,  features: ['leafMark', 'wrinkles'] },
+  genasi:      { skin: '#a0c8d8', scale: 1,    features: ['elementalMarks', 'glowEyes'] },
+  giff:        { skin: '#7a8a6a', scale: 1.18, features: ['snout', 'scar'] },
+  githyanki:   { skin: '#c8a878', scale: 1,    features: ['scar', 'clawMarks'] },
+  githzerai:   { skin: '#9aa8b8', scale: 1,    features: ['thirdEye', 'wrinkles'] },
+  goblin:      { skin: '#8fae6b', scale: 0.72, features: ['earsBig', 'tusksSmall'] },
+  hadozee:     { skin: '#a08858', scale: 1,    features: ['catEars', 'furPatches'] },
+  harengon:    { skin: '#e8d8c8', scale: 1,    features: ['rabbitEars', 'whiskers'] },
+  hexblood:    { skin: '#b898a8', scale: 1,    features: ['hornsSmall', 'scar'] },
+  hobgoblin:   { skin: '#a89858', scale: 1.05, features: ['scar', 'tribalMarks'] },
+  kalashtar:   { skin: '#d8c8b8', scale: 1,    features: ['foreheadGem', 'glowEyes'] },
+  kender:      { skin: '#e0c8a0', scale: 0.7,  features: ['earsSmall', 'freckles'] },
+  kenku:       { skin: '#4a4a4a', scale: 0.95, features: ['beak', 'scalePattern'] },
+  kobold:      { skin: '#8ab878', scale: 0.75, features: ['scalePattern', 'tail'] },
+  leonin:      { skin: '#d8a848', scale: 1.05, features: ['mane', 'stripes'] },
+  lizardfolk:  { skin: '#6a9a6a', scale: 1,    features: ['scalePattern', 'tail'] },
+  loxodon:     { skin: '#8a98a8', scale: 1.1,  features: ['trunk', 'wrinkles'] },
+  minotaur:    { skin: '#7a6858', scale: 1.15, features: ['hornsBull', 'clawMarks'] },
+  owlin:       { skin: '#b89868', scale: 0.95, features: ['wingsFeather', 'beak'] },
+  plasmoid:    { skin: '#7ac8a8', scale: 1,    features: ['bubbles', 'glowEyes'] },
+  reborn:      { skin: '#b8b0a8', scale: 1,    features: ['stitches', 'glowEyes'] },
+  satyr:       { skin: '#c9a878', scale: 1,    features: ['hornsSmall', 'tail'] },
+  seaElf:      { skin: '#a8c8d8', scale: 1,    features: ['ears', 'gills'] },
+  shadarKai:   { skin: '#c8c0d8', scale: 1,    features: ['ears', 'glowEyes'] },
+  shifter:     { skin: '#a08868', scale: 1.05, features: ['furPatches', 'clawMarks'] },
+  simicHybrid: { skin: '#88b898', scale: 1,    features: ['gills', 'scalePattern'] },
+  tabaxi:      { skin: '#c89858', scale: 1,    features: ['catEars', 'whiskers'] },
+  thriKreen:   { skin: '#8ab878', scale: 1,    features: ['antennae', 'clawMarks'] },
+  tortle:      { skin: '#7a9868', scale: 1.1,  features: ['shell', 'wrinkles'] },
+  triton:      { skin: '#78b8c8', scale: 1,    features: ['gills', 'jewelBand'] },
+  vedalken:    { skin: '#7898b8', scale: 1,    features: ['earsSmall', 'glowEyes'] },
+  verdan:      { skin: '#98b878', scale: 0.9,  features: ['earsSmall', 'freckles'] },
+  warforged:   { skin: '#9a9a9a', scale: 1.1,  features: ['mechanical', 'scar'] },
+  yuanTi:      { skin: '#98b878', scale: 1,    features: ['scalePattern', 'glowEyes'] },
 };
 function dndAvatarSlotFilled(equipment, slot) {
   return !!(equipment && equipment[slot] && equipment[slot].name);
@@ -2035,6 +2442,7 @@ function dndBuildAvatarSVG(c, w, h) {
   const eq = (c && c.equipment) || {};
   const ap = (c && c.appearance) || { hair: 'short', hairColor: DND_HAIR_COLOR_LIST[0], face: 'neutral' };
   const bodyColor = DND_CLASS_AVATAR_COLOR[c && c.classKey] || '#7f8c8d';
+  const clsInfo = c ? dndClassByKey(c.classKey) : null;
   const raceInfo = c ? dndRaceByKey(c.raceKey) : null;
   const raceAv = DND_RACE_AVATAR[c && c.raceKey] || DND_RACE_AVATAR.human;
   const hasWeapon = dndAvatarSlotFilled(eq, 'weapon');
@@ -2049,12 +2457,9 @@ function dndBuildAvatarSVG(c, w, h) {
   const accIcon = hasAcc && eq.accessory && eq.accessory.icon;
   const skin = raceAv.skin;
   const uid = 'av' + (dndAvatarSvgSeq++); // กันชื่อ id ของ clipPath ชนกันเวลามีอวตารหลายตัวในหน้าเดียวกัน
-  let extraHead = '';
-  if (raceAv.extra === 'ears') extraHead = `<polygon points="36,30 26,22 34,42" fill="${skin}"/><polygon points="84,30 94,22 86,42" fill="${skin}"/>`;
-  else if (raceAv.extra === 'beard') extraHead = `<rect x="48" y="46" width="24" height="14" rx="6" fill="#c9c9c9"/>`;
-  else if (raceAv.extra === 'horns') extraHead = `<polygon points="46,14 40,0 50,10" fill="#3a2a2a"/><polygon points="74,14 80,0 70,10" fill="#3a2a2a"/>`;
-  else if (raceAv.extra === 'hat') extraHead = `<polygon points="40,14 60,-12 80,14" fill="#5b3fae"/>`;
-  const hairSvg = raceAv.extra === 'hat' ? '' : dndHairSVG(ap.hair, ap.hairColor);
+  const features = raceAv.features || [];
+  const extraHead = features.map(f => dndAvatarFeatureSVG(f, skin)).join('');
+  const hairSvg = features.includes('hat') ? '' : dndHairSVG(ap.hair, ap.hairColor);
   return `<svg viewBox="0 -20 120 180" width="${w}" height="${h}" class="dndAvatarSvg">
     <defs>
       <clipPath id="${uid}armor"><rect x="36" y="58" width="48" height="50" rx="14"/></clipPath>
@@ -2090,7 +2495,7 @@ function dndBuildAvatarSVG(c, w, h) {
       ${hasWeapon
         ? (weaponIcon
           ? `<image href="${weaponIcon}" x="83" y="79" width="22" height="22" preserveAspectRatio="xMidYMid slice" clip-path="url(#${uid}weapon)"/>`
-          : `<text x="94" y="90" font-size="22" text-anchor="middle">🗡️</text>`)
+          : `<text x="94" y="90" font-size="22" text-anchor="middle">${(clsInfo && clsInfo.icon) || '🗡️'}</text>`)
         : `<circle cx="94" cy="90" r="10" fill="none" stroke="#8899aa" stroke-width="1.5" stroke-dasharray="3,3"/>`}
     </g>
   </svg>`;
@@ -2142,7 +2547,10 @@ function renderPassiveCards(containerId, items, selectedKey, onPick) {
   });
 }
 function dndPassivesForRace(raceKey) {
-  const builtin = (dndPassives && dndPassives[raceKey]) || [];
+  const builtin = ((dndPassives && dndPassives[raceKey]) || []).map(base => {
+    const ov = dndRacePassiveOverrides && dndRacePassiveOverrides[`${raceKey}:${base.key}`];
+    return ov ? Object.assign({}, base, ov, { overridden: true }) : base;
+  });
   const custom = (dndCustomPassives || []).filter(cp => cp.raceKey === raceKey || cp.raceKey === 'any');
   return builtin.concat(custom);
 }
@@ -2334,7 +2742,8 @@ function renderAppearancePicker(idPrefix, appearance, onChange) {
 function renderCreateAvatarPreview() {
   const box = document.getElementById('dndCreateAvatarPreview');
   if (!box) return;
-  box.innerHTML = dndBuildAvatarSVG({ raceKey: dndCreateSelectedRace, classKey: dndCreateSelectedClass, equipment: {}, appearance: dndCreateAppearance }, 100, 130);
+  const equipment = readEquipGrid('dndCreateEquipGrid');
+  box.innerHTML = dndBuildAvatarSVG({ raceKey: dndCreateSelectedRace, classKey: dndCreateSelectedClass, equipment, appearance: dndCreateAppearance }, 100, 130);
 }
 function dndCreateAppearanceChange(field, value) {
   dndCreateAppearance = Object.assign({}, dndCreateAppearance, { [field]: value });
@@ -2351,8 +2760,8 @@ function dndPickRace(key) {
 function dndPickClass(key) {
   dndCreateSelectedClass = key;
   renderPickCards('dndClassCards', dndClasses, dndCreateSelectedClass, dndPickClass);
-  renderStatAllocGrid(); updateCreateHints(); validateCreateForm(); renderCreateAvatarPreview();
   applyStarterGearPreview(key);
+  renderStatAllocGrid(); updateCreateHints(); validateCreateForm(); renderCreateAvatarPreview();
 }
 // เติมไอเทมสวมใส่เริ่มต้นตามคลาสที่เลือกลงในฟอร์มสร้างตัวละคร แบบ "ยกเซต" ตามธีม D&D ของคลาสนั้น
 // ช่องไหนที่ผู้เล่นยังไม่เคยพิมพ์เอง (dndCreateManualEquip) จะถูกแทนที่ด้วยไอเทมของคลาสใหม่เสมอเมื่อสลับคลาส
@@ -2378,7 +2787,7 @@ function attachCreateEquipManualTracking() {
   grid.querySelectorAll('.dndEquipSlotCard').forEach(card => {
     const slot = card.dataset.slot;
     const nameInput = card.querySelector('.dndEquipName');
-    if (nameInput) nameInput.addEventListener('input', () => { dndCreateManualEquip[slot] = true; });
+    if (nameInput) nameInput.addEventListener('input', () => { dndCreateManualEquip[slot] = true; renderCreateAvatarPreview(); });
   });
 }
 
@@ -2479,13 +2888,15 @@ function dndPreviewPassiveAcHpChange() {
   const raceKey = document.getElementById('dndEditRace').value;
   const passiveKey = document.getElementById('dndEditPassive').value;
   const passive = dndPassiveByKey(raceKey, passiveKey);
-  const newEff = (passive && passive.effect) || { ac: 0, hp: 0 };
+  const newEff = (passive && passive.effect) || { ac: 0, hp: 0, resist: 0 };
   const acDelta = (newEff.ac || 0) - (dndDmEditPassiveBaseline.ac || 0);
   const hpDelta = (newEff.hp || 0) - (dndDmEditPassiveBaseline.hp || 0);
+  const resistDelta = (newEff.resist || 0) - (dndDmEditPassiveBaseline.resist || 0);
   const hint = document.getElementById('dndEditPassiveHint');
   const parts = [];
   if (acDelta) parts.push(`AC ${acDelta > 0 ? '+' : ''}${acDelta}`);
   if (hpDelta) parts.push(`HP สูงสุด ${hpDelta > 0 ? '+' : ''}${hpDelta}`);
+  if (resistDelta) parts.push(`ต้านทานสถานะ ${resistDelta > 0 ? '+' : ''}${resistDelta}%`);
   hint.textContent = parts.length ? `⚙️ บันทึกแล้วจะได้ ${parts.join(', ')} (อิงสกิลติดตัวที่เลือก)` : '';
 }
 // คะแนน point-buy ดิบ (ไม่รวมโบนัสเผ่า/คลาส) ของตัวละครที่กำลังแก้ไขอยู่ — ใช้คิดสเตตัสใหม่ทันทีที่ DM เปลี่ยนเผ่า/คลาสในฟอร์ม ก่อนกดบันทึกจริง
@@ -2545,7 +2956,7 @@ function openDmEdit(targetId) {
   dndDmEditPointBuy = (c.pointBuy && typeof c.pointBuy === 'object') ? c.pointBuy : null;
   // จำโบนัส AC/HP ของสกิลติดตัว "ตอนเปิดฟอร์ม" ไว้ — ใช้เทียบตอนเปลี่ยนตัวเลือกพาสซีพในฟอร์ม เพื่อพรีวิวค่า AC/HP ใหม่ให้ตรงกับที่เซิร์ฟเวอร์จะคำนวณจริงตอนบันทึก
   const basePassive = dndPassiveByKey(c.raceKey, c.passiveKey);
-  dndDmEditPassiveBaseline = (basePassive && basePassive.effect) || { ac: 0, hp: 0 };
+  dndDmEditPassiveBaseline = (basePassive && basePassive.effect) || { ac: 0, hp: 0, resist: 0 };
   document.getElementById('dndEditPassiveHint').textContent = '';
   document.getElementById('dndEditRace').onchange = (ev) => { fillPassiveSelectOptions(ev.target.value, null); dndRecomputeEditStatsFromRaceClass(); dndPreviewPassiveAcHpChange(); };
   document.getElementById('dndEditClass').onchange = () => dndRecomputeEditStatsFromRaceClass();
@@ -2567,6 +2978,7 @@ function openDmEdit(targetId) {
   document.getElementById('dndEditInventory').value = c.inventory || '';
   document.getElementById('dndEditExp').value = c.exp || 0;
   document.getElementById('dndEditGold').value = c.gold || 0;
+  document.getElementById('dndEditStatusResist').value = c.statusResist || 0;
   renderEquipGrid('dndEditEquipGrid', c.equipment);
   applyNormalAttackToEditForm(c.normalAttack);
   document.getElementById('dndEditLocked').checked = !!c.locked;
@@ -2635,15 +3047,19 @@ function openDndClassSkillEdit(playerId, skillId) {
   document.getElementById('dndClassSkillEditStatusAtkMod').value = skill.statusAtkMod || 0;
   document.getElementById('dndClassSkillEditStatusDmgMod').value = skill.statusDmgMod || 0;
   document.getElementById('dndClassSkillEditStatusDefMod').value = skill.statusDefMod || 0;
+  document.getElementById('dndClassSkillEditStatusVisionMod').value = skill.statusVisionMod || 0;
   document.getElementById('dndClassSkillEditStatusTick').value = skill.statusTickValue || 0;
   document.getElementById('dndClassSkillEditStatusTickInterval').value = skill.statusTickIntervalSec || 6;
   document.getElementById('dndClassSkillEditAoeRadius').value = skill.aoeRadius || 0;
+  document.getElementById('dndClassSkillEditAoeShape').value = skill.aoeShape === 'line' ? 'line' : 'circle';
   document.getElementById('dndClassSkillEditRange').value = skill.range || 0;
   document.getElementById('dndClassSkillEditCleanseEnabled').checked = !!skill.cleanseEnabled;
   document.getElementById('dndClassSkillEditCleanseName').value = skill.cleanseName || '';
   document.getElementById('dndClassSkillEditCooldown').value = skill.cooldownSec || 0;
   document.getElementById('dndClassSkillEditMaxUses').value = skill.maxUses || 0;
   document.getElementById('dndClassSkillEditSpCost').value = skill.spCost || 0;
+  document.getElementById('dndClassSkillEditReqItemName').value = skill.reqItemName || '';
+  document.getElementById('dndClassSkillEditReqItemQty').value = skill.reqItemQty || 1;
   document.getElementById('dndClassSkillEditError').textContent = '';
   document.getElementById('dndClassSkillEditResetBtn').style.display = skill.overridden ? 'inline-block' : 'none';
   document.getElementById('dndClassSkillEditOverlay').style.display = 'flex';
@@ -2686,6 +3102,7 @@ document.getElementById('dndClassSkillEditSaveBtn').onclick = (ev) => {
         atkMod: document.getElementById('dndClassSkillEditStatusAtkMod').value,
         dmgMod: document.getElementById('dndClassSkillEditStatusDmgMod').value,
         defMod: document.getElementById('dndClassSkillEditStatusDefMod').value,
+        visionMod: document.getElementById('dndClassSkillEditStatusVisionMod').value,
         tickValue: document.getElementById('dndClassSkillEditStatusTick').value,
         tickIntervalSec: document.getElementById('dndClassSkillEditStatusTickInterval').value,
         icon: document.getElementById('dndClassSkillEditStatusIcon').value,
@@ -2695,6 +3112,7 @@ document.getElementById('dndClassSkillEditSaveBtn').onclick = (ev) => {
       targetMode: document.getElementById('dndClassSkillEditTargetMode').value,
       aoe: {
         radius: document.getElementById('dndClassSkillEditAoeRadius').value,
+        shape: document.getElementById('dndClassSkillEditAoeShape').value,
       },
       range: document.getElementById('dndClassSkillEditRange').value,
       cleanse: {
@@ -2704,6 +3122,10 @@ document.getElementById('dndClassSkillEditSaveBtn').onclick = (ev) => {
       cooldownSec: document.getElementById('dndClassSkillEditCooldown').value,
       maxUses: document.getElementById('dndClassSkillEditMaxUses').value,
       spCost: document.getElementById('dndClassSkillEditSpCost').value,
+      reqItem: {
+        name: document.getElementById('dndClassSkillEditReqItemName').value,
+        qty: document.getElementById('dndClassSkillEditReqItemQty').value,
+      },
     },
   });
   document.getElementById('dndClassSkillEditOverlay').style.display = 'none';
@@ -2749,6 +3171,9 @@ function renderDndStatusChips(elId, statuses, targetType, targetId) {
       const defInput = prompt('ปรับค่าป้องกัน AC ± (0 = ไม่ปรับ)', String(cur.defMod || 0));
       if (defInput === null) return;
       const defMod = Math.max(-20, Math.min(20, Math.round(Number(defInput) || 0)));
+      const visionInput = prompt('ปรับระยะวิสัยทัศน์ ± (0 = ไม่ปรับ, ลบ = มองแคบลง)', String(cur.visionMod || 0));
+      if (visionInput === null) return;
+      const visionMod = Math.max(-80, Math.min(80, Math.round(Number(visionInput) || 0)));
       const tickInput = prompt('HP ต่อติ๊ก ± (ลบ=โดนดาเมจต่อเนื่อง, บวก=ฟื้น HP ต่อเนื่อง, 0=ไม่มี)', String(cur.tickValue || 0));
       if (tickInput === null) return;
       const tickValue = Math.max(-1000, Math.min(1000, Math.round(Number(tickInput) || 0)));
@@ -2764,7 +3189,7 @@ function renderDndStatusChips(elId, statuses, targetType, targetId) {
       const colorInput = prompt('สีของสถานะนี้ (รหัสสี hex เช่น #ff6b6b, ปล่อยว่าง = สีเริ่มต้น)', cur.color || '');
       if (colorInput === null) return;
       const color = colorInput.trim();
-      send({ type: 'dndStatusEdit', status: { targetType, targetId, statusId: cur.id, name: trimmedName, note, durationSec, atkMod, dmgMod, defMod, tickValue, tickIntervalSec, icon, color } });
+      send({ type: 'dndStatusEdit', status: { targetType, targetId, statusId: cur.id, name: trimmedName, note, durationSec, atkMod, dmgMod, defMod, visionMod, tickValue, tickIntervalSec, icon, color } });
     };
   });
 }
@@ -2777,17 +3202,19 @@ document.getElementById('dndEditStatusAddBtn').onclick = (ev) => {
   const atkMod = Number(document.getElementById('dndEditStatusAtk').value) || 0;
   const dmgMod = Number(document.getElementById('dndEditStatusDmg').value) || 0;
   const defMod = Number(document.getElementById('dndEditStatusDef').value) || 0;
+  const visionMod = Number(document.getElementById('dndEditStatusVision').value) || 0;
   const tickValue = Number(document.getElementById('dndEditStatusTick').value) || 0;
   const tickIntervalSec = Number(document.getElementById('dndEditStatusTickInterval').value) || 0;
   const icon = document.getElementById('dndEditStatusIcon').value;
   const color = document.getElementById('dndEditStatusColor').value;
-  send({ type: 'dndStatusApply', status: { targetType: 'player', targetId: dndDmEditTargetId, name, note: document.getElementById('dndEditStatusNote').value, durationSec, atkMod, dmgMod, defMod, tickValue, tickIntervalSec, icon, color } });
+  send({ type: 'dndStatusApply', status: { targetType: 'player', targetId: dndDmEditTargetId, name, note: document.getElementById('dndEditStatusNote').value, durationSec, atkMod, dmgMod, defMod, visionMod, tickValue, tickIntervalSec, icon, color } });
   document.getElementById('dndEditStatusName').value = '';
   document.getElementById('dndEditStatusNote').value = '';
   document.getElementById('dndEditStatusDuration').value = '';
   document.getElementById('dndEditStatusAtk').value = '';
   document.getElementById('dndEditStatusDmg').value = '';
   document.getElementById('dndEditStatusDef').value = '';
+  document.getElementById('dndEditStatusVision').value = '';
   document.getElementById('dndEditStatusTick').value = '';
   document.getElementById('dndEditStatusTickInterval').value = '';
   document.getElementById('dndEditStatusIcon').value = '';
@@ -2834,6 +3261,7 @@ document.getElementById('dndDmEditSaveBtn').onclick = (ev) => {
       backstory: document.getElementById('dndEditBackstory').value,
       exp: document.getElementById('dndEditExp').value,
       gold: document.getElementById('dndEditGold').value,
+      statusResist: document.getElementById('dndEditStatusResist').value,
       equipment: readEquipGrid('dndEditEquipGrid'),
       locked: document.getElementById('dndEditLocked').checked,
       normalAttack: {
@@ -2844,6 +3272,10 @@ document.getElementById('dndDmEditSaveBtn').onclick = (ev) => {
         atkBonus: document.getElementById('dndEditNaAtkBonus').value,
         dmgBonus: document.getElementById('dndEditNaDmgBonus').value,
         range: document.getElementById('dndEditNaRange').value,
+        reqItem: {
+          name: document.getElementById('dndEditNaReqItemName').value,
+          qty: document.getElementById('dndEditNaReqItemQty').value,
+        },
       },
     },
   });
@@ -2876,8 +3308,9 @@ function renderDndParty() {
     const isMe = dndYou && p.id === dndYou.id;
     const isCurrentTurn = dndTurnIndexClient >= 0 && dndCurrentTurnPlayerId === p.id;
     const isDead = !p.isDM && Number(p.character && p.character.hp) <= 0;
+    const isPermaDead = isDead && !!(p.character && p.character.permaDead);
     const div = document.createElement('div');
-    div.className = 'dndPCard' + (isMe ? ' me' : '') + (p.isDM ? ' dm' : '') + (isCurrentTurn ? ' myTurn' : '') + (isDead ? ' dead' : '');
+    div.className = 'dndPCard' + (isMe ? ' me' : '') + (p.isDM ? ' dm' : '') + (isCurrentTurn ? ' myTurn' : '') + (isDead ? ' dead' : '') + (isPermaDead ? ' permaDead' : '');
 
     // DM ไม่มีการ์ดตัวละคร (ไม่ใช่ตัวละครในปาร์ตี้) — โชว์แค่ป้ายบทบาทสั้นๆ
     if (p.isDM) {
@@ -2915,7 +3348,7 @@ function renderDndParty() {
           <div class="dndPCardTop">
             <span class="dndPCardName">${escapeHtml(c.charName || p.name)}${isMe ? ' (คุณ)' : ''}</span>
             ${isCurrentTurn ? '<span class="dndMyTurnBadge">🎯 ตานี้</span>' : ''}
-            ${isDead ? '<span class="dndDeadBadge">💀 หมดสติ</span>' : ''}
+            ${isPermaDead ? '<span class="dndDeadBadge dndPermaDeadBadge">☠️ ตายถาวร</span>' : (isDead ? '<span class="dndDeadBadge">💀 หมดสติ</span>' : '')}
           </div>
           <div class="dndPCardMeta">${raceClsText} · Lv.${c.level} · ${dndExpProgressText(c.exp || 0)} · AC ${c.ac} · <span class="dndTotalDefBadge">ป้องกัน ${dndTotalDefenseClient(c.equipment || {})}</span>${p.connected ? '' : ' · หลุดการเชื่อมต่อ'}</div>
           ${dmStatsHtml}
@@ -2929,7 +3362,7 @@ function renderDndParty() {
           </div>
           ${skillsHtml}
           ${statusesHtml}
-          ${isDead ? `<div class="dndDeadNotice">💀 หมดสติอยู่ — ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้</div>` : ''}
+          ${isPermaDead ? `<div class="dndDeadNotice dndPermaDeadNotice">☠️ ตายถาวร (โดนโอเวอร์คิลเกิน 2 เท่าของเลือดสูงสุด) — ไอเทม/สกิลชุบใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้น</div>` : (isDead ? `<div class="dndDeadNotice">💀 หมดสติอยู่ — ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้</div>` : '')}
         </div>
       </div>`;
     if (dndYou && dndYou.isDM) {
@@ -3010,7 +3443,14 @@ function renderDndState(state) {
   dndClassStarterGear = state.classStarterGear || dndClassStarterGear;
   dndPassives = state.passives || dndPassives;
   dndCustomPassives = state.customPassives || dndCustomPassives;
+  dndRacePassiveOverrides = state.racePassiveOverrides || dndRacePassiveOverrides;
   dndSkills = state.skills || dndSkills;
+  dndLibrarySkillCatalog = state.librarySkillCatalog || dndLibrarySkillCatalog;
+  if (state.summonTemplates) {
+    dndSummonTemplates = state.summonTemplates;
+    fillSummonTemplateSelect('dndSkillSummonTemplateKey');
+    fillSummonTemplateSelect('dndSkillEditSummonTemplateKey');
+  }
   dndPointBuyMin = state.pointBuyMin || dndPointBuyMin;
   dndPointBuyBudget = state.pointBuyBudget || dndPointBuyBudget;
   dndPointBuyCost = state.pointBuyCost || dndPointBuyCost;
@@ -3032,6 +3472,7 @@ function renderDndState(state) {
   dndItemEffects = state.itemEffects || [];
   dndTrades = state.trades || [];
   dndMapBackground = state.mapBackground || null;
+  dndMapGridSize = Number.isFinite(Number(state.mapGridSize)) ? Number(state.mapGridSize) : 10;
   dndMaps = state.maps || dndMaps;
   dndCurrentMapId = state.currentMapId != null ? state.currentMapId : dndCurrentMapId;
   dndTurnOrderClient = state.turnOrder || [];
@@ -3156,11 +3597,14 @@ function renderDndShops() {
   }
   box.innerHTML = dndShops.map(shop => {
     const isForge = shop.type === 'forge';
-    const bodyHtml = isForge ? dndRenderForgeShopBody(shop, isDM, myGold, myEquipment) : dndRenderItemShopBody(shop, isDM, myGold);
+    const isLibrary = shop.type === 'library';
+    const bodyHtml = isForge ? dndRenderForgeShopBody(shop, isDM, myGold, myEquipment)
+      : (isLibrary ? dndRenderLibraryShopBody(shop, isDM, myGold) : dndRenderItemShopBody(shop, isDM, myGold));
+    const shopIcon = isForge ? '⚒️' : (isLibrary ? '📚' : '🛍️');
     return `
     <div class="dndShopCard" data-shop="${shop.id}">
       <div class="dndShopCardHead">
-        <h4>${isForge ? '⚒️' : '🛍️'} ${escapeHtml(shop.name)}${(isDM && shop.closed) ? ' <span class="dndPCardTag">ปิดอยู่</span>' : ''}</h4>
+        <h4>${shopIcon} ${escapeHtml(shop.name)}${(isDM && shop.closed) ? ' <span class="dndPCardTag">ปิดอยู่</span>' : ''}</h4>
         ${isDM ? `
           <button type="button" class="dndShopDelBtn" data-shopclose="${shop.id}">${shop.closed ? 'เปิดร้าน' : 'ปิดร้านชั่วคราว'}</button>
           <button type="button" class="dndShopDelBtn dndKickBtn" data-shopdel="${shop.id}">ลบร้านถาวร</button>
@@ -3177,50 +3621,39 @@ function renderDndShops() {
   box.querySelectorAll('button[data-shopdel]').forEach(btn => {
     btn.onclick = () => { if (confirm('ลบร้านนี้ถาวรเลยไหม? ไอเทมทั้งหมดในร้านจะหายไปด้วย กู้คืนไม่ได้ (ถ้าแค่อยากปิดร้านชั่วคราว ให้ใช้ปุ่ม "ปิดร้านชั่วคราว" แทน)')) send({ type: 'dndShopDelete', shopId: Number(btn.dataset.shopdel) }); };
   });
-  box.querySelectorAll('button[data-itemdel]').forEach(btn => {
+  dndWireShopInteractions(box);
+  // ---- ค้นหา + ย่อ/ขยายกลุ่ม (เฉพาะร้านห้องสมุด/ร้านไอเทมทั่วไปที่มีของเยอะ) ----
+  box.querySelectorAll('input[data-libsearch]').forEach(inp => {
+    inp.oninput = () => {
+      const shopId = Number(inp.dataset.libsearch);
+      dndGetShopUIState(shopId).search = inp.value;
+      dndRefreshLibraryShopItems(shopId);
+    };
+  });
+  box.querySelectorAll('button[data-libexpandall]').forEach(btn => {
     btn.onclick = () => {
-      const [shopId, itemId] = btn.dataset.itemdel.split(':').map(Number);
-      send({ type: 'dndShopItemDelete', shopId, itemId });
+      const shopId = Number(btn.dataset.libexpandall);
+      const shop = dndShops.find(s => s.id === shopId);
+      if (!shop) return;
+      const levels = new Set();
+      shop.items.forEach(it => { const l = dndSkillLevelById(it.skillId); levels.add(l === null ? 'other' : l); });
+      dndGetShopUIState(shopId).openLevels = levels;
+      dndRefreshLibraryShopItems(shopId);
     };
   });
-  box.querySelectorAll('button[data-itemeditopen]').forEach(btn => {
-    btn.onclick = () => { dndShopEditKey = btn.dataset.itemeditopen; renderDndShops(); };
-  });
-  box.querySelectorAll('button[data-itemeditcancel]').forEach(btn => {
-    btn.onclick = () => { dndShopEditKey = null; renderDndShops(); };
-  });
-  box.querySelectorAll('button[data-itemeditsave]').forEach(btn => {
-    btn.onclick = (ev) => {
-      const key = btn.dataset.itemeditsave;
-      const [shopId, itemId] = key.split(':').map(Number);
-      const name = box.querySelector(`input[data-editname="${key}"]`).value.trim();
-      if (!name) return;
-      flashBtn(ev.currentTarget);
-      send({
-        type: 'dndShopItemEdit',
-        shopId, itemId,
-        item: {
-          name,
-          price: box.querySelector(`input[data-editprice="${key}"]`).value,
-          stock: box.querySelector(`input[data-editstock="${key}"]`).value,
-          desc: box.querySelector(`input[data-editdesc="${key}"]`).value,
-        },
-      });
-      dndShopEditKey = null;
+  box.querySelectorAll('button[data-libcollapseall]').forEach(btn => {
+    btn.onclick = () => {
+      const shopId = Number(btn.dataset.libcollapseall);
+      dndGetShopUIState(shopId).openLevels = new Set();
+      dndRefreshLibraryShopItems(shopId);
     };
   });
-  box.querySelectorAll('button[data-buy]').forEach(btn => {
-    btn.onclick = (ev) => {
-      flashBtn(ev.currentTarget);
-      const [shopId, itemId] = btn.dataset.buy.split(':').map(Number);
-      send({ type: 'dndShopBuy', shopId, itemId });
-    };
-  });
-  box.querySelectorAll('button[data-sell]').forEach(btn => {
-    btn.onclick = (ev) => {
-      flashBtn(ev.currentTarget);
-      const [shopId, itemId] = btn.dataset.sell.split(':').map(Number);
-      send({ type: 'dndShopSell', shopId, itemId });
+  dndWireLibraryDetailsToggles(box);
+  box.querySelectorAll('input[data-itemsearch]').forEach(inp => {
+    inp.oninput = () => {
+      const shopId = Number(inp.dataset.itemsearch);
+      dndGetShopUIState(shopId).search = inp.value;
+      dndRefreshItemShopItems(shopId);
     };
   });
   box.querySelectorAll('button[data-additem]').forEach(btn => {
@@ -3228,6 +3661,10 @@ function renderDndShops() {
       const shopId = Number(btn.dataset.additem);
       const name = box.querySelector(`input[data-newname="${shopId}"]`).value.trim();
       if (!name) return;
+      const shop = dndShops.find(s => s.id === shopId);
+      const isLibraryShop = shop && shop.type === 'library';
+      const skillSelect = isLibraryShop ? box.querySelector(`select[data-newskill="${shopId}"]`) : null;
+      if (isLibraryShop && (!skillSelect || !skillSelect.value)) { alert('กรุณาเลือกสกิลที่จะผูกกับสมุดเวทย์เล่มนี้ก่อน (ต้องมีสกิลในแท็บสกิลก่อน)'); return; }
       flashBtn(ev.currentTarget);
       send({
         type: 'dndShopItemAdd',
@@ -3237,6 +3674,7 @@ function renderDndShops() {
           price: box.querySelector(`input[data-newprice="${shopId}"]`).value,
           stock: box.querySelector(`input[data-newstock="${shopId}"]`).value,
           desc: box.querySelector(`input[data-newdesc="${shopId}"]`).value,
+          ...(skillSelect ? { skillId: skillSelect.value } : {}),
         },
       });
     };
@@ -3268,9 +3706,217 @@ function renderDndShops() {
     };
   });
 }
+// ---- ฟังก์ชันกลาง: ผูก event ปุ่มซื้อ/ขาย/แก้ไข/ลบไอเทมในร้าน — ใช้ได้ทั้งตอน render ทั้งกล่อง และตอน refresh แค่บางส่วน (หลังค้นหา/ย่อ-ขยายกลุ่ม) ----
+function dndWireShopInteractions(scopeEl) {
+  scopeEl.querySelectorAll('button[data-itemdel]').forEach(btn => {
+    btn.onclick = () => {
+      const [shopId, itemId] = btn.dataset.itemdel.split(':').map(Number);
+      send({ type: 'dndShopItemDelete', shopId, itemId });
+    };
+  });
+  scopeEl.querySelectorAll('button[data-itemeditopen]').forEach(btn => {
+    btn.onclick = () => { dndShopEditKey = btn.dataset.itemeditopen; renderDndShops(); };
+  });
+  scopeEl.querySelectorAll('button[data-itemeditcancel]').forEach(btn => {
+    btn.onclick = () => { dndShopEditKey = null; renderDndShops(); };
+  });
+  scopeEl.querySelectorAll('button[data-itemeditsave]').forEach(btn => {
+    btn.onclick = (ev) => {
+      const key = btn.dataset.itemeditsave;
+      const [shopId, itemId] = key.split(':').map(Number);
+      const name = document.querySelector(`input[data-editname="${key}"]`).value.trim();
+      if (!name) return;
+      const shop = dndShops.find(s => s.id === shopId);
+      const isLibraryShop = shop && shop.type === 'library';
+      const skillSelect = isLibraryShop ? document.querySelector(`select[data-editskill="${key}"]`) : null;
+      flashBtn(ev.currentTarget);
+      send({
+        type: 'dndShopItemEdit',
+        shopId, itemId,
+        item: {
+          name,
+          price: document.querySelector(`input[data-editprice="${key}"]`).value,
+          stock: document.querySelector(`input[data-editstock="${key}"]`).value,
+          desc: document.querySelector(`input[data-editdesc="${key}"]`).value,
+          ...(skillSelect ? { skillId: skillSelect.value } : {}),
+        },
+      });
+      dndShopEditKey = null;
+    };
+  });
+  scopeEl.querySelectorAll('button[data-buy]').forEach(btn => {
+    btn.onclick = (ev) => {
+      flashBtn(ev.currentTarget);
+      const [shopId, itemId] = btn.dataset.buy.split(':').map(Number);
+      send({ type: 'dndShopBuy', shopId, itemId });
+    };
+  });
+  scopeEl.querySelectorAll('button[data-sell]').forEach(btn => {
+    btn.onclick = (ev) => {
+      flashBtn(ev.currentTarget);
+      const [shopId, itemId] = btn.dataset.sell.split(':').map(Number);
+      send({ type: 'dndShopSell', shopId, itemId });
+    };
+  });
+}
+// จำว่ากลุ่มเลเวลไหนถูกเปิด/ปิดอยู่ ผูกกับ <details> ของแต่ละกลุ่มในร้านห้องสมุด — เก็บไว้ใน dndShopUIState เพื่อให้จำสถานะข้ามการ render ใหม่ได้
+function dndWireLibraryDetailsToggles(scopeEl) {
+  scopeEl.querySelectorAll('details.dndLibraryGroup').forEach(det => {
+    det.addEventListener('toggle', () => {
+      const shopId = Number(det.dataset.shop);
+      const key = det.dataset.level === 'other' ? 'other' : Number(det.dataset.level);
+      const ui = dndGetShopUIState(shopId);
+      if (det.open) ui.openLevels.add(key); else ui.openLevels.delete(key);
+    });
+  });
+}
+// หาเลเวลเวทย์ของสกิลที่สมุดเล่มนี้ผูกอยู่ (สำหรับจัดกลุ่มในร้านห้องสมุด) — คืน null ถ้าหาไม่เจอ/ไม่มีเลเวล (เช่น DM สร้างสมุดเองแบบไม่ผูกเลเวล)
+function dndSkillLevelById(id) {
+  const s = dndAnySkillById(id);
+  return (s && Number.isFinite(Number(s.level))) ? Number(s.level) : null;
+}
+function dndLibraryLevelLabel(key) {
+  if (key === 'other') return 'อื่นๆ';
+  return key === 0 ? '✨ แคนทริป' : `เลเวล ${key}`;
+}
+// สร้างแถวป้าย (badge) รายละเอียดสกิลที่ผูกกับสมุดเวทย์เล่มนี้ — โชว์ให้ผู้เล่นเห็นก่อนซื้อว่า: คลาสไหนใช้ได้, ระดับเวทย์, ดาเมจ/ฮีลเท่าไหร่,
+// ใช้ SP กี่แต้ม, คูลดาวน์กี่วิ, ระยะโจมตี(ช่อง)เท่าไหร่ — ใช้ร่วมกันทั้งตอน render เต็มและตอน refresh บางส่วนของร้านห้องสมุด
+function dndLibrarySkillDetailBadgesHtml(boundSkill) {
+  if (!boundSkill) return '';
+  const badges = [];
+  const lvl = Number.isFinite(Number(boundSkill.level)) ? Number(boundSkill.level) : null;
+  if (lvl !== null) badges.push(`<span class="dndLibraryDetailBadge">${lvl === 0 ? '✨ แคนทริป' : `📚 เวทย์เลเวล ${lvl}`}</span>`);
+  if (boundSkill.allowedClasses && boundSkill.allowedClasses.length) {
+    badges.push(`<span class="dndLibraryDetailBadge" style="color:#ffb86b;">🎓 เฉพาะคลาส: ${dndAllowedClassesTextClient(boundSkill.allowedClasses)}</span>`);
+  } else {
+    badges.push(`<span class="dndLibraryDetailBadge" style="color:#9aa4b2;">🎓 ทุกคลาสเรียนได้</span>`);
+  }
+  if (boundSkill.dmgDie) {
+    const dmgMod = boundSkill.dmgMod ? (boundSkill.dmgMod > 0 ? ` +${boundSkill.dmgMod}` : ` ${boundSkill.dmgMod}`) : '';
+    badges.push(`<span class="dndLibraryDetailBadge" style="color:#ff9d9d;">💥 ดาเมจ ${boundSkill.dmgCount}d${boundSkill.dmgDie}${dmgMod}</span>`);
+  }
+  if (boundSkill.healDie) {
+    const healMod = boundSkill.healMod ? (boundSkill.healMod > 0 ? ` +${boundSkill.healMod}` : ` ${boundSkill.healMod}`) : '';
+    badges.push(`<span class="dndLibraryDetailBadge" style="color:#7ee87e;">${boundSkill.healRevive ? '🌟 ชุบชีวิต' : '💚 ฟื้นฟู'} HP ${boundSkill.healCount}d${boundSkill.healDie}${healMod}</span>`);
+  }
+  badges.push(`<span class="dndLibraryDetailBadge" style="color:#8fd3ff;">🔵 ใช้ SP ${boundSkill.spCost || 0}</span>`);
+  if (boundSkill.cooldownSec) badges.push(`<span class="dndLibraryDetailBadge" style="color:#9fd0ff;">⏱ คูลดาวน์ ${boundSkill.cooldownSec} วิ</span>`);
+  if (boundSkill.range) badges.push(`<span class="dndLibraryDetailBadge" style="color:#8fd3ff;">📏 ระยะ ${boundSkill.range} ช่อง</span>`);
+  if (boundSkill.aoeRadius) badges.push(`<span class="dndLibraryDetailBadge" style="color:#ffb86b;">💥 AOE${boundSkill.aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${boundSkill.aoeRadius}</span>`);
+  if (boundSkill.maxUses) badges.push(`<span class="dndLibraryDetailBadge" style="color:#d8a4ff;">🔁 ใช้ได้ ${boundSkill.maxUses} ครั้ง</span>`);
+  return `<div class="dndLibrarySkillDetail">${badges.join('')}</div>`;
+}
+// สร้าง HTML แถวไอเทมของสมุดเวทย์ 1 เล่ม — แยกออกมาเพื่อให้ใช้ซ้ำได้ทั้งตอน render เต็มและตอน refresh บางส่วน
+function dndLibraryItemRowHtml(shop, it, isDM, myGold) {
+  const stockStr = it.stock === null ? 'ไม่จำกัด' : `เหลือ ${it.stock}`;
+  const have = dndBagQty(it.name);
+  const boundSkill = dndAnySkillById(it.skillId);
+  const classOk = !boundSkill || dndSkillAllowedForMyClass(boundSkill);
+  const skillDetailHtml = dndLibrarySkillDetailBadgesHtml(boundSkill);
+  const canBuy = !isDM && classOk && (it.stock === null || it.stock > 0) && myGold >= it.price;
+  const canSell = !isDM && have > 0;
+  const editKey = `${shop.id}:${it.id}`;
+  const skillName = dndSkillNameById(it.skillId);
+  if (isDM && dndShopEditKey === editKey) {
+    return `
+    <div class="dndShopItemRow">
+      <div class="dndShopAddItemRow">
+        <input type="text" placeholder="ชื่อสมุดเวทย์" data-editname="${editKey}" maxlength="40" value="${escapeHtml(it.name)}">
+        <input type="number" placeholder="ราคา" data-editprice="${editKey}" min="0" style="max-width:70px;" value="${it.price}">
+        <input type="number" placeholder="สต็อก (ว่าง=ไม่จำกัด)" data-editstock="${editKey}" min="0" style="max-width:120px;" value="${it.stock === null ? '' : it.stock}">
+        <input type="text" placeholder="คำอธิบาย (ไม่บังคับ)" data-editdesc="${editKey}" maxlength="150" value="${escapeHtml(it.desc || '')}">
+        <select data-editskill="${editKey}">${dndSkillOptionsHtml(it.skillId)}</select>
+        <button type="button" data-itemeditsave="${editKey}">💾 บันทึก</button>
+        <button type="button" data-itemeditcancel="${editKey}">ยกเลิก</button>
+      </div>
+    </div>`;
+  }
+  return `
+    <div class="dndShopItemRow">
+      <div class="dndShopItemInfo">
+        <div class="dndShopItemName">📖 ${escapeHtml(it.name)}</div>
+        <div class="dndShopItemMeta">💰 ${it.price} · สต็อก ${stockStr}${have ? ` · คุณมี ${have}` : ''}</div>
+        <div class="dndShopItemDesc">มอบสกิล: <b>${escapeHtml(skillName)}</b></div>
+        ${skillDetailHtml}
+        ${it.desc ? `<div class="dndShopItemDesc">${escapeHtml(it.desc)}</div>` : ''}
+      </div>
+      ${isDM
+        ? `<button type="button" class="dndShopItemDelBtn" data-itemeditopen="${editKey}">✏️ แก้ไข</button>
+           <button type="button" class="dndShopItemDelBtn" data-itemdel="${shop.id}:${it.id}">ลบ</button>`
+        : `<button type="button" class="dndShopBuyBtn" data-buy="${shop.id}:${it.id}" ${canBuy ? '' : 'disabled'}${(!classOk) ? ` title="คลาสของคุณเรียนรู้สกิลนี้ไม่ได้"` : ''}>ซื้อ</button>
+           <button type="button" class="dndShopSellBtn" data-sell="${shop.id}:${it.id}" ${canSell ? '' : 'disabled'}>ขาย (${Math.floor(it.price / 2)})</button>`}
+    </div>`;
+}
+// กรองตามคำค้นหา (ชื่อสมุด/ชื่อสกิล/คำอธิบาย) แล้วจัดกลุ่มตามเลเวลเวทย์ — คืน HTML ของกลุ่มทั้งหมด (ยังไม่รวมกล่องค้นหา)
+function dndLibraryGroupsHtml(shop, isDM, myGold) {
+  const ui = dndGetShopUIState(shop.id);
+  const searchLower = ui.search.trim().toLowerCase();
+  const filtered = !searchLower ? shop.items : shop.items.filter(it => {
+    const skillName = dndSkillNameById(it.skillId);
+    return it.name.toLowerCase().includes(searchLower)
+      || skillName.toLowerCase().includes(searchLower)
+      || (it.desc || '').toLowerCase().includes(searchLower);
+  });
+  if (!filtered.length) {
+    return `<div class="dndRangeHint">${searchLower ? `ไม่พบสมุดเวทย์ที่ตรงกับ "${escapeHtml(ui.search.trim())}"` : 'ห้องสมุดนี้ยังไม่มีสมุดเวทย์'}</div>`;
+  }
+  const groups = new Map();
+  for (const it of filtered) {
+    const lvl = dndSkillLevelById(it.skillId);
+    const key = lvl === null ? 'other' : lvl;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(it);
+  }
+  const sortedKeys = [...groups.keys()].sort((a, b) => {
+    if (a === 'other') return 1;
+    if (b === 'other') return -1;
+    return a - b;
+  });
+  const searching = !!searchLower;
+  return sortedKeys.map(key => {
+    const items = groups.get(key);
+    const isOpen = searching || ui.openLevels.has(key);
+    const rowsHtml = items.map(it => dndLibraryItemRowHtml(shop, it, isDM, myGold)).join('');
+    return `
+    <details class="dndLibraryGroup" data-level="${key}" data-shop="${shop.id}" ${isOpen ? 'open' : ''}>
+      <summary class="dndLibraryGroupSummary">${dndLibraryLevelLabel(key)} <span class="dndRangeHint">(${items.length} เล่ม)</span></summary>
+      <div class="dndLibraryGroupBody">${rowsHtml}</div>
+    </details>`;
+  }).join('');
+}
+// เรียกตอนพิมพ์ค้นหา/กดปุ่มเปิด-ปิดกลุ่มทั้งหมดในร้านห้องสมุด — อัปเดตแค่รายการไอเทม ไม่แตะกล่องค้นหา กันโฟกัส/เคอร์เซอร์หลุดตอนพิมพ์
+function dndRefreshLibraryShopItems(shopId) {
+  const shop = dndShops.find(s => s.id === Number(shopId));
+  if (!shop) return;
+  const wrap = document.querySelector(`.dndLibraryItemsWrap[data-shopitems="${shopId}"]`);
+  if (!wrap) return;
+  const isDM = !!(dndYou && dndYou.isDM);
+  const myGold = (() => { const me = myDndEntry(); return me ? (me.character.gold || 0) : 0; })();
+  wrap.innerHTML = dndLibraryGroupsHtml(shop, isDM, myGold);
+  dndWireShopInteractions(wrap);
+  dndWireLibraryDetailsToggles(wrap);
+}
+// เรียกตอนพิมพ์ค้นหาในร้านไอเทมทั่วไป — เหมือนห้องสมุดแต่ไม่มีจัดกลุ่มเลเวล (ร้านไอเทมทั่วไปไม่มีข้อมูลเลเวล)
+function dndRefreshItemShopItems(shopId) {
+  const shop = dndShops.find(s => s.id === Number(shopId));
+  if (!shop) return;
+  const wrap = document.querySelector(`.dndItemShopItemsWrap[data-shopitems="${shopId}"]`);
+  if (!wrap) return;
+  const isDM = !!(dndYou && dndYou.isDM);
+  const myGold = (() => { const me = myDndEntry(); return me ? (me.character.gold || 0) : 0; })();
+  wrap.innerHTML = dndItemShopRowsHtml(shop, isDM, myGold);
+  dndWireShopInteractions(wrap);
+}
 // ---- ร้านไอเทมทั่วไป: ซื้อ/ขายด้วยทอง (เดิม) ----
-function dndRenderItemShopBody(shop, isDM, myGold) {
-  const itemsHtml = shop.items.length ? shop.items.map(it => {
+function dndItemShopRowsHtml(shop, isDM, myGold) {
+  const ui = dndGetShopUIState(shop.id);
+  const searchLower = ui.search.trim().toLowerCase();
+  const filtered = !searchLower ? shop.items : shop.items.filter(it =>
+    it.name.toLowerCase().includes(searchLower) || (it.desc || '').toLowerCase().includes(searchLower));
+  if (!filtered.length) {
+    return `<div class="dndRangeHint">${searchLower ? `ไม่พบไอเทมที่ตรงกับ "${escapeHtml(ui.search.trim())}"` : 'ร้านนี้ยังไม่มีไอเทม'}</div>`;
+  }
+  return filtered.map(it => {
     const stockStr = it.stock === null ? 'ไม่จำกัด' : `เหลือ ${it.stock}`;
     const have = dndBagQty(it.name);
     const canBuy = !isDM && (it.stock === null || it.stock > 0) && myGold >= it.price;
@@ -3302,7 +3948,16 @@ function dndRenderItemShopBody(shop, isDM, myGold) {
         : `<button type="button" class="dndShopBuyBtn" data-buy="${shop.id}:${it.id}" ${canBuy ? '' : 'disabled'}>ซื้อ</button>
            <button type="button" class="dndShopSellBtn" data-sell="${shop.id}:${it.id}" ${canSell ? '' : 'disabled'}>ขาย (${Math.floor(it.price / 2)})</button>`}
     </div>`;
-  }).join('') : `<div class="dndRangeHint">ร้านนี้ยังไม่มีไอเทม</div>`;
+  }).join('');
+}
+function dndRenderItemShopBody(shop, isDM, myGold) {
+  const ui = dndGetShopUIState(shop.id);
+  // กล่องค้นหาโชว์เฉพาะร้านที่มีของตั้งแต่ 8 ชิ้นขึ้นไป — ร้านเล็กๆ ไม่จำเป็นต้องมีก็ไม่รก
+  const searchRowHtml = shop.items.length >= 8 ? `
+      <div class="dndShopSearchRow">
+        <input type="text" class="dndShopSearchInput" placeholder="🔍 ค้นหาไอเทม..." data-itemsearch="${shop.id}" value="${escapeHtml(ui.search)}">
+      </div>` : '';
+  const itemsHtml = `<div class="dndItemShopItemsWrap" data-shopitems="${shop.id}">${dndItemShopRowsHtml(shop, isDM, myGold)}</div>`;
   const addFormHtml = isDM ? `
       <div class="dndShopAddItemRow">
         <input type="text" placeholder="ชื่อไอเทม" data-newname="${shop.id}" maxlength="40">
@@ -3311,9 +3966,39 @@ function dndRenderItemShopBody(shop, isDM, myGold) {
         <input type="text" placeholder="คำอธิบาย (ไม่บังคับ)" data-newdesc="${shop.id}" maxlength="150">
         <button type="button" data-additem="${shop.id}">➕ เพิ่มไอเทม</button>
       </div>` : '';
-  return itemsHtml + addFormHtml;
+  return searchRowHtml + itemsHtml + addFormHtml;
 }
-// ---- ร้านตีบวก: DM ตั้งค่าระดับตีบวก (tier) ทีละขั้น — ผู้เล่นเลือกของที่สวมใส่อยู่มาตีบวกทีละช่อง ----
+// ---- ร้านห้องสมุด: DM ขาย "สมุดเวทย์" ที่ผูกกับสกิล — ผู้เล่นซื้อมาเก็บกระเป๋าแล้วกดใช้ (อ่าน) เพื่อเรียนสกิลนั้นทันที ----
+function dndSkillOptionsHtml(selectedId) {
+  if (!dndSkills.length) return '<option value="">(ยังไม่มีสกิลให้เลือก — ไปสร้างในแท็บสกิลก่อน)</option>';
+  return dndSkills.map(s => `<option value="${s.id}"${Number(selectedId) === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
+}
+function dndSkillNameById(id) {
+  const s = dndAnySkillById(id);
+  return s ? s.name : '(สกิลถูกลบไปแล้ว)';
+}
+function dndRenderLibraryShopBody(shop, isDM, myGold) {
+  const ui = dndGetShopUIState(shop.id);
+  const searchRowHtml = `
+      <div class="dndShopSearchRow">
+        <input type="text" class="dndShopSearchInput" placeholder="🔍 ค้นหาชื่อเวทย์..." data-libsearch="${shop.id}" value="${escapeHtml(ui.search)}">
+        <button type="button" class="dndShopSearchToggleBtn" data-libexpandall="${shop.id}">เปิดทั้งหมด</button>
+        <button type="button" class="dndShopSearchToggleBtn" data-libcollapseall="${shop.id}">ปิดทั้งหมด</button>
+      </div>`;
+  const itemsHtml = `<div class="dndLibraryItemsWrap" data-shopitems="${shop.id}">${dndLibraryGroupsHtml(shop, isDM, myGold)}</div>`;
+  const addFormHtml = isDM ? `
+      <div class="dndShopAddItemRow">
+        <input type="text" placeholder="ชื่อสมุดเวทย์" data-newname="${shop.id}" maxlength="40">
+        <input type="number" placeholder="ราคา" data-newprice="${shop.id}" min="0" style="max-width:70px;">
+        <input type="number" placeholder="สต็อก (ว่าง=ไม่จำกัด)" data-newstock="${shop.id}" min="0" style="max-width:120px;">
+        <input type="text" placeholder="คำอธิบาย (ไม่บังคับ)" data-newdesc="${shop.id}" maxlength="150">
+        <select data-newskill="${shop.id}">${dndSkillOptionsHtml(null)}</select>
+        <button type="button" data-additem="${shop.id}">➕ เพิ่มสมุดเวทย์</button>
+      </div>
+      <div class="dndRangeHint" style="margin-top:4px;">อ่าน (กดปุ่ม "ใช้" ในกระเป๋า) แล้วเรียนรู้สกิลที่เลือกไว้ทันที — สมุดจะหายไป 1 เล่ม ถ้าอยากให้เรียนได้ครั้งเดียวจริง ๆ ไปติ๊ก "🔒 ล็อกไว้ก่อน" ตอนสร้างสกิลนั้นในแท็บสกิลด้วย</div>` : '';
+  return searchRowHtml + itemsHtml + addFormHtml;
+}
+// ---- ร้านตีบวก: DM ตั้งค่าระดับตีบวก (tier) ทีละขั้น — ผู้เล่นเลือกอุปกรณ์ที่สวมใส่อยู่มาตีบวกทีละช่อง ----
 function dndRenderForgeShopBody(shop, isDM, myGold, myEquipment) {
   let bodyHtml;
   if (isDM) {
@@ -3497,6 +4182,8 @@ function dndItemEffectLabel(e) {
   if (e.effectType === 'heal') return `❤️ ฟื้นฟู HP ${e.value} (ปลุกคนหมดสติไม่ได้)`;
   if (e.effectType === 'revive') return `🌟 ชุบชีวิต + ฟื้นฟู HP ${e.value}`;
   if (e.effectType === 'gold') return `💰 ให้ทอง ${e.value}`;
+  if (e.effectType === 'vision') return `👁️ วิสัยทัศน์ ${e.value > 0 ? '+' : ''}${e.value}${e.durationSec ? ` นาน ${e.durationSec}วิ` : ' (ถาวรจนกว่า DM จะถอน)'}`;
+  if (e.effectType === 'skill') return `📖 มอบสกิล "${dndSkillNameById(e.value)}" (ผูกจากร้านห้องสมุด)`;
   if (e.effectType === 'none') return `📦 ไม่มีผลพิเศษ (ใช้แล้วหายไป)${e.desc ? ` — ${e.desc}` : ''}`;
   const slotLabel = dndEquipSlotLabels[e.slot] || e.slot;
   return `🛡️ สวมใส่เป็น${slotLabel} (ATK+${e.atk||0} / DEF+${e.def||0}${e.maxDurability ? ` / ทน ${e.maxDurability}` : ''})`;
@@ -3563,13 +4250,30 @@ function renderDndBag() {
       ? bag.map(it => {
           const def = dndItemEffects.find(e => e.name === it.name);
           if (!def) return `<span class="dndBagChip">${escapeHtml(it.name)} x${it.qty}</span>`;
-          const disabledAttr = iAmDead ? ' disabled' : '';
-          return `<span class="dndBagChip dndBagChipUsable">${escapeHtml(it.name)} x${it.qty} <button type="button" class="dndBagUseBtn" data-usename="${escapeHtml(it.name)}" data-efftype="${escapeHtml(def.effectType || '')}"${disabledAttr}>ใช้</button></span>`;
+          let disabledAttr = iAmDead ? ' disabled' : '';
+          let titleAttr = '';
+          if (def.effectType === 'skill') {
+            const skill = dndSkills.find(s => s.id === def.value);
+            if (!iAmDead && skill && !dndSkillAllowedForMyClass(skill)) {
+              disabledAttr = ' disabled';
+              titleAttr = ` title="คลาสของคุณเรียนรู้สกิลนี้ไม่ได้ — ใช้ได้เฉพาะคลาส: ${escapeHtml(dndAllowedClassesTextClient(skill.allowedClasses))}"`;
+            }
+            const useBtnHtml = `<button type="button" class="dndBagUseBtn" data-usename="${escapeHtml(it.name)}" data-efftype="${escapeHtml(def.effectType || '')}"${disabledAttr}${titleAttr}>📖 อ่าน/เรียนรู้</button>`;
+            return `
+              <div class="dndBagSkillItemRow">
+                <div class="dndBagSkillItemHead">
+                  <span class="dndShopItemName">📖 ${escapeHtml(it.name)} x${it.qty}</span>
+                  ${useBtnHtml}
+                </div>
+                ${dndLibrarySkillDetailBadgesHtml(skill)}
+              </div>`;
+          }
+          return `<span class="dndBagChip dndBagChipUsable">${escapeHtml(it.name)} x${it.qty} <button type="button" class="dndBagUseBtn" data-usename="${escapeHtml(it.name)}" data-efftype="${escapeHtml(def.effectType || '')}"${disabledAttr}${titleAttr}>ใช้</button></span>`;
         }).join('')
       : `<span class="dndRangeHint">กระเป๋าว่างเปล่า</span>`;
     bagListEl.querySelectorAll('button[data-usename]').forEach(btn => {
       btn.onclick = (ev) => {
-        if (amIDead()) { showDndErrorToast('คุณหมดสติอยู่ ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้'); return; }
+        if (amIDead()) { showDndErrorToast(dndDeadMsgForMe()); return; }
         flashBtn(ev.currentTarget);
         const itemName = btn.dataset.usename;
         if (btn.dataset.efftype === 'heal' || btn.dataset.efftype === 'revive') {
@@ -3649,7 +4353,11 @@ function dndToggleItemEffectFields() {
   const effectType = document.getElementById('dndItemEffectType').value;
   const isEquip = effectType === 'equip';
   const isNone = effectType === 'none';
+  const isVision = effectType === 'vision';
   document.getElementById('dndItemEffectValueRow').style.display = (isEquip || isNone) ? 'none' : 'flex';
+  document.getElementById('dndItemEffectValueLabel').textContent = isVision ? 'วิสัยทัศน์ +/- (ติดลบ = มองเห็นแคบลง)' : 'จำนวน';
+  document.getElementById('dndItemEffectValue').min = isVision ? '-80' : '0';
+  document.getElementById('dndItemEffectVisionRow').style.display = isVision ? 'flex' : 'none';
   document.getElementById('dndItemEffectEquipRow').style.display = isEquip ? 'flex' : 'none';
   document.getElementById('dndItemEffectNoneRow').style.display = isNone ? 'flex' : 'none';
 }
@@ -3664,15 +4372,17 @@ document.getElementById('dndItemEffectAddBtn').onclick = (ev) => {
   const def = document.getElementById('dndItemEffectDef').value;
   const maxDurability = document.getElementById('dndItemEffectDurability').value;
   const desc = document.getElementById('dndItemEffectDesc').value.trim();
+  const durationSec = document.getElementById('dndItemEffectVisionDuration').value;
   if (!name) { showDndErrorToast('กรุณาตั้งชื่อไอเทม'); return; }
   flashBtn(ev.currentTarget);
-  send({ type: 'dndItemEffectCreate', item: { name, effectType, value, slot, atk, def, maxDurability, desc, icon: dndItemEffectIconData } });
+  send({ type: 'dndItemEffectCreate', item: { name, effectType, value, slot, atk, def, maxDurability, desc, durationSec, icon: dndItemEffectIconData } });
   document.getElementById('dndItemEffectName').value = '';
   document.getElementById('dndItemEffectValue').value = 0;
   document.getElementById('dndItemEffectAtk').value = 0;
   document.getElementById('dndItemEffectDef').value = 0;
   document.getElementById('dndItemEffectDurability').value = 0;
   document.getElementById('dndItemEffectDesc').value = '';
+  document.getElementById('dndItemEffectVisionDuration').value = 0;
   document.getElementById('dndItemEffectIconFile').value = '';
   document.getElementById('dndItemEffectIconPreview').style.display = 'none';
   dndItemEffectIconData = '';
@@ -3716,8 +4426,13 @@ function renderDndTurnBox() {
     // ใช้ตำแหน่ง index เทียบกับ turnIndex ตรงๆ แทนการเทียบ id เฉยๆ เพราะ id ของผู้เล่นกับมอนสเตอร์อาจซ้ำกันได้ (คนละชุดเลข)
     const isCurrent = dndTurnIndexClient >= 0 && dndTurnIndexClient === idx && dndTurnOrderClient.length > 0;
     row.className = 'dndTurnRow' + (isCurrent ? ' current' : '');
+    // token npc ที่เป็นสัตว์อัญเชิญของผู้เล่น (ไม่ใช่มอนสเตอร์ทั่วไปของ DM) — ใช้ไอคอน 🐾 แทน 👹 และต่อท้ายด้วยชื่อเจ้าของ ให้ DM แยกออกได้ทันทีว่าเป็นของใคร
+    const tok = isNpc ? dndTokens.find(t => t.id === entry.id && t.kind === 'npc') : null;
+    const isSummon = !!(tok && tok.summoned);
+    const owner = isSummon ? dndPlayersList.find(p => p.id === tok.ownerId) : null;
+    const ownerTag = owner ? ` <span style="color:#7ee8fa;">(${escapeHtml(owner.character.charName || owner.name)})</span>` : '';
     row.innerHTML = `
-      <span class="dndTurnRowName">${isCurrent ? '🎯 ' : ''}${isNpc ? '👹 ' : ''}${escapeHtml(entry.name || '???')}</span>
+      <span class="dndTurnRowName">${isCurrent ? '🎯 ' : ''}${isSummon ? '🐾 ' : (isNpc ? '👹 ' : '')}${escapeHtml(entry.name || '???')}${ownerTag}</span>
       <button type="button" data-act="up">↑</button>
       <button type="button" data-act="down">↓</button>`;
     row.querySelector('[data-act="up"]').disabled = idx === 0;

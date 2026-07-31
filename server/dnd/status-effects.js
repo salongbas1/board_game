@@ -39,6 +39,11 @@ function createStatusEffects({ findByWs, sendError, addLog, pushLogSilent, getPl
   function sanitizeStatusTick(raw) {
     return Math.max(-1000, Math.min(1000, Math.round(Number(raw) || 0)));
   }
+  // visionMod: บวก-ลบระยะวิสัยทัศน์ (หน่วย "จำนวนช่องตาราง" เหมือน visionRadius ของ token — ดูคอมเมนต์ต้นไฟล์ dnd.js) ระหว่างติดสถานะนี้
+  // บวก = มองเห็นไกลขึ้น (เช่นสกิล "ตาเหยี่ยว"/คบไฟ), ลบ = มองเห็นแคบลง (เช่นสถานะตาบอด/มืดบอด) — รวมเข้ากับ visionRadius พื้นฐานของ token ตอนคำนวณหมอกจริง
+  function sanitizeVisionMod(raw) {
+    return Math.max(-20, Math.min(20, Math.round((Number(raw) || 0) * 10) / 10));
+  }
   function sanitizeTickInterval(raw) {
     return Math.max(1, Math.min(3600, Math.round(Number(raw) || 0) || 6));
   }
@@ -52,11 +57,12 @@ function createStatusEffects({ findByWs, sendError, addLog, pushLogSilent, getPl
     const s = (raw || '').toString().trim();
     return /^#[0-9a-fA-F]{6}$/.test(s) ? s.toLowerCase() : '';
   }
-  function buildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec) {
+  function buildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec, visionMod) {
     const parts = [];
     if (atkMod) parts.push(`🎯 โจมตี ${atkMod > 0 ? '+' : ''}${atkMod}`);
     if (dmgMod) parts.push(`💥 ดาเมจ ${dmgMod > 0 ? '+' : ''}${dmgMod}`);
     if (defMod) parts.push(`🛡️ ป้องกัน ${defMod > 0 ? '+' : ''}${defMod}`);
+    if (visionMod) parts.push(`👁️ วิสัยทัศน์ ${visionMod > 0 ? '+' : ''}${visionMod}`);
     if (tickValue) parts.push(tickValue > 0 ? `💚 ฟื้น HP +${tickValue} ทุก ${tickIntervalSec}วิ` : `☠️ โดนดาเมจ ${Math.abs(tickValue)} ทุก ${tickIntervalSec}วิ`);
     return parts.length ? ` [${parts.join(' · ')}]` : '';
   }
@@ -73,13 +79,14 @@ function createStatusEffects({ findByWs, sendError, addLog, pushLogSilent, getPl
     const atkMod = sanitizeStatusMod(payload.atkMod);
     const dmgMod = sanitizeStatusMod(payload.dmgMod);
     const defMod = sanitizeStatusMod(payload.defMod);
+    const visionMod = sanitizeVisionMod(payload.visionMod);
     const tickValue = sanitizeStatusTick(payload.tickValue);
     const tickIntervalSec = tickValue !== 0 ? sanitizeTickInterval(payload.tickIntervalSec) : 0;
     const nextTickAt = tickValue !== 0 ? Date.now() + tickIntervalSec * 1000 : 0;
     const icon = sanitizeStatusIcon(payload.icon);
     const color = sanitizeStatusColor(payload.color);
-    target.list.push({ id: nextStatusId++, name, note, durationSec, expiresAt, atkMod, dmgMod, defMod, tickValue, tickIntervalSec, nextTickAt, icon, color });
-    addLog(`${icon} DM มอบสถานะ "${name}" ให้ ${target.label}${durationSec ? ` (คูลดาวน์ ${durationSec}วิ)` : ''}${buildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec)}`);
+    target.list.push({ id: nextStatusId++, name, note, durationSec, expiresAt, atkMod, dmgMod, defMod, visionMod, tickValue, tickIntervalSec, nextTickAt, icon, color });
+    addLog(`${icon} DM มอบสถานะ "${name}" ให้ ${target.label}${durationSec ? ` (คูลดาวน์ ${durationSec}วิ)` : ''}${buildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec, visionMod)}`);
   }
   function handleStatusRemove(ws, payload) {
     const p = findByWs(ws);
@@ -105,6 +112,7 @@ function createStatusEffects({ findByWs, sendError, addLog, pushLogSilent, getPl
     const atkMod = sanitizeStatusMod(payload.atkMod);
     const dmgMod = sanitizeStatusMod(payload.dmgMod);
     const defMod = sanitizeStatusMod(payload.defMod);
+    const visionMod = sanitizeVisionMod(payload.visionMod);
     const tickValue = sanitizeStatusTick(payload.tickValue);
     const tickIntervalSec = tickValue !== 0 ? sanitizeTickInterval(payload.tickIntervalSec) : 0;
     const icon = sanitizeStatusIcon(payload.icon);
@@ -116,13 +124,14 @@ function createStatusEffects({ findByWs, sendError, addLog, pushLogSilent, getPl
     status.atkMod = atkMod;
     status.dmgMod = dmgMod;
     status.defMod = defMod;
+    status.visionMod = visionMod;
     status.tickValue = tickValue;
     status.tickIntervalSec = tickIntervalSec;
     status.icon = icon;
     status.color = color;
     // แก้ไขค่า tick ใหม่ระหว่างที่สถานะติดอยู่แล้ว — รีเซตนับเวลาติ๊กรอบถัดไปใหม่ จะได้ไม่ติ๊กถี่/ห่างผิดจากที่เพิ่งตั้งใหม่
     status.nextTickAt = tickValue !== 0 ? Date.now() + tickIntervalSec * 1000 : 0;
-    addLog(`✏️ DM แก้ไขสถานะของ ${target.label} เป็น "${icon} ${name}"${durationSec ? ` (คูลดาวน์ ${durationSec}วิ)` : ' (ไม่มีคูลดาวน์)'}${buildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec)}`);
+    addLog(`✏️ DM แก้ไขสถานะของ ${target.label} เป็น "${icon} ${name}"${durationSec ? ` (คูลดาวน์ ${durationSec}วิ)` : ' (ไม่มีคูลดาวน์)'}${buildStatusModText(atkMod, dmgMod, defMod, tickValue, tickIntervalSec, visionMod)}`);
   }
   // ไล่เช็กทุกวินาทีว่ามีสถานะของใครหมดคูลดาวน์แล้วหรือยัง (หมดแล้วให้หลุดออกอัตโนมัติ) และมีสถานะไหนถึงรอบติ๊กดาเมจ/ฟื้น HP ต่อเนื่องหรือยัง (พิษ/ไฟลุก/รีเจน ฯลฯ)
   function sweepExpiredStatuses() {
@@ -204,6 +213,7 @@ function createStatusEffects({ findByWs, sendError, addLog, pushLogSilent, getPl
     sanitizeTickInterval,
     sanitizeStatusIcon,
     sanitizeStatusColor,
+    sanitizeVisionMod,
     buildStatusModText,
     handleStatusApply,
     handleStatusRemove,
