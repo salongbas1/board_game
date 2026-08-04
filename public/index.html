@@ -80,6 +80,19 @@
 </div>
 
 <div id="dndScreen">
+  <div id="dndQuickChatOverlay" style="display:none;">
+    <div id="dndQuickChatBox">
+      <div id="dndQuickChatHeader">
+        <span>💬 แชทด่วน</span>
+        <span id="dndQuickChatHint">Ctrl+K เพื่อปิด</span>
+      </div>
+      <div id="dndQuickChatMessages"></div>
+      <div id="dndQuickChatInputRow">
+        <input id="dndQuickChatInput" maxlength="300" placeholder="พิมพ์ข้อความ...">
+        <button id="dndQuickChatSendBtn">ส่ง</button>
+      </div>
+    </div>
+  </div>
   <div id="dndHeaderRow">
     <h2 style="color:#ffd76b; text-align:center; margin:4px 0;">🐉 D&amp;D — เครื่องมือช่วยเล่น <span id="dndYouAreDm" style="display:none; font-size:13px;">(คุณเป็น DM)</span></h2>
     <button id="dndHowToBtn" type="button">📖 วิธีเล่น</button>
@@ -436,6 +449,12 @@
             </div>
             <div id="dndBuiltinPassiveList" style="margin-top:10px;"></div>
           </div>
+        </div>
+
+        <div id="dndSummonTemplateManageSection" style="display:none; margin-top:18px; padding-top:14px; border-top:1px solid #2a3550;">
+          <h3>🔮 แคตตาล็อกสัตว์อัญเชิญ</h3>
+          <div class="dndRangeHint" style="margin-bottom:6px;">DM แก้ไขค่าเริ่มต้นของสัตว์อัญเชิญแต่ละตัวที่มีมาให้ในระบบได้ (ชื่อ/ไอคอน/สี/ขนาด/HP/AC/ค่าพลัง/ท่าโจมตี) — มีผลกับทุกสกิลอัญเชิญที่ผูกกับตัวนั้นทันที กด "รีเซ็ต" เพื่อกลับไปเป็นค่าเริ่มต้นของระบบ</div>
+          <div id="dndSummonTemplateList" style="margin-top:10px;"></div>
         </div>
       </div>
 
@@ -1026,6 +1045,105 @@
     <button id="dndPassiveEditSaveBtn">บันทึกการแก้ไข</button>
     <button id="dndPassiveEditResetBtn" type="button" style="display:none;">♻️ รีเซ็ตเป็นค่าเริ่มต้น</button>
     <button id="dndPassiveEditCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- DM: แก้ไขค่าเริ่มต้นของสัตว์อัญเชิญในแคตตาล็อก (DND_SUMMON_TEMPLATES) -->
+<div id="dndSummonTemplateEditOverlay" class="dndModalOverlay">
+  <div class="dndModalBox" style="max-width:640px; max-height:85vh; overflow-y:auto;">
+    <h3 id="dndTplEditTitle">แก้ไขสัตว์อัญเชิญ (DM)</h3>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ชื่อ</label><input id="dndTplEditName" maxlength="20"></div>
+      <div class="dndField" style="max-width:80px;"><label>ไอคอน</label><input id="dndTplEditIcon" maxlength="4" style="text-align:center;"></div>
+      <div class="dndField" style="max-width:110px;"><label>สี</label><input id="dndTplEditColor" type="color"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>HP สูงสุด</label><input id="dndTplEditMaxHp" type="number" min="1" max="9999"></div>
+      <div class="dndField"><label>AC (ป้องกัน)</label><input id="dndTplEditAc" type="number" min="0" max="40"></div>
+      <div class="dndField"><label>ขนาดวง token</label>
+        <select id="dndTplEditSize">
+          <option value="normal">ปกติ</option>
+          <option value="large">ใหญ่ (บอส)</option>
+          <option value="huge">ใหญ่มาก (บอสใหญ่)</option>
+        </select>
+      </div>
+    </div>
+    <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">💪 ค่าพลัง</h4>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>STR</label><input id="dndTplEditStat-str" type="number" min="1" max="30"></div>
+      <div class="dndField"><label>DEX</label><input id="dndTplEditStat-dex" type="number" min="1" max="30"></div>
+      <div class="dndField"><label>CON</label><input id="dndTplEditStat-con" type="number" min="1" max="30"></div>
+      <div class="dndField"><label>INT</label><input id="dndTplEditStat-int" type="number" min="1" max="30"></div>
+      <div class="dndField"><label>WIS</label><input id="dndTplEditStat-wis" type="number" min="1" max="30"></div>
+      <div class="dndField"><label>CHA</label><input id="dndTplEditStat-cha" type="number" min="1" max="30"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ต้านทานสถานะ (%)</label><input id="dndTplEditStatusResist" type="number" min="0" max="100"></div>
+    </div>
+
+    <h4 style="color:#ffd76b; font-size:13px; margin:14px 0 8px 0;">🗡️ ท่าโจมตี</h4>
+    <div id="dndTplAtkList"></div>
+    <div class="dndRangeHint" style="margin-bottom:6px;">เพิ่มท่าโจมตีทีละท่าด้วยฟอร์มด้านล่าง แล้วกด "บันทึก" ด้านล่างสุดอีกทีเพื่อบันทึกทั้งหมดจริง</div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ชื่อท่า</label><input id="dndTplAtkNameInput" maxlength="30" placeholder="เช่น กัดฉีก"></div>
+      <div class="dndField"><label>ใช้ค่าพลัง (ไม่บังคับ)</label>
+        <select id="dndTplAtkStatSelect">
+          <option value="">ไม่ใช้ (กำหนดโบนัสเองล้วนๆ)</option>
+          <option value="str">STR</option><option value="dex">DEX</option><option value="con">CON</option>
+          <option value="int">INT</option><option value="wis">WIS</option><option value="cha">CHA</option>
+        </select>
+      </div>
+      <div class="dndField" style="max-width:90px;"><label>โบนัสโดน</label><input id="dndTplAtkToHitInput" type="number" min="-20" max="20" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ลูกเต๋าดาเมจ</label>
+        <select id="dndTplAtkDieSelect">
+          <option value="0">ไม่มีดาเมจ</option>
+          <option value="4">d4</option><option value="6">d6</option><option value="8">d8</option>
+          <option value="10">d10</option><option value="12">d12</option><option value="20">d20</option><option value="100">d100</option>
+        </select>
+      </div>
+      <div class="dndField" style="max-width:90px;"><label>จำนวนลูก</label><input id="dndTplAtkCountInput" type="number" min="1" max="20" value="1"></div>
+      <div class="dndField" style="max-width:90px;"><label>+/- โบนัส</label><input id="dndTplAtkModInput" type="number" min="-100" max="100" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>คำอธิบายท่า</label><input id="dndTplAtkDescInput" maxlength="150"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>💥 รัศมี AOE (0 = เป้าเดี่ยว)</label><input id="dndTplAtkAoeRadiusInput" type="number" min="0" max="100" value="0"></div>
+      <div class="dndField"><label>📐 รูปแบบ AOE</label>
+        <select id="dndTplAtkAoeShapeInput"><option value="circle">⭕ วงกลม</option><option value="line">📏 เส้นตรง</option></select>
+      </div>
+    </div>
+    <label style="display:block; font-size:11px; color:#9aa4b2; margin:8px 0 6px 0;">ติดสถานะ/ดีบัฟ (ไม่บังคับ — ปล่อยชื่อว่างถ้าไม่ต้องการ)</label>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ชื่อสถานะ</label><input id="dndTplAtkStatusName" maxlength="24"></div>
+      <div class="dndField"><label>โอกาสติด (%)</label><input id="dndTplAtkStatusChance" type="number" min="0" max="100" value="0"></div>
+      <div class="dndField"><label>ระยะเวลา (วิ)</label><input id="dndTplAtkStatusDuration" type="number" min="0" max="600" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>คำอธิบายสถานะ</label><input id="dndTplAtkStatusNote" maxlength="60"></div>
+      <div class="dndField" style="max-width:70px;"><label>ไอคอน</label><input id="dndTplAtkStatusIcon" maxlength="4"></div>
+      <div class="dndField" style="max-width:110px;"><label>สี</label><input id="dndTplAtkStatusColor" type="color" value="#3a3a55"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>โจมตี Mod</label><input id="dndTplAtkStatusAtk" type="number" value="0"></div>
+      <div class="dndField"><label>ดาเมจ Mod</label><input id="dndTplAtkStatusDmg" type="number" value="0"></div>
+      <div class="dndField"><label>ป้องกัน Mod</label><input id="dndTplAtkStatusDef" type="number" value="0"></div>
+      <div class="dndField"><label>วิสัยทัศน์ Mod</label><input id="dndTplAtkStatusVision" type="number" value="0"></div>
+    </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ดาเมจ/ฟื้นฟู ต่อรอบ (ทิก)</label><input id="dndTplAtkStatusTick" type="number" value="0"></div>
+      <div class="dndField"><label>ทุกกี่วิ (ทิก)</label><input id="dndTplAtkStatusTickInterval" type="number" min="0" value="0"></div>
+    </div>
+    <button id="dndTplAtkAddBtn" type="button">+ เพิ่มท่าโจมตี</button>
+
+    <div id="dndTplEditError" style="color:#ff8080; font-size:12px; min-height:16px; margin-top:8px;"></div>
+    <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+      <button id="dndTplEditSaveBtn" type="button">บันทึก</button>
+      <button id="dndTplEditResetBtn" type="button" style="display:none;">♻️ รีเซ็ตกลับค่าเริ่มต้น</button>
+      <button id="dndTplEditCancelBtn" class="dndDmEditCancelBtn" type="button">ยกเลิก</button>
+    </div>
   </div>
 </div>
 

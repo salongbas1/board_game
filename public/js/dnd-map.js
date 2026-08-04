@@ -1064,7 +1064,8 @@ function renderTokenAttackList(t) {
         mode: 'npcAttack',
         tokenId: t.id,
         attackId: Number(btn.dataset.use),
-        title: `เลือกเป้าหมายสำหรับ ${t.name}${attack ? ` — ${attack.name}` : ''}`
+        title: `เลือกเป้าหมายสำหรับ ${t.name}${attack ? ` — ${attack.name}` : ''}`,
+        isSummon: !!t.summoned
       });
     };
   });

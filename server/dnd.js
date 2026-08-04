@@ -60,6 +60,7 @@ let dndNextSkillId = 1;
 let dndCustomPassives = []; // [{id, key, raceKey ('any' or a race key), name, icon, desc, effect}] — passive skills the DM designs, on top of the built-in ones
 let dndRacePassiveOverrides = {}; // { `${raceKey}:${passiveKey}`: {name, icon, desc, effect} } — DM edits to the default values of a built-in race passive (global, affects every character of that race)
 let dndNextPassiveId = 1;
+let dndSummonTemplateOverrides = {}; // { summonTemplateKey: {name, icon, color, size, maxHp, ac, str..cha, statusResist, attacks} } — DM edits to the default values of a built-in summon template (DND_SUMMON_TEMPLATES), same override pattern as dndRacePassiveOverrides above
 let dndScene = { location: '', situation: '' }; // ป้ายประกาศสถานที่/สถานการณ์บนจอทุกคน — DM เท่านั้นที่กำหนดได้
 // นาฬิกาในเกม + เวลาวิ่งอัตโนมัติ — state ย้ายไปอยู่ใน server/dnd/game-time.js แล้ว (ดูการ instantiate ด้านล่าง)
 // ---- ลำดับเทิร์นผู้เล่น+มอนสเตอร์: DM จัดลำดับเอง (ไม่ทอย initiative) แล้วกดเลื่อนตาไปเรื่อยๆ วนลูป ----
@@ -354,7 +355,7 @@ function dndHandleClassSkillOverrideReset(ws, targetId, skillId) {
 // (ปลอดภัยแม้ประกาศไว้ก่อน require('./dnd/item') ด้านล่าง เพราะ handler จริงจะถูกเรียกใช้หลังไฟล์โหลดเสร็จสมบูรณ์แล้วเท่านั้น)
 function dndTotalDefense(equipment) { return dndTotalDefenseKit(equipment, dndEquipSlotBroken); }
 function dndTotalAttack(equipment) { return dndTotalAttackKit(equipment, dndEquipSlotBroken); }
-function dndPublicPlayer(p) {
+function dndPublicPlayer(p, viewerId) {
   // สกิลที่ DM มอบให้ผู้เล่นคนนี้โดยเฉพาะ — ส่งให้ทุกคนเห็นบนการ์ดตัวละครของเขาในปาร์ตี้
   const assignedSkills = dndSkills.filter(s => s.assignedIds && s.assignedIds.includes(p.id)).map(s => ({ id: s.id, name: s.name }));
   // สกิลประจำคลาสของผู้เล่นคนนี้ทั้งหมด (รวมที่ยังไม่ปลดล็อก) — ให้ DM เห็นครบตอนเปิดหน้าต่างแก้ไขผู้เล่นคนนี้
@@ -370,7 +371,10 @@ function dndPublicPlayer(p) {
     aoeRadius: s.aoeRadius || 0, aoeShape: dndSanitizeAoeShape(s.aoeShape), cleanseEnabled: !!s.cleanseEnabled, cleanseName: s.cleanseName || '', range: s.range || 0,
     buffAlly: !!s.buffAlly, targetMode: dndSkillTargetMode(s),
   }));
-  return { id: p.id, isDM: p.isDM, connected: p.connected, character: p.character, assignedSkills, classSkills };
+  // แอบเป็น DM (/game mode 1): ซ่อนสถานะ DM จริงจากทุกคนยกเว้นตัวเอง ให้คนอื่นมองว่าเป็นผู้เล่นปกติ
+  const shownIsDM = (p.secretDM && viewerId !== p.id) ? false : p.isDM;
+  return { id: p.id, isDM: shownIsDM, connected: p.connected, character: p.character, assignedSkills, classSkills };
+
 }
 // คืนรายการสกิลที่ผู้เล่นคนนี้มองเห็น พร้อมสถานะคูลดาวน์/จำนวนครั้งที่ใช้ไปแล้ว "เฉพาะของเขาเอง"
 // (ไม่แก้ไขอ็อบเจกต์สกิลต้นฉบับ เพราะสกิลเดียวกันอาจถูกมองจากผู้เล่นหลายคนพร้อมกัน)
@@ -415,7 +419,7 @@ function dndBroadcastState() {
       p.ws.send(JSON.stringify({
         type: 'dndState',
         you: { id: p.id, isDM: p.isDM, locked: p.character.locked, movedThisTurn: p.dndMovedAtStep === dndTurnOrderModule.getStepId() },
-        players: dndPlayers.map(dndPublicPlayer),
+        players: dndPlayers.map(pp => dndPublicPlayer(pp, p.id)),
         log: dndLogForPlayer(p),
         races: DND_RACES,
         classes: DND_CLASSES,
@@ -426,6 +430,7 @@ function dndBroadcastState() {
         skills: dndVisibleSkills(p),
         librarySkillCatalog: dndLibrarySkillCatalog(),
         summonTemplates: DND_SUMMON_TEMPLATES,
+        summonTemplateOverrides: dndSummonTemplateOverrides,
         pointBuyMin: POINT_BUY_MIN,
         pointBuyBudget: POINT_BUY_BUDGET,
         pointBuyCost: POINT_BUY_COST,
@@ -745,7 +750,7 @@ function dndHandleJoin(ws, name) {
 function dndVacantSeats() {
   return dndPlayers.filter(p => !p.connected).map(p => ({
     id: p.id,
-    isDM: p.isDM,
+    isDM: p.secretDM ? false : p.isDM,
     name: p.character.charName || p.name,
     raceCls: p.character.locked ? `${p.character.race || ''} ${p.character.cls || ''}`.trim() : 'ยังไม่ได้สร้างตัวละคร',
     level: p.character.level,
@@ -763,7 +768,7 @@ function dndHandleTakeSeat(ws, id) {
   if (!target) { dndHandleListSeats(ws); return; } // ที่นั่งถูกคนอื่นเอาไปแล้ว หรือข้อมูลเก่า — ส่งรายชื่อล่าสุดกลับไป
   target.ws = ws;
   target.connected = true;
-  dndAddLog(`${target.character.charName || target.name} กลับเข้ามานั่งที่เดิม${target.isDM ? ' (DM)' : ''}`);
+  dndAddLog(`${target.character.charName || target.name} กลับเข้ามานั่งที่เดิม${(target.isDM && !target.secretDM) ? ' (DM)' : ''}`);
 }
 
 // ผู้เล่นสร้างการ์ดตัวละครของตัวเองได้ "ครั้งเดียว" เท่านั้น — หลังบันทึกแล้วจะถูกล็อกทันที
@@ -1552,7 +1557,7 @@ function dndHandleSkillCreate(ws, payload) {
   const ruleText = `${libraryOnly ? ' 🔒ต้องเรียนก่อน' : ''}${cooldownSec ? ` (คูลดาวน์ ${cooldownSec}วิ)` : ''}${maxUses ? ` (ใช้ได้ ${maxUses} ครั้ง)` : ''}${spCost ? ` (ใช้ SP ${spCost})` : ''}${reqItem.reqItemName ? ` (ต้องมี ${reqItem.reqItemName} x${reqItem.reqItemQty})` : ''}`;
   const healText = healDie ? ` (${healRevive ? '🌟 ชุบชีวิต' : '💚 ฟื้นฟู'} HP ${healCount}d${healDie}${healMod ? (healMod > 0 ? '+' + healMod : healMod) : ''})` : '';
   const targetModeText = targetMode === 'both' ? ' 🎯เป้าหมาย: มอนสเตอร์+ผู้เล่น' : (targetMode === 'self' ? ' 🎯เป้าหมาย: ตัวเองเท่านั้น' : (targetMode === 'player' ? ' 🎯เป้าหมาย: ผู้เล่นเท่านั้น' : ' 🎯เป้าหมาย: มอนสเตอร์เท่านั้น'));
-  dndAddLog(`✨ DM ออกแบบสกิลใหม่: ${name}${levelText}${stat ? ` (ผูก ${stat.toUpperCase()})` : (hitChance < 100 ? ` (🎯 โอกาสโดน ${hitChance}%)` : '')}${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${dmgDie ? ` (ดาเมจ ${dmgCount}d${dmgDie}${dmgMod ? (dmgMod > 0 ? '+' + dmgMod : dmgMod) : ''})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec, status.visionMod)})` : ''}${aoeRadius ? ` (💥 AOE${aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${aoeRadius})` : ''}${range ? ` (📏 ระยะโจมตี ${range} ช่อง)` : ''}${cleanseEnabled ? ` (✨ ลบล้างสถานะ${cleanseName ? ` "${cleanseName}"` : 'ทั้งหมด'})` : ''}${classText}${ruleText}${assignText}${targetModeText}${isSummon ? ` (🔮 อัญเชิญ: ${summonTemplateKey ? DND_SUMMON_TEMPLATES[summonTemplateKey].name : 'ยังไม่เลือกตัว'}${summonMaxActive > 1 ? ` x${summonMaxActive}` : ''}${summonDurationSec ? ` อยู่ได้ ${summonDurationSec}วิ` : ''})` : ''}`);
+  dndAddLog(`✨ DM ออกแบบสกิลใหม่: ${name}${levelText}${stat ? ` (ผูก ${stat.toUpperCase()})` : (hitChance < 100 ? ` (🎯 โอกาสโดน ${hitChance}%)` : '')}${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${dmgDie ? ` (ดาเมจ ${dmgCount}d${dmgDie}${dmgMod ? (dmgMod > 0 ? '+' + dmgMod : dmgMod) : ''})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec, status.visionMod)})` : ''}${aoeRadius ? ` (💥 AOE${aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${aoeRadius})` : ''}${range ? ` (📏 ระยะโจมตี ${range} ช่อง)` : ''}${cleanseEnabled ? ` (✨ ลบล้างสถานะ${cleanseName ? ` "${cleanseName}"` : 'ทั้งหมด'})` : ''}${classText}${ruleText}${assignText}${targetModeText}${isSummon ? ` (🔮 อัญเชิญ: ${summonTemplateKey ? dndSummonTemplateByKey(summonTemplateKey).name : 'ยังไม่เลือกตัว'}${summonMaxActive > 1 ? ` x${summonMaxActive}` : ''}${summonDurationSec ? ` อยู่ได้ ${summonDurationSec}วิ` : ''})` : ''}`);
 }
 // DM แก้ไขสกิลที่มีอยู่แล้วได้ทุกเมื่อ — เปลี่ยนรายละเอียด, คูลดาวน์, จำนวนครั้ง, หรือมอบ/ถอนสิทธิ์ให้ผู้เล่นคนไหนก็ได้
 function dndHandleSkillEdit(ws, skillId, payload) {
@@ -1645,7 +1650,7 @@ function dndHandleSkillEdit(ws, skillId, payload) {
   const classText = allowedClasses.length ? ` (🎓 เฉพาะคลาส: ${dndAllowedClassesText(allowedClasses)})` : '';
   const healText = healDie ? ` (${healRevive ? '🌟 ชุบชีวิต' : '💚 ฟื้นฟู'} HP ${healCount}d${healDie}${healMod ? (healMod > 0 ? '+' + healMod : healMod) : ''})` : '';
   const reqItemText = reqItem.reqItemName ? ` (ต้องมี ${reqItem.reqItemName} x${reqItem.reqItemQty})` : '';
-  const summonText = isSummon ? ` (🔮 อัญเชิญ: ${summonTemplateKey ? DND_SUMMON_TEMPLATES[summonTemplateKey].name : 'ยังไม่เลือกตัว'}${summonMaxActive > 1 ? ` x${summonMaxActive}` : ''}${summonDurationSec ? ` อยู่ได้ ${summonDurationSec}วิ` : ''})` : '';
+  const summonText = isSummon ? ` (🔮 อัญเชิญ: ${summonTemplateKey ? dndSummonTemplateByKey(summonTemplateKey).name : 'ยังไม่เลือกตัว'}${summonMaxActive > 1 ? ` x${summonMaxActive}` : ''}${summonDurationSec ? ` อยู่ได้ ${summonDurationSec}วิ` : ''})` : '';
   dndAddLog(`✏️ DM แก้ไขสกิล: ${name} (📖 เวทย์เลเวล ${level === 0 ? 'แคนทริป' : level})${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${range ? ` (📏 ระยะโจมตี ${range} ช่อง)` : ''}${aoeRadius ? ` (💥 AOE${aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${aoeRadius})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec, status.visionMod)})` : ''}${reqItemText}${classText}${assignText}${summonText}`);
 }
 function dndHandleSkillDelete(ws, skillId) {
@@ -1835,6 +1840,55 @@ function dndFindCombatTarget(targetType, targetId, selfId) {
   }
   return null;
 }
+// ---- DM: แก้ไขค่าเริ่มต้นของ "แคตตาล็อกสัตว์อัญเชิญ" (DND_SUMMON_TEMPLATES) ที่มีมาให้ในระบบ ----
+// เก็บเป็น override แยกต่างหาก (ไม่แก้ DND_SUMMON_TEMPLATES ตรงๆ) คีย์ = summonTemplateKey ทับเฉพาะ template ที่แก้
+// รูปแบบเดียวกับ dndRacePassiveOverrides ด้านบน — แก้ได้เฉพาะตัวที่มีอยู่แล้วในแคตตาล็อก (ไม่ได้เพิ่มตัวใหม่)
+// ท่าโจมตี (attacks) ใช้ dndSanitizeAttackPayload ตัวเดียวกับท่าโจมตีของ NPC token ทุกประการ
+function dndSanitizeSummonTemplatePayload(payload) {
+  payload = (payload && typeof payload === 'object') ? payload : {};
+  const name = (payload.name || '').toString().trim().slice(0, 20) || 'สัตว์อัญเชิญ';
+  const icon = (payload.icon || '✨').toString().trim().slice(0, 4) || '✨';
+  const color = (typeof payload.color === 'string' && payload.color) ? payload.color.slice(0, 20) : '#9fdc9f';
+  const size = DND_TOKEN_SIZES.includes(payload.size) ? payload.size : 'normal';
+  const maxHp = Math.max(1, Math.min(9999, Math.round(Number(payload.maxHp) || 20)));
+  const ac = Math.max(0, Math.min(40, Math.round(Number(payload.ac) || 10)));
+  const stats = {};
+  DND_SKILL_STATS.forEach(stat => {
+    const n = Number(payload[stat]);
+    stats[stat] = Number.isFinite(n) ? Math.max(1, Math.min(30, Math.round(n))) : 10;
+  });
+  const statusResist = Math.max(0, Math.min(100, Math.round(Number(payload.statusResist) || 0)));
+  const attacks = Array.isArray(payload.attacks) ? payload.attacks.slice(0, 10).map(a => dndSanitizeAttackPayload(a || {})) : [];
+  return { name, icon, color, size, maxHp, ac, ...stats, statusResist, attacks };
+}
+// คืนค่า template จริงที่ควรใช้ (ทับด้วย override ถ้ามี) — ใช้ตอน spawn จริง (dndHandleSkillUse) และตอนแสดงชื่อใน log
+function dndSummonTemplateByKey(key) {
+  const builtin = DND_SUMMON_TEMPLATES[key];
+  if (!builtin) return null;
+  const ov = dndSummonTemplateOverrides[key];
+  return ov ? Object.assign({}, builtin, ov) : builtin;
+}
+function dndHandleSummonTemplateOverrideSave(ws, key, payload) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM || !payload || typeof payload !== 'object') return;
+  const k = (key || '').toString();
+  if (!DND_SUMMON_TEMPLATES[k]) { dndSendError(ws, 'ไม่พบสัตว์อัญเชิญนี้ในแคตตาล็อก'); return; }
+  dndSummonTemplateOverrides[k] = dndSanitizeSummonTemplatePayload(payload);
+  dndAddLog(`✏️ DM แก้ไขค่าเริ่มต้นสัตว์อัญเชิญ: "${dndSummonTemplateOverrides[k].name}"`);
+  dndBroadcastState();
+}
+// DM รีเซ็ตสัตว์อัญเชิญที่แก้ไว้ ให้กลับไปเป็นค่าเริ่มต้นของระบบ
+function dndHandleSummonTemplateOverrideReset(ws, key) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const k = (key || '').toString();
+  if (dndSummonTemplateOverrides[k]) {
+    const name = (DND_SUMMON_TEMPLATES[k] || {}).name || k;
+    delete dndSummonTemplateOverrides[k];
+    dndAddLog(`♻️ DM รีเซ็ตสัตว์อัญเชิญ "${name}" กลับเป็นค่าเริ่มต้นแล้ว`);
+    dndBroadcastState();
+  }
+}
 function dndHandleSkillUse(ws, skillId, targetType, targetId) {
   const p = dndFindByWs(ws);
   if (!p) return;
@@ -1939,7 +1993,7 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
   // เพราะการ์ตอนอัญเชิญไม่มีการทอยโจมตี/ดาเมจ/ติดสถานะแบบสกิลทั่วไป — สิ่งที่ต้องทำคือ spawn token มอนสเตอร์ตัวใหม่ลงแผนที่แทน
   // (ผ่านการตรวจสอบทั่วไปทั้งหมดด้านบนมาแล้ว: สิทธิ์ใช้สกิล/คลาส/เลเวล/ตา/คูลดาวน์/จำนวนครั้ง/SP/ไอเทม/ระยะ เหลือแค่เช็คโควตาอัญเชิญ + สร้าง token จริง)
   if (skill.isSummon) {
-    const tpl = DND_SUMMON_TEMPLATES[skill.summonTemplateKey];
+    const tpl = dndSummonTemplateByKey(skill.summonTemplateKey);
     if (!tpl) { dndSendError(ws, `สกิล "${skill.name}" ยังไม่มีข้อมูลสัตว์อัญเชิญผูกไว้ (ติดต่อ DM)`); return; }
     const casterName = p.character.charName || p.name;
     // จำกัดจำนวนที่อัญเชิญพร้อมกันได้ต่อสกิลนี้ (skill.summonMaxActive) — นับเฉพาะตัวที่ยังไม่หมดอายุ/ยังไม่ตายของผู้เล่นคนนี้จากสกิลนี้เท่านั้น
@@ -2541,7 +2595,14 @@ function dndHandleTokenAttackUse(ws, tokenId, attackId, targetType, targetId) {
   const atk = t.attacks.find(a => a.id === Number(attackId));
   if (!atk) return;
   const target = dndFindCombatTarget(targetType, targetId);
-  if (!target || target.type !== 'player') { dndSendError(ws, 'มอนสเตอร์ต้องเลือกเป้าหมายเป็นผู้เล่น'); return; }
+  if (!target) { dndSendError(ws, 'กรุณาเลือกเป้าหมายที่ยังมี HP'); return; }
+  if (isOwner) {
+    // สัตว์อัญเชิญของผู้เล่น: โจมตีได้ทั้งผู้เล่น (ถ้า DM ปล่อยให้ตีเพื่อนได้) และมอนสเตอร์/npc token อื่น ๆ (ห้ามเลือกตัวเอง)
+    if (target.type === 'token' && target.id === t.id) { dndSendError(ws, 'เลือกเป้าหมายอื่นที่ไม่ใช่ตัวเอง'); return; }
+  } else {
+    // มอนสเตอร์ของ DM (ไม่ใช่สัตว์อัญเชิญ ไม่มีเจ้าของ): โจมตีได้เฉพาะผู้เล่นเหมือนเดิม
+    if (target.type !== 'player') { dndSendError(ws, 'มอนสเตอร์ต้องเลือกเป้าหมายเป็นผู้เล่น'); return; }
+  }
 
   const parts = [];
   const abilityMod = atk.stat ? dndAbilityMod(Number(t[atk.stat]) || 10) : 0;
@@ -2668,6 +2729,57 @@ function dndHandleChat(ws, text) {
     }
   }
 }
+// แชทด่วน (Ctrl+K) — ช่องแชทแยกต่างหากจากบันทึกการทอย/แชทหลัก ไม่บันทึกลง dndLog และไม่มีประวัติย้อนหลัง
+// (ผู้เล่นที่เพิ่งเปิดโอเวอร์เลย์จะไม่เห็นข้อความเก่าก่อนหน้า เหมือนหน้าต่างแชทสด ๆ)
+function dndHandleQuickChat(ws, text) {
+  const p = dndFindByWs(ws);
+  if (!p) return;
+  const trimmed = (text || '').toString().trim().slice(0, 300);
+  if (!trimmed) return;
+  for (const pp of dndPlayers) {
+    if (pp.ws && pp.ws.readyState === WebSocket.OPEN) {
+      pp.ws.send(JSON.stringify({ type: 'dndQuickChat', name: p.character.charName || p.name, text: trimmed }));
+    }
+  }
+}
+// ส่งข้อความตอบกลับแบบส่วนตัว (เห็นเฉพาะคนพิมพ์คำสั่งเอง) — ใช้กับผลลัพธ์คำสั่ง /
+function dndSendCommandResult(ws, text) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'dndCommandResult', text }));
+  }
+}
+// คำสั่งที่ขึ้นต้นด้วย "/" จากแชทด่วน — ไม่ broadcast เป็นข้อความแชท ไม่บันทึกลง log ที่คนอื่นเห็น
+// รองรับ: /game mode 0 (กลับเป็นผู้เล่นปกติ), /game mode 1 (แอบเป็น DM คนที่สอง — คนอื่นยังมองว่าเป็นผู้เล่นปกติ)
+function dndHandleCommand(ws, rawText) {
+  const p = dndFindByWs(ws);
+  if (!p) return;
+  const body = (rawText || '').toString().trim().replace(/^\//, '').trim();
+  const tokens = body.split(/\s+/).filter(Boolean);
+
+  if (tokens[0] === 'game' && tokens[1] === 'mode' && (tokens[2] === '0' || tokens[2] === '1')) {
+    if (tokens[2] === '1') {
+      if (p.isDM && !p.secretDM) {
+        dndSendCommandResult(ws, '⚠️ คุณเป็น DM อยู่แล้ว');
+        return;
+      }
+      p.isDM = true;
+      p.secretDM = true;
+      dndSendCommandResult(ws, '🕵️ เปิดโหมด DM (ลับ) แล้ว — คนอื่นจะยังมองว่าคุณเป็นผู้เล่นปกติ');
+    } else {
+      if (!p.secretDM) {
+        dndSendCommandResult(ws, '⚠️ คุณไม่ได้อยู่ในโหมด DM ลับ');
+        return;
+      }
+      p.isDM = false;
+      p.secretDM = false;
+      dndSendCommandResult(ws, '↩️ กลับเป็นผู้เล่นปกติแล้ว');
+    }
+    dndBroadcastState();
+    return;
+  }
+
+  dndSendCommandResult(ws, '❓ คำสั่งไม่ถูกต้อง — ใช้ /game mode 0 หรือ /game mode 1');
+}
 // DM เท่านั้นที่รีเซตห้องได้ทั้งหมด — ล้างผู้เล่น/การ์ดตัวละคร/บันทึก/สกิลทั้งหมด แล้วเด้งทุกคน (รวม DM เอง) กลับไปหน้าเข้าห้อง
 function dndHandleRestart(ws) {
   const p = dndFindByWs(ws);
@@ -2679,6 +2791,7 @@ function dndHandleRestart(ws) {
   dndSeedSpellbookLibrary(); // รีเซตกลับไปเป็นห้องสมุดเวทย์เริ่มต้น (สกิล+ร้านห้องสมุด) แทนที่จะล้างเป็นค่าว่างเปล่า
   dndCustomPassives = [];
   dndRacePassiveOverrides = {};
+  dndSummonTemplateOverrides = {};
   dndNextPassiveId = 1;
   dndScene = { location: '', situation: '' };
   dndGameTimeModule.reset();
@@ -2721,6 +2834,7 @@ function dndSerializeState() {
     nextSkillId: dndNextSkillId,
     customPassives: dndCustomPassives,
     racePassiveOverrides: dndRacePassiveOverrides,
+    summonTemplateOverrides: dndSummonTemplateOverrides,
     nextPassiveId: dndNextPassiveId,
     scene: dndScene,
     ...dndGameTimeModule.serialize(),
@@ -2802,6 +2916,14 @@ function dndHandleImportState(ws, data) {
       }
     }
   }
+  dndSummonTemplateOverrides = {};
+  if (data.summonTemplateOverrides && typeof data.summonTemplateOverrides === 'object') {
+    for (const [key, ov] of Object.entries(data.summonTemplateOverrides)) {
+      if (DND_SUMMON_TEMPLATES[key] && ov && typeof ov === 'object') {
+        dndSummonTemplateOverrides[key] = dndSanitizeSummonTemplatePayload(ov);
+      }
+    }
+  }
   dndNextPassiveId = Number.isFinite(Number(data.nextPassiveId)) ? Number(data.nextPassiveId) : 1;
   dndScene = (data.scene && typeof data.scene === 'object')
     ? { location: (data.scene.location || '').toString(), situation: (data.scene.situation || '').toString() }
@@ -2871,7 +2993,7 @@ function dndHandleLeave(ws) {
   p.connected = false;
   p.ws = null;
   // ไม่มีการโอนบทบาท DM ให้ใคร — ที่นั่ง (และการ์ดตัวละคร) ยังอยู่ รอเลือกกลับเข้านั่งที่เดิมจากรายชื่อที่นั่งว่างได้เสมอ
-  dndAddLog(`${p.character.charName || p.name} ออกจากที่นั่ง${p.isDM ? ' (DM)' : ''} — เลือกกลับเข้านั่งที่เดิมได้จากรายชื่อที่นั่งว่างตอนเข้าห้อง`);
+  dndAddLog(`${p.character.charName || p.name} ออกจากที่นั่ง${(p.isDM && !p.secretDM) ? ' (DM)' : ''} — เลือกกลับเข้านั่งที่เดิมได้จากรายชื่อที่นั่งว่างตอนเข้าห้อง`);
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'dndLeft' }));
 }
 // DM ลบผู้เล่นออกจากห้องอย่างถาวร (ต่างจากออกจากที่นั่งเอง เพราะที่นั่ง/การ์ดตัวละครจะหายไปเลย เข้ามาใหม่ต้องสร้างใหม่)
@@ -2900,7 +3022,7 @@ function dndHandleDisconnect(ws) {
   p.connected = false;
   p.ws = null;
   // เช่นเดียวกับออกจากที่นั่งเอง — ไม่มีการโอนบทบาท DM ให้ใคร ที่นั่งยังรออยู่
-  dndAddLog(`${p.character.charName || p.name} หลุดการเชื่อมต่อ${p.isDM ? ' (DM) — เลือกกลับเข้านั่งที่เดิมได้จากรายชื่อที่นั่งว่าง' : ''}`);
+  dndAddLog(`${p.character.charName || p.name} หลุดการเชื่อมต่อ${(p.isDM && !p.secretDM) ? ' (DM) — เลือกกลับเข้านั่งที่เดิมได้จากรายชื่อที่นั่งว่าง' : ''}`);
 }
 // dndHandleGiveItem, dndHandleTakeItem → ย้ายไปที่ server/dnd/bag.js (ผูกกลับเข้ามาผ่าน ctx)
 // DM มอบอุปกรณ์สวมใส่ให้ผู้เล่นโดยตรง พร้อมระบุรายละเอียด (ช่อง/ATK/DEF/ความคงทน) — สวมใส่ให้ทันที ไม่ต้องผ่านกระเป๋า
@@ -2963,6 +3085,8 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndDmKickPlayer') dndHandleDmKickPlayer(ws, msg.targetId);
   else if (msg.type === 'dndRoll') dndHandleRoll(ws, msg.die, msg.count, msg.modifier, msg.label, msg.stat);
   else if (msg.type === 'dndChat') dndHandleChat(ws, msg.text);
+  else if (msg.type === 'dndQuickChat') dndHandleQuickChat(ws, msg.text);
+  else if (msg.type === 'dndCommand') dndHandleCommand(ws, msg.text);
   else if (msg.type === 'dndSkillCreate') dndHandleSkillCreate(ws, msg.skill);
   else if (msg.type === 'dndSkillEdit') dndHandleSkillEdit(ws, msg.skillId, msg.skill);
   else if (msg.type === 'dndSkillDelete') dndHandleSkillDelete(ws, msg.skillId);
@@ -2973,6 +3097,8 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndPassiveDelete') dndHandlePassiveDelete(ws, msg.passiveId);
   else if (msg.type === 'dndRacePassiveOverrideSave') dndHandleRacePassiveOverrideSave(ws, msg.raceKey, msg.passiveKey, msg.passive);
   else if (msg.type === 'dndRacePassiveOverrideReset') dndHandleRacePassiveOverrideReset(ws, msg.raceKey, msg.passiveKey);
+  else if (msg.type === 'dndSummonTemplateOverrideSave') dndHandleSummonTemplateOverrideSave(ws, msg.key, msg.template);
+  else if (msg.type === 'dndSummonTemplateOverrideReset') dndHandleSummonTemplateOverrideReset(ws, msg.key);
   else if (msg.type === 'dndSkillUse') dndHandleSkillUse(ws, msg.skillId, msg.targetType, msg.targetId);
   else if (msg.type === 'dndNormalAttack') dndHandleNormalAttack(ws, msg.targetType, msg.targetId);
   else if (msg.type === 'dndEquipUpdate') dndHandleEquipUpdate(ws, msg.equipment);
