@@ -171,17 +171,23 @@ module.exports = function createItemModule(ctx) {
     const tc = targetPlayer.character;
     const targetName = tc.charName || targetPlayer.name;
     const wasDead = ctx.dndIsCharDead(tc);
-    // เป้าหมายตายถาวรจากการโอเวอร์คิล (โดนดาเมจครั้งเดียว >= 2 เท่าของเลือดสูงสุด) — ไอเทมฟื้นฟู/ชุบชีวิตใช้ปลุกไม่ได้เด็ดขาด ต้องรอ DM เพิ่ม HP ให้เท่านั้น
-    if ((def.effectType === 'heal' || def.effectType === 'revive') && tc.permaDead) {
-      ctx.dndSendError(ws, `${targetName} ตายถาวรแล้ว (โดนโอเวอร์คิลเกิน 2 เท่าของเลือดสูงสุด) ไอเทม "${cleanName}" ใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้น`);
-      return;
-    }
     // ไอเทมประเภท "ฟื้นฟู HP" ธรรมดาใช้ปลุกคนหมดสติไม่ได้เด็ดขาด — ต้องเป็นไอเทม "ชุบชีวิต" ที่ DM สร้างขึ้นมาโดยเฉพาะเท่านั้น
+    // เป้าหมายตายถาวรจากการโอเวอร์คิลก็ใช้เงื่อนไขเดียวกันนี้เป๊ะๆ (wasDead เป็นจริงทั้งกรณี HP<=0 ปกติและ permaDead) — ไม่ได้ถูกกันแยกต่างหากอีกต่อไป
     if (def.effectType === 'heal' && wasDead) {
       ctx.dndSendError(ws, `ไอเทม "${cleanName}" ฟื้นฟู HP เท่านั้น ใช้ปลุก ${targetName} ที่หมดสติไม่ได้ — ต้องใช้ไอเทมชุบชีวิตแทน (ให้ DM ตั้งค่าไอเทมประเภท "ชุบชีวิต")`);
       return;
     }
 
+    if (def.effectType === 'equip') {
+      // ถ้าของชื่อนี้ในกระเป๋าเป็นกอง "ชำรุด" (คงทนหมด ถูกถอดอัตโนมัติ) ห้ามสวมใส่กลับจนกว่าจะซ่อมก่อน
+      const bagNow = ctx.dndSanitizeBag(c.bag);
+      const brokenRow = bagNow.find(it => it.name === cleanName && it.broken);
+      const goodRow = bagNow.find(it => it.name === cleanName && !it.broken);
+      if (brokenRow && !goodRow) {
+        ctx.dndSendError(ws, `"${cleanName}" ชำรุด (คงทนหมด) ต้องซ่อมก่อนถึงจะสวมใส่ได้ — กดปุ่ม "ซ่อม" ในกระเป๋า`);
+        return;
+      }
+    }
     if (!ctx.dndBagRemove(c, cleanName, 1)) { ctx.dndSendError(ws, `คุณไม่มี "${cleanName}" ในกระเป๋า`); return; }
     let resultText = '';
     if (def.effectType === 'heal') {
@@ -190,11 +196,15 @@ module.exports = function createItemModule(ctx) {
       resultText = `❤️ HP ${oldHp} → ${tc.hp}`;
     } else if (def.effectType === 'revive') {
       const oldHp = tc.hp;
+      const wasPermaDead = !!tc.permaDead;
       let newHp = Math.max(0, Math.min(tc.maxHp, tc.hp + def.value));
       if (wasDead && newHp <= 0) newHp = Math.min(tc.maxHp, 1); // ไอเทมชุบชีวิตต้องปลุกได้จริงอย่างน้อย 1 HP แม้ DM ตั้งค่าฟื้นฟูไว้น้อยไป
       tc.hp = newHp;
       resultText = `❤️ HP ${oldHp} → ${tc.hp}`;
-      if (wasDead && tc.hp > 0) resultText += ` — 🌟 ฟื้นจากหมดสติแล้ว!`;
+      if (wasDead && tc.hp > 0) {
+        if (wasPermaDead) tc.permaDead = false; // ปลุกจากตายถาวรสำเร็จด้วยไอเทมชุบชีวิต — เคลียร์ธงตายถาวรออก กลับมาเป็นสถานะปกติทุกอย่าง
+        resultText += ` — 🌟 ฟื้นจาก${wasPermaDead ? 'ตายถาวร' : 'หมดสติ'}แล้ว!`;
+      }
     } else if (def.effectType === 'gold') {
       c.gold = (c.gold || 0) + def.value;
       resultText = `💰 ได้ทอง ${def.value}`;

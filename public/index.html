@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hearts LAN — 4 หรือ 8 ผู้เล่น</title>
 <link rel="stylesheet" href="style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Mitr:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="dnd-pixel-theme.css">
+<link rel="stylesheet" href="dnd-custom-theme.css">
 </head>
 <body>
 <h1 id="pageTitle">♥ Hearts LAN — เลือกได้ 4 หรือ 8 ผู้เล่น ♥</h1>
@@ -64,6 +69,15 @@
   <div><button id="backToMenuBtn" class="linkBtn">← กลับไปเลือกเกม</button></div>
 </div>
 
+<button type="button" id="dndThemeToggleBtn" style="display:none;">🎨 ธีม</button>
+
+<!-- คัตซีน DM: ภาพ/วิดีโอเต็มจอที่ DM เปิดให้ทุกคนในห้องเห็นพร้อมกัน — วางไว้นอกหน้าจอ D&amp;D เพื่อให้ครอบทับ UI ทั้งหมดได้ -->
+<div id="dndCutsceneOverlay" style="display:none;">
+  <div id="dndCutsceneMediaWrap"></div>
+  <button id="dndCutsceneCloseBtn" type="button" style="display:none;">✕ ปิดคัตซีน</button>
+</div>
+
+
 <div id="dndJoinScreen">
   <div>ตั้งชื่อผู้เล่นก่อนเข้าห้อง D&amp;D</div>
   <input id="dndNameInput" maxlength="16" placeholder="ชื่อผู้เล่น">
@@ -108,6 +122,13 @@
     <span id="dndTimeBannerText"></span>
     <span id="dndTimeBannerAuto" style="display:none;">▶️</span>
   </div>
+  <!-- แถบเพลงพื้นหลัง — ทุกคนเห็นว่ากำลังเล่นเพลงอะไรอยู่ (ถ้ามี) และปรับเสียงในเครื่องตัวเองได้ ไม่กระทบคนอื่น -->
+  <div id="dndMusicBar" style="display:none;">
+    <span id="dndMusicBarIcon">🎵</span>
+    <span id="dndMusicBarTrackName"></span>
+    <button type="button" id="dndMusicBarMuteBtn" title="ปิด/เปิดเสียงเพลงในเครื่องนี้">🔊</button>
+    <input type="range" id="dndMusicBarVolumeInput" min="0" max="100" value="100" title="เสียงเพลงในเครื่องนี้">
+  </div>
   <div id="dndLayout">
     <div id="dndLeftCol">
       <div id="dndParty">
@@ -122,27 +143,6 @@
         <div class="dndRangeHint" style="margin-top:4px;">ขยับได้บนแผนที่ตอนถึงตาของมัน (ลากบน 🗺️ แผนที่) · กด 🎲 โจมตี เพื่อสั่งใช้ท่าโจมตี · กด 💨 ยกเลิก เพื่อไล่กลับได้ทุกเมื่อ</div>
       </div>
 
-      <!-- มุมมองการ์ดตัวละครหลังล็อกแล้ว (อ่านอย่างเดียว) — อยู่ทางซ้ายคู่กับปาร์ตี้ -->
-      <div id="dndMySheetBox" style="display:none;">
-        <h3>การ์ดตัวละครของฉัน 🔒</h3>
-        <div id="dndMySheetView"></div>
-        <div class="dndRangeHint" style="margin-top:6px;">ล็อกแล้ว — ให้ DM เป็นผู้แก้ไขหรือปลดล็อกให้เท่านั้น</div>
-
-        <div id="dndEquipBox">
-          <h4>🎒 อุปกรณ์สวมใส่ <span class="dndRangeHint">(DM เป็นผู้จัดการ — ป้องกันรวม: <span id="dndTotalDefVal">0</span> · โจมตีรวม: <span id="dndTotalAtkVal">0</span>)</span></h4>
-          <div id="dndEquipGrid" class="dndEquipGrid"></div>
-        </div>
-
-        <div class="dndAppearanceBox">
-          <h4 style="margin:10px 0 0 0; color:#ffd76b; font-size:12px;">💇 แต่งหน้าตาตัวละคร <span class="dndRangeHint">(แก้ไขได้เองตลอดเวลา ไม่ต้องรอ DM ปลดล็อก)</span></h4>
-          <label>ทรงผม</label>
-          <div class="dndApPickRow" id="dndMySheetHairRow"></div>
-          <label>สีผม</label>
-          <div class="dndApPickRow" id="dndMySheetHairColorRow"></div>
-          <label>สีหน้า</label>
-          <div class="dndApPickRow" id="dndMySheetFaceRow"></div>
-        </div>
-      </div>
     </div>
     <div id="dndMidCol">
       <!-- แผงสถานะสำหรับ DM — DM ไม่ต้องสร้างการ์ดตัวละครของตัวเอง เพราะเป็นบทบาทที่คุมเกม ไม่ใช่ตัวละครในปาร์ตี้ -->
@@ -160,6 +160,8 @@
           <button type="button" id="dndTurnNextBtn">⏭️ ตาถัดไป</button>
           <button type="button" id="dndTurnStopBtn">⏹️ หยุด</button>
         </div>
+        <div id="dndTurnStickerLayer"></div>
+        <div class="dndRangeHint" style="margin-top:8px;">🖼️ ลากไฟล์ .gif มาวางตรงนี้เพื่อใส่สติกเกอร์มุมกล่อง — ลากย้ายตำแหน่งได้อิสระ (เก็บไว้ในเครื่องนี้เท่านั้น)</div>
       </div>
 
       <!-- DM เท่านั้นที่ประกาศสถานที่/สถานการณ์ปัจจุบันให้ทุกคนเห็นพร้อมกันได้ -->
@@ -174,6 +176,63 @@
         <div id="dndSceneEditBtnRow">
           <button id="dndSceneAnnounceBtn" type="button">📢 ประกาศ</button>
           <button id="dndSceneClearBtn" type="button">ล้างประกาศ</button>
+        </div>
+      </div>
+
+      <!-- DM เท่านั้นที่เปิด/ปิดคัตซีน (ภาพหรือวิดีโอเต็มจอ) ให้ทุกคนในห้องเห็นพร้อมกันได้ -->
+      <div id="dndCutsceneEditBox" style="display:none;">
+        <h4>🎬 คัตซีน <span class="dndRangeHint">(ขึ้นจอทุกคนทันที)</span></h4>
+        <div class="dndFieldRow">
+          <div class="dndField"><label>ลิงก์ภาพหรือวิดีโอ (URL)</label><input id="dndCutsceneUrlInput" placeholder="https://.../scene.mp4 หรือ .png .jpg .gif"></div>
+        </div>
+        <div id="dndCutsceneEditBtnRow">
+          <button id="dndCutsceneShowBtn" type="button">🎬 แสดงให้ทุกคนดู</button>
+          <button id="dndCutsceneCloseAllBtn" type="button">⏹️ ปิดคัตซีน</button>
+        </div>
+        <div class="dndRangeHint" style="margin-top:6px;">รองรับลิงก์รูปภาพ (.png .jpg .gif) และวิดีโอ (.mp4 .webm) ระบบเดาชนิดจากนามสกุลไฟล์ให้อัตโนมัติ</div>
+        <div class="dndFieldRow" style="margin-top:10px;">
+          <div class="dndField"><label>หรืออัปโหลดไฟล์จากเครื่อง</label><input id="dndCutsceneFileInput" type="file" accept="image/*,video/*"></div>
+        </div>
+        <div id="dndCutsceneEditBtnRow">
+          <button id="dndCutsceneShowLocalBtn" type="button">📁 แสดงไฟล์นี้ให้ทุกคนดู</button>
+        </div>
+        <div class="dndRangeHint" style="margin-top:6px;">ไฟล์จากเครื่องไม่เกินประมาณ 4.5MB — ส่งตรงให้ทุกคนในห้องเห็น ไม่ต้องอัปโหลดขึ้นเว็บไหนก่อน</div>
+      </div>
+
+      <!-- DM เท่านั้นที่เพิ่ม/ลบ/สั่งเล่นเสียงเอฟเฟกต์ให้ทุกคนในห้องได้ยินพร้อมกัน -->
+      <div id="dndSoundboardBox" style="display:none;">
+        <h4>🔊 กล่องเสียง <span class="dndRangeHint">(กดเล่นให้ทุกคนได้ยินพร้อมกันทันที)</span></h4>
+        <div class="dndFieldRow">
+          <div class="dndField"><label>ชื่อเสียง</label><input id="dndSoundNameInput" maxlength="30" placeholder="เช่น ฟ้าร้อง, ดาบปะทะ"></div>
+          <div class="dndField"><label>ไฟล์เสียง (MP3/OGG/WAV ≤500KB)</label><input type="file" id="dndSoundFileInput" accept="audio/*"></div>
+        </div>
+        <div id="dndSoundAddBtnRow">
+          <button id="dndSoundAddBtn" type="button">➕ เพิ่มเสียงเข้ากล่อง</button>
+        </div>
+        <div id="dndSoundboardList"></div>
+        <div class="dndRangeHint" style="margin-top:6px;">สูงสุด 40 เสียง — ไฟล์เสียงจะถูกเก็บไว้ในเซิร์ฟเวอร์ห้องนี้ ไม่ใช่ในเครื่อง DM คนเดียว</div>
+      </div>
+
+      <!-- DM เท่านั้นที่เพิ่ม/เลือก/คุมเพลงพื้นหลังให้ทุกคนในห้องได้ยินพร้อมกันแบบ real-time (วนลูปค้างไว้ ต่างจากกล่องเสียงเอฟเฟกต์ด้านบน) -->
+      <div id="dndMusicBox" style="display:none;">
+        <h4>🎵 ดนตรีพื้นหลัง <span class="dndRangeHint">(คุมให้ทุกคนได้ยินพร้อมกัน)</span></h4>
+        <div class="dndFieldRow">
+          <div class="dndField"><label>ชื่อเพลง</label><input id="dndMusicNameInput" maxlength="40" placeholder="เช่น เพลงเดินป่า, เพลงต่อสู้บอส"></div>
+          <div class="dndField"><label>ไฟล์เพลง (MP3/OGG ≤6MB)</label><input type="file" id="dndMusicFileInput" accept="audio/*"></div>
+        </div>
+        <div id="dndMusicAddBtnRow">
+          <button id="dndMusicAddBtn" type="button">➕ เพิ่มเพลงเข้าเพลย์ลิสต์</button>
+        </div>
+        <div id="dndMusicList"></div>
+        <div class="dndRangeHint" style="margin-top:6px;">สูงสุด 20 เพลง — ไฟล์เพลงจะถูกเก็บไว้ในเซิร์ฟเวอร์ห้องนี้ ไม่ใช่ในเครื่อง DM คนเดียว</div>
+        <div id="dndMusicControlsRow" style="margin-top:10px;">
+          <button type="button" id="dndMusicPauseResumeBtn">⏸️ หยุดชั่วคราว</button>
+          <button type="button" id="dndMusicStopBtn">⏹️ ปิดเพลง</button>
+          <label id="dndMusicLoopLabel"><input type="checkbox" id="dndMusicLoopInput" checked> วนลูป</label>
+        </div>
+        <div class="dndField" style="margin-top:8px;">
+          <label>เสียงกลาง (ทุกคนได้ยินระดับนี้เป็นฐาน)</label>
+          <input type="range" id="dndMusicVolumeInput" min="0" max="100" value="60">
         </div>
       </div>
 
@@ -261,16 +320,21 @@
 
       <!-- แท็บสลับระหว่างลูกเต๋ากับสกิล -->
       <div id="dndToolTabs">
-        <button type="button" class="dndToolTabBtn active" id="dndToolTabDice" data-tool="dice">🎲 ทอยลูกเต๋า</button>
+        <button type="button" class="dndToolTabBtn" id="dndToolTabDice" data-tool="dice">🎲 ทอยลูกเต๋า</button>
         <button type="button" class="dndToolTabBtn" id="dndToolTabAttack" data-tool="attack">⚔️ โจมตีปกติ</button>
         <button type="button" class="dndToolTabBtn" id="dndToolTabSkill" data-tool="skill">✨ สกิล</button>
-        <button type="button" class="dndToolTabBtn" id="dndToolTabMap" data-tool="map">🗺️ แผนที่</button>
+        <button type="button" class="dndToolTabBtn active" id="dndToolTabMap" data-tool="map">🗺️ แผนที่</button>
         <button type="button" class="dndToolTabBtn" id="dndToolTabShop" data-tool="shop">🛍️ ร้านค้า</button>
         <button type="button" class="dndToolTabBtn" id="dndToolTabBag" data-tool="bag">🎒 กระเป๋า/แลกเปลี่ยน</button>
       </div>
 
-      <div id="dndDiceBox">
-        <h3>ทอยลูกเต๋า</h3>
+      <div class="dndFloatOverlay" id="dndDiceOverlay">
+      <div id="dndDiceBox" class="dndFloatBox" style="max-width:480px;">
+        <div class="dndFloatBoxHeader" id="dndDiceBoxHeader">
+          <span class="dndFloatBoxTitle">🎲 ทอยลูกเต๋า</span>
+          <button type="button" class="dndFloatBoxClose dndPeekWindowClose" id="dndDiceBoxCloseBtn" aria-label="ปิด" title="ปิด">✕</button>
+        </div>
+        <div class="dndFloatBoxBody">
         <div class="dndDiceGrid" id="dndDiceGrid">
           <button type="button" class="dndDieBtn" data-die="4">d4</button>
           <button type="button" class="dndDieBtn" data-die="6">d6</button>
@@ -288,18 +352,29 @@
         <div class="dndDiceOptsRow">
           <div style="flex:2;"><label>➕ บวกตัวปรับสเตตัส (ไม่บังคับ) — จะบวกเพิ่มจาก Modifier ด้านบน ไม่ใช่แทนที่</label><select id="dndDiceStatSelect"><option value="">— ไม่ใช้สเตตัส —</option></select></div>
         </div>
+        <div id="dndDiceRollAnimArea" class="dndDiceRollAnimArea"></div>
         <button id="dndRollBtn">🎲 ทอยลูกเต๋า</button>
+        </div>
+      </div>
       </div>
 
-      <div id="dndAttackBox" style="display:none;">
+      <div class="dndModalOverlay" id="dndAttackOverlay">
+      <div id="dndAttackBox" class="dndModalBox" style="max-width:520px;">
         <h3>⚔️ โจมตีปกติ</h3>
         <div class="dndRangeHint" style="margin-bottom:8px;">ผู้เล่นทุกคนใช้ได้ — เลือกมอนสเตอร์เป็นเป้าหมาย แล้วระบบจะทอยโจมตีและดาเมจพร้อมหัก HP ให้อัตโนมัติ</div>
         <div id="dndNormalAttackInfo" class="dndAttackInfoBox"></div>
         <button id="dndNormalAttackBtn" type="button">🎯 เลือกเป้าหมายและโจมตี</button>
+        <button type="button" class="dndDmEditCancelBtn" onclick="dndShowTool('map')">✖ ปิดหน้าต่างนี้</button>
+      </div>
       </div>
 
-      <div id="dndSkillBox" style="display:none;">
-        <h3>สกิล</h3>
+      <div class="dndFloatOverlay" id="dndSkillOverlay">
+      <div id="dndSkillBox" class="dndFloatBox" style="max-width:640px;">
+        <div class="dndFloatBoxHeader" id="dndSkillBoxHeader">
+          <span class="dndFloatBoxTitle">✨ สกิล</span>
+          <button type="button" class="dndFloatBoxClose dndPeekWindowClose" id="dndSkillCloseBtn" aria-label="ปิด" title="ปิด">✕</button>
+        </div>
+        <div class="dndFloatBoxBody">
         <div id="dndSkillDmForm" style="display:none;">
           <div class="dndRangeHint" style="margin-bottom:6px;">DM เท่านั้นที่ออกแบบสกิลใหม่ได้ — ทุกคนในปาร์ตี้จะเห็นสกิลที่เพิ่ม</div>
           <div class="dndFieldRow">
@@ -317,6 +392,7 @@
             <div class="dndField"><label>⚔️ ดาเมจ (ไม่บังคับ — ทำให้เป็นสกิลโจมตี)</label><select id="dndSkillDmgDie"></select></div>
             <div class="dndField"><label>จำนวนลูก</label><input id="dndSkillDmgCount" type="number" min="1" max="20" value="1"></div>
             <div class="dndField"><label>Modifier</label><input id="dndSkillDmgMod" type="number" value="0"></div>
+            <div class="dndField"><label>🎯 ทอยโจมตี Modifier เพิ่มเติม (บวก/ลบเข้ากับ 1d20 vs AC ของสกิลนี้โดยตรง)</label><input id="dndSkillAtkMod" type="number" min="-50" max="50" value="0"></div>
           </div>
           <div class="dndSkillHealBox">
             <h5>💚 หรือทำเป็นสกิลฟื้นฟู/ชุบ HP แทน — ตั้งลูกเต๋าตรงนี้ = เลือกเป้าหมายเป็น "เพื่อน" ได้ทันทีตอนใช้สกิล</h5>
@@ -456,9 +532,11 @@
           <div class="dndRangeHint" style="margin-bottom:6px;">DM แก้ไขค่าเริ่มต้นของสัตว์อัญเชิญแต่ละตัวที่มีมาให้ในระบบได้ (ชื่อ/ไอคอน/สี/ขนาด/HP/AC/ค่าพลัง/ท่าโจมตี) — มีผลกับทุกสกิลอัญเชิญที่ผูกกับตัวนั้นทันที กด "รีเซ็ต" เพื่อกลับไปเป็นค่าเริ่มต้นของระบบ</div>
           <div id="dndSummonTemplateList" style="margin-top:10px;"></div>
         </div>
+        </div>
+      </div>
       </div>
 
-      <div id="dndMapBox" style="display:none;">
+      <div id="dndMapBox">
         <h3>🗺️ แผนที่การต่อสู้</h3>
         <div id="dndMapTabsRow"></div>
         <div id="dndMapCurrentLabel" style="display:none;"></div>
@@ -553,7 +631,8 @@
         </div>
       </div>
 
-      <div id="dndShopBox" style="display:none;">
+      <div class="dndModalOverlay" id="dndShopOverlay">
+      <div id="dndShopBox" class="dndModalBox" style="max-width:640px;">
         <h3>🛍️ ร้านค้า</h3>
         <div id="dndShopDmForm" style="display:none;">
           <div class="dndRangeHint" style="margin-bottom:6px;">DM เท่านั้นที่เปิด/ปิดร้านและจัดการไอเทมในร้านได้ — ร้านไอเทมใหม่จะมี Red Potion (ยาแดง) ให้เริ่มต้นเสมอ, ร้านตีบวกใหม่จะมีระดับ +1/+2/+3 ให้เริ่มต้นเสมอ, ห้องสมุดต้องมีสกิลที่ออกแบบไว้แล้ว (ในแท็บสกิล) ก่อนถึงจะเพิ่มสมุดเวทย์ผูกกับสกิลนั้นได้</div>
@@ -570,15 +649,21 @@
           <button type="button" id="dndShopAddBtn">🏪 เปิดร้านใหม่</button>
         </div>
         <div id="dndShopList"></div>
+        <button type="button" class="dndDmEditCancelBtn" onclick="dndShowTool('map')">✖ ปิดหน้าต่างนี้</button>
+      </div>
       </div>
 
-      <div id="dndBagBox" style="display:none;">
+      <div class="dndModalOverlay" id="dndBagOverlay">
+      <div id="dndBagBox" class="dndModalBox" style="max-width:640px;">
         <h3>🎒 กระเป๋าไอเทม / แลกเปลี่ยน</h3>
 
         <div id="dndMyBagSection" style="display:none;">
           <h4>กระเป๋าของฉัน <span class="dndRangeHint">(ทอง: <span id="dndBagGoldVal">0</span> | ช่อง: <span id="dndBagCapacityVal">0/20</span>)</span></h4>
           <div class="dndBagList" id="dndMyBagList"></div>
           <div id="dndArmorRepairBox" style="margin-top:10px;"></div>
+          <div style="margin-top:10px;">
+            <button type="button" id="dndBagSaveFileBtn" class="linkBtn">💾 บันทึกกระเป๋าเป็นไฟล์</button>
+          </div>
         </div>
 
         <div id="dndTradeSection" style="display:none;">
@@ -613,6 +698,7 @@
           <div class="dndFieldRow">
             <div class="dndField"><label>ผู้เล่น</label><select id="dndGiveTargetSelect"></select></div>
           </div>
+          <div id="dndGiveTargetBagView" class="dndRangeHint" style="margin-bottom:8px;"></div>
           <div class="dndFieldRow">
             <div class="dndField"><label>ชื่อไอเทม</label><input id="dndGiveItemName" maxlength="40"></div>
             <div class="dndField"><label>จำนวน</label><input id="dndGiveItemQty" type="number" min="1" value="1"></div>
@@ -620,7 +706,10 @@
           <div id="dndGiveItemBtnRow">
             <button type="button" id="dndGiveItemBtn">🎁 มอบไอเทม</button>
             <button type="button" id="dndTakeItemBtn">🗑️ เรียกคืน</button>
+            <button type="button" id="dndImportBagBtn">📂 นำเข้าไฟล์กระเป๋า</button>
+            <input id="dndImportBagFileInput" type="file" accept="application/json,.json" style="display:none;">
           </div>
+          <div class="dndRangeHint" style="margin-top:4px;">"นำเข้าไฟล์กระเป๋า" ใช้ผู้เล่นที่เลือกไว้ในช่อง "ผู้เล่น" ด้านบนเป็นเป้าหมาย — จะแทนที่กระเป๋า+ทองทั้งหมดของคนนั้นด้วยข้อมูลในไฟล์ ไม่กระทบสเตตัส/อุปกรณ์สวมใส่</div>
 
           <h4 style="margin-top:14px;">⚙️ ตั้งค่าไอเทมใช้งานได้</h4>
           <div class="dndRangeHint" style="margin-bottom:6px;">ตั้งชื่อไอเทม (ต้องตรงกับชื่อในกระเป๋าผู้เล่นเป๊ะๆ) + ผลตอนใช้ — ผู้เล่นจะเห็นปุ่ม "ใช้" ในกระเป๋าของตัวเองสำหรับไอเทมที่ตรงกับรายการนี้ ใช้แล้วไอเทมหายไป 1 ชิ้นทันที ถ้าตั้งเป็น "สวมใส่" ผู้เล่นกดใช้แล้วจะสวมใส่อุปกรณ์ชิ้นนั้นให้ทันที (ของเดิมในช่องจะถูกถอดเก็บเข้ากระเป๋าแทน) — ⚠️ "ฟื้นฟู HP" ใช้ปลุกคนหมดสติไม่ได้เด็ดขาด ต้องตั้งเป็น "🌟 ชุบชีวิต" เท่านั้นถึงจะปลุกคนหมดสติได้</div>
@@ -698,6 +787,8 @@
           <h4 style="margin-top:14px;">🔄 การแลกเปลี่ยนที่กำลังดำเนินอยู่ในห้อง</h4>
           <div id="dndAllTradesList"></div>
         </div>
+        <button type="button" class="dndDmEditCancelBtn" onclick="dndShowTool('map')">✖ ปิดหน้าต่างนี้</button>
+      </div>
       </div>
     </div>
     <div id="dndRightCol">
@@ -723,6 +814,40 @@
     <input id="dndLoadGameFileInput" type="file" accept="application/json,.json" style="display:none;">
   </div>
 </div>
+
+<!-- มุมมองการ์ดตัวละครของฉันหลังล็อกแล้ว (อ่านอย่างเดียว) — เปิดจากปุ่ม "ดูรายละเอียด" บนการ์ดตัวเองในปาร์ตี้ -->
+<div id="dndMySheetOverlay" class="dndModalOverlay">
+  <div class="dndModalBox" style="max-width:520px;">
+    <h3>การ์ดตัวละครของฉัน 🔒</h3>
+    <div id="dndMySheetView"></div>
+    <div class="dndRangeHint" style="margin-top:6px;">ล็อกแล้ว — ให้ DM เป็นผู้แก้ไขหรือปลดล็อกให้เท่านั้น</div>
+
+    <div id="dndEquipBox">
+      <h4>🎒 อุปกรณ์สวมใส่ <span class="dndRangeHint">(DM เป็นผู้จัดการ — ป้องกันรวม: <span id="dndTotalDefVal">0</span> · โจมตีรวม: <span id="dndTotalAtkVal">0</span>)</span></h4>
+      <div id="dndEquipGrid" class="dndEquipGrid"></div>
+    </div>
+
+    <div class="dndAppearanceBox">
+      <h4 style="margin:10px 0 0 0; color:#ffd76b; font-size:12px;">💇 แต่งหน้าตาตัวละคร <span class="dndRangeHint">(แก้ไขได้เองตลอดเวลา ไม่ต้องรอ DM ปลดล็อก)</span></h4>
+      <label>ทรงผม</label>
+      <div class="dndApPickRow" id="dndMySheetHairRow"></div>
+      <label>สีผม</label>
+      <div class="dndApPickRow" id="dndMySheetHairColorRow"></div>
+      <label>สีหน้า</label>
+      <div class="dndApPickRow" id="dndMySheetFaceRow"></div>
+    </div>
+
+    <div style="text-align:center; margin-top:14px;">
+      <button id="dndMySheetSaveCharBtn" type="button" class="linkBtn">💾 บันทึกตัวละครเป็นไฟล์</button>
+    </div>
+    <div class="dndRangeHint" style="margin-top:4px; text-align:center;">เก็บไฟล์นี้ไว้ — ถ้าหลุดออกจากห้องหรือย้ายห้องใหม่ ให้ DM เอาไฟล์นี้มาวางคืนให้ตัวละครคุณได้</div>
+
+    <button id="dndMySheetCloseBtn" type="button" class="linkBtn" style="margin-top:14px;">ปิด</button>
+  </div>
+</div>
+
+<!-- ดูรายละเอียดคร่าวๆ ของ token ผู้เล่นอื่น/มอนสเตอร์บนแผนที่ (อ่านอย่างเดียว) — เปิดจากการคลิก token บนแผนที่ — หน้าต่างลอยที่ลากไปมาได้ เปิดพร้อมกันได้หลายอัน (ซ้อน stack) -->
+<div id="dndTokenPeekWindows" class="dndPeekWindowsLayer"></div>
 
 <!-- เลือกเป้าหมายสำหรับการโจมตี/ใช้สกิล -->
 <div id="dndTargetOverlay" class="dndModalOverlay">
@@ -863,6 +988,7 @@
       <div class="dndField"><label>⚔️ ดาเมจ (ไม่บังคับ — ทำให้เป็นสกิลโจมตี)</label><select id="dndClassSkillEditDmgDie"></select></div>
       <div class="dndField"><label>จำนวนลูก</label><input id="dndClassSkillEditDmgCount" type="number" min="1" max="20" value="1"></div>
       <div class="dndField"><label>Modifier</label><input id="dndClassSkillEditDmgMod" type="number" value="0"></div>
+      <div class="dndField"><label>🎯 ทอยโจมตี Modifier เพิ่มเติม (เฉพาะผู้เล่นคนนี้คนเดียว)</label><input id="dndClassSkillEditAtkMod" type="number" min="-50" max="50" value="0"></div>
     </div>
     <div class="dndSkillHealBox">
       <h5>💚 หรือทำเป็นสกิลฟื้นฟู/ชุบ HP แทน — ตั้งลูกเต๋าตรงนี้ = เลือกเป้าหมายเป็น "เพื่อน" ได้ทันทีตอนใช้สกิล</h5>
@@ -940,6 +1066,7 @@
       <div class="dndField"><label>⚔️ ดาเมจ (ไม่บังคับ — ทำให้เป็นสกิลโจมตี)</label><select id="dndSkillEditDmgDie"></select></div>
       <div class="dndField"><label>จำนวนลูก</label><input id="dndSkillEditDmgCount" type="number" min="1" max="20" value="1"></div>
       <div class="dndField"><label>Modifier</label><input id="dndSkillEditDmgMod" type="number" value="0"></div>
+      <div class="dndField"><label>🎯 ทอยโจมตี Modifier เพิ่มเติม (บวก/ลบเข้ากับ 1d20 vs AC ของสกิลนี้โดยตรง)</label><input id="dndSkillEditAtkMod" type="number" min="-50" max="50" value="0"></div>
     </div>
     <div class="dndSkillHealBox">
       <h5>💚 หรือทำเป็นสกิลฟื้นฟู/ชุบ HP แทน — ตั้งลูกเต๋าตรงนี้ = เลือกเป้าหมายเป็น "เพื่อน" ได้ทันทีตอนใช้สกิล</h5>
@@ -1173,6 +1300,9 @@
         </select>
       </div>
     </div>
+    <div class="dndFieldRow">
+      <div class="dndField"><label>ประวัติที่มา <span class="dndRangeHint">(ไม่บังคับ — เรื่องราวเบื้องหลังของตัวนี้ ผู้เล่นจะเห็นตอนดูรายละเอียด token)</span></label><textarea id="dndTokenEditBackstory" rows="3" maxlength="800" placeholder="เล่าที่มาของตัวนี้..."></textarea></div>
+    </div>
     <h4 style="color:#ffd76b; font-size:13px; margin:10px 0 8px 0;">💪 ค่าพลัง (มีผลกับโบนัสท่าโจมตีที่ผูกกับค่าพลังนั้น)</h4>
     <div class="dndFieldRow" id="dndTokenStatRow">
       <div class="dndField"><label>STR <span id="dndTokenStatMod-str" class="dndRangeHint"></span></label><input id="dndTokenStat-str" type="number" min="1" max="30" value="10"></div>
@@ -1348,6 +1478,106 @@ Goblin Fang x2"></textarea></div></div>
     </ul>
 
     <button class="dndModalCloseBtn" id="dndPatchNotesCloseBtn" type="button">เข้าใจแล้ว</button>
+  </div>
+</div>
+
+<!-- เลือกธีมหน้าจอ D&D — กดปุ่ม 🎨 ธีม แล้วเลือกจากรายการนี้ -->
+<div id="dndThemePickerOverlay" class="dndModalOverlay">
+  <div class="dndModalBox" style="max-width:420px;">
+    <h3>🎨 เลือกธีม</h3>
+    <p style="font-size:12px; color:#9aa4b2; margin-top:-6px;">ตั้งค่าไว้ในเครื่องนี้เท่านั้น ไม่กระทบผู้เล่นคนอื่น — คนละธีม คนละเครื่อง คนละคน</p>
+    <div id="dndThemePickerList" style="display:flex; flex-direction:column; gap:8px; margin-top:14px;"></div>
+    <div style="display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;">
+      <button id="dndCursorOpenBtn" type="button" class="linkBtn">🖱️ เคอร์เซอร์ของฉัน</button>
+      <button id="dndThemePickerCloseBtn" type="button" class="linkBtn">ปิด</button>
+    </div>
+  </div>
+</div>
+
+<!-- เคอร์เซอร์เมาส์ของฉัน — ผู้เล่นใส่ลิงก์รูปแทนลูกศรเมาส์ได้เอง (เก็บไว้ในเครื่องนี้เท่านั้น ไม่แชร์ให้คนอื่นเห็น) -->
+<div id="dndCursorOverlay" class="dndModalOverlay">
+  <div class="dndModalBox" style="max-width:420px;">
+    <h3>🖱️ เคอร์เซอร์ของฉัน</h3>
+    <p style="font-size:12px; color:#9aa4b2; margin-top:-6px;">ปรับเฉพาะเครื่องนี้ คนอื่นในห้องจะไม่เห็น หากรูปใหญ่เกินไปเบราว์เซอร์บางตัวอาจใช้ลูกศรปกติแทน</p>
+    <div id="dndCursorStatus" style="font-size:12px; color:#c9a24a; font-weight:bold; margin-top:8px;"></div>
+
+    <div class="settingLabel" style="margin-top:14px;">📂 ลากไฟล์มาวาง หรือคลิกเพื่อเลือกไฟล์ (.png .gif .jpg .svg .cur .ico .ani)</div>
+    <div id="dndCursorDropZone" style="border:2px dashed #4a4a42; border-radius:8px; padding:16px 10px; text-align:center; font-size:12px; color:#9aa4b2; cursor:pointer;">
+      ลากไฟล์เคอร์เซอร์มาวางตรงนี้ หรือคลิกเพื่อเลือกไฟล์
+    </div>
+    <input id="dndCursorFileInput" type="file" accept=".png,.gif,.jpg,.jpeg,.svg,.webp,.cur,.ico,.ani,image/*" style="display:none;">
+
+    <div id="dndCursorPresetList" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;"></div>
+
+    <div class="settingLabel" style="margin-top:14px;">🔗 หรือใส่ลิงก์รูปภาพ (URL)</div>
+    <input id="dndCursorUrlInput" type="text" placeholder="https://.../cursor.png" style="width:100%; box-sizing:border-box;">
+    <div id="dndCursorError" style="color:#d9695a; font-size:12px; margin-top:10px;"></div>
+    <div style="display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;">
+      <button id="dndCursorSaveBtn" type="button" style="flex:1;">💾 บันทึกลิงก์และใช้งาน</button>
+      <button id="dndCursorResetBtn" type="button" class="linkBtn">ล้างค่า (ใช้ลูกศรปกติ)</button>
+      <button id="dndCursorBackBtn" type="button" class="linkBtn">← เลือกธีมอื่น</button>
+      <button id="dndCursorCloseBtn" type="button" class="linkBtn">ปิด</button>
+    </div>
+  </div>
+</div>
+
+<!-- ธีมกำหนดเอง — ผู้เล่นแต่งพื้นหลัง/กรอบการ์ดตัวละครของตัวเองได้ (เก็บไว้ในเครื่องนี้เท่านั้น ไม่แชร์ให้คนอื่นเห็น) -->
+<div id="dndCustomThemeOverlay" class="dndModalOverlay">
+  <div class="dndModalBox" style="max-width:480px;">
+    <h3>🖌️ ธีมของฉัน</h3>
+    <p style="font-size:12px; color:#9aa4b2; margin-top:-6px;">ปรับแต่งเฉพาะเครื่องนี้ — คนอื่นในห้องจะไม่เห็นธีมของคุณ ใส่ลิงก์รูปภาพหรือ .gif ก็ได้ กดบันทึกแล้วระบบจะสลับไปใช้ "ธีมของฉัน" ให้อัตโนมัติ</p>
+
+    <div class="settingLabel" style="margin-top:10px;">🖼️ ภาพพื้นหลังหน้าเกม (URL รูปภาพ/.gif)</div>
+    <input id="dndCtBgUrl" type="text" placeholder="https://.../background.gif" style="width:100%; box-sizing:border-box;">
+    <div class="settingLabel" style="margin-top:8px;">ความเข้มฉากหลัง (กันตัวหนังสืออ่านไม่ออก): <span id="dndCtBgDimVal">40%</span></div>
+    <input id="dndCtBgDim" type="range" min="0" max="90" value="40" style="width:100%;">
+
+    <div class="settingLabel" style="margin-top:14px;">🎨 สีเน้นหลัก (หัวข้อ/ปุ่ม)</div>
+    <input id="dndCtAccent" type="color" value="#c9a24a">
+
+    <hr style="border-color:#3a3a34; margin:16px 0;">
+    <div style="font-weight:bold; color:#c9a24a;">กรอบการ์ดตัวละคร</div>
+
+    <div class="settingLabel" style="margin-top:8px;">สีขอบ</div>
+    <input id="dndCtCardBorderColor" type="color" value="#c94a3d">
+
+    <div class="settingLabel" style="margin-top:8px;">ความหนาขอบ: <span id="dndCtCardBorderWidthVal">2px</span></div>
+    <input id="dndCtCardBorderWidth" type="range" min="1" max="10" value="2" style="width:100%;">
+
+    <div class="settingLabel" style="margin-top:8px;">ลายเส้นขอบ</div>
+    <select id="dndCtCardBorderStyle" style="width:100%;">
+      <option value="solid">เส้นทึบ</option>
+      <option value="dashed">เส้นประ</option>
+      <option value="dotted">จุดไข่ปลา</option>
+      <option value="double">เส้นคู่</option>
+      <option value="groove">ร่องนูน</option>
+      <option value="ridge">สันนูน</option>
+    </select>
+
+    <div class="settingLabel" style="margin-top:8px;">ภาพขอบการ์ด (URL, รองรับ .gif — ถ้าใส่จะแทนสีขอบด้านบน)</div>
+    <input id="dndCtCardBorderImg" type="text" placeholder="https://.../frame.png" style="width:100%; box-sizing:border-box;">
+
+    <div class="settingLabel" style="margin-top:8px;">ภาพพื้นหลังการ์ด (URL, รองรับ .gif)</div>
+    <input id="dndCtCardBgImg" type="text" placeholder="https://.../card-bg.gif" style="width:100%; box-sizing:border-box;">
+    <div class="settingLabel" style="margin-top:8px;">ความเข้มพื้นหลังการ์ด: <span id="dndCtCardBgDimVal">55%</span></div>
+    <input id="dndCtCardBgDim" type="range" min="0" max="90" value="55" style="width:100%;">
+
+    <hr style="border-color:#3a3a34; margin:16px 0;">
+    <div style="font-weight:bold; color:#c9a24a;">การ์ดสกิล (แท็บ ✨ สกิล)</div>
+
+    <div class="settingLabel" style="margin-top:8px;">ภาพพื้นหลังการ์ดสกิล (URL, รองรับ .gif)</div>
+    <input id="dndCtSkillCardBgImg" type="text" placeholder="https://.../skill-card-bg.gif" style="width:100%; box-sizing:border-box;">
+    <div class="settingLabel" style="margin-top:8px;">ความเข้มพื้นหลังการ์ดสกิล: <span id="dndCtSkillCardBgDimVal">55%</span></div>
+    <input id="dndCtSkillCardBgDim" type="range" min="0" max="90" value="55" style="width:100%;">
+
+    <div id="dndCtError" style="color:#d9695a; font-size:12px; margin-top:10px;"></div>
+
+    <div style="display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;">
+      <button id="dndCtSaveBtn" type="button" style="flex:1;">💾 บันทึกและใช้งาน</button>
+      <button id="dndCtResetBtn" type="button" class="linkBtn">ล้างค่าทั้งหมด</button>
+      <button id="dndCtBackBtn" type="button" class="linkBtn">← เลือกธีมอื่น</button>
+      <button id="dndCtCloseBtn" type="button" class="linkBtn">ปิด</button>
+    </div>
   </div>
 </div>
 

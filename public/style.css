@@ -1,6 +1,6 @@
   * { box-sizing: border-box; }
   html, body {
-    margin: 0; padding: 0; min-height: 100%;
+    margin: 0; padding: 0; min-height: 100%; width: 100%;
     background: #0d1117;
     font-family: 'Trebuchet MS', 'Tahoma', sans-serif;
     color: #eee;
@@ -240,36 +240,36 @@
   }
   .dndDiceToast {
     position: relative;
-    background: linear-gradient(180deg, #1c2230, #12151c); border: 1px solid #3a4356;
+    background: linear-gradient(180deg, #20221e, #16140f); border: 1px solid #3a3a34;
     border-radius: 12px; padding: 10px 26px 10px 18px; box-shadow: 0 6px 20px rgba(0,0,0,0.55);
-    color: #e8ecf3; font-size: 13px; text-align: center; min-width: 230px;
+    color: #eae6da; font-size: 13px; text-align: center; min-width: 230px;
     animation: dndToastIn 0.22s ease;
     pointer-events: auto;
   }
   .dndDiceCloseBtn {
     position: absolute; top: 4px; right: 6px; width: 18px; height: 18px; line-height: 16px;
-    border-radius: 50%; border: 1px solid #4a5570; background: #232b3a; color: #aab2c5;
+    border-radius: 50%; border: 1px solid #3a3a34; background: #20221e; color: #9c9a8e;
     font-size: 12px; cursor: pointer; padding: 0; text-align: center;
   }
-  .dndDiceCloseBtn:hover { background: #3a4356; color: #fff; }
+  .dndDiceCloseBtn:hover { background: #3a3a34; color: #fff; }
   .dndDiceResultTag { font-weight: bold; margin-top: 2px; font-size: 12px; }
-  .dndDiceResultTag.dndResultHit { color: #7ee787; }
-  .dndDiceResultTag.dndResultCrit { color: #ffd76a; }
-  .dndDiceResultTag.dndResultMiss { color: #ff9a9a; }
+  .dndDiceResultTag.dndResultHit { color: #6fb84f; }
+  .dndDiceResultTag.dndResultCrit { color: #c9a24a; }
+  .dndDiceResultTag.dndResultMiss { color: #e0897a; }
   @keyframes dndToastIn {
     0% { opacity: 0; transform: translateY(-14px) scale(0.9); }
     100% { opacity: 1; transform: translateY(0) scale(1); }
   }
   @keyframes dndToastPop {
-    0% { transform: scale(1.05); box-shadow: 0 0 0 2px #ffd76a inset, 0 6px 20px rgba(0,0,0,0.55); }
+    0% { transform: scale(1.05); box-shadow: 0 0 0 2px #c9a24a inset, 0 6px 20px rgba(0,0,0,0.55); }
     100% { transform: scale(1); box-shadow: 0 6px 20px rgba(0,0,0,0.55); }
   }
-  .dndDiceHead { font-weight: bold; color: #ffd76a; margin-bottom: 4px; }
+  .dndDiceHead { font-weight: bold; color: #c9a24a; margin-bottom: 4px; }
   .dndDiceRow { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4px; }
   .dndDiceFace {
     display: inline-flex; align-items: center; justify-content: center;
-    min-width: 34px; height: 30px; padding: 0 6px; border-radius: 8px; background: #232b3a;
-    border: 1px solid #4a5570; font-weight: bold; font-size: 14px; color: #fff;
+    min-width: 34px; height: 30px; padding: 0 6px; border-radius: 8px; background: #20221e;
+    border: 1px solid #3a3a34; font-weight: bold; font-size: 14px; color: #fff;
   }
   .dndDiceFace.spinning { animation: dndDiceSpin 0.09s linear infinite; }
   @keyframes dndDiceSpin {
@@ -277,19 +277,26 @@
     50% { transform: rotate(14deg) scale(1.1); }
     100% { transform: rotate(-10deg) scale(1); }
   }
-  .dndDiceFace.landed { animation: dndDiceLand 0.3s ease; border-color: #ffd76a; }
+  .dndDiceFace.landed { animation: dndDiceLand 0.3s ease; border-color: #c9a24a; }
   @keyframes dndDiceLand {
     0% { transform: scale(1.4); }
     100% { transform: scale(1); }
   }
-  .dndDiceFace.dndDamageFace { background: #3a1d1d; border-color: #ff8080; color: #ff9a9a; }
+  .dndDiceFace.dndDamageFace { background: #2a1512; border-color: #d9695a; color: #e0897a; }
+
+  /* ---- แอนิเมชันลูกเต๋าในหน้าต่าง "ทอยลูกเต๋า" เอง (เห็นเฉพาะตอนกำลังทอย) ---- */
+  .dndDiceRollAnimArea { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; min-height: 0; margin: 4px 0; transition: min-height 0.15s ease, opacity 0.35s ease; }
+  .dndDiceRollAnimArea:empty { margin: 0; }
+  .dndDiceRollAnimArea.dndDiceRollAnimFadeOut { opacity: 0; }
+  .dndDiceRollAnimArea .dndDiceFace { min-width: 40px; height: 36px; font-size: 16px; }
+  .dndDiceRollAnimArea .dndDiceSumTag { font-weight: bold; color: #c9a24a; font-size: 13px; margin-top: 2px; width: 100%; text-align: center; animation: dndToastIn 0.2s ease; }
 
   /* ---- แอนิเมชันโจมตีบนแผนที่: กระสุน/เส้นแสงพุ่งจากผู้โจมตีไปเป้าหมาย + เอฟเฟกต์กระทบ ---- */
   #dndMapFxLayer { position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 15; }
   .dndAtkProjectile {
     position: absolute; width: 12px; height: 12px; border-radius: 50%;
-    background: radial-gradient(circle, #fff 0%, #ffd76a 45%, rgba(255,215,106,0) 75%);
-    box-shadow: 0 0 10px 3px rgba(255,215,106,0.8);
+    background: radial-gradient(circle, #fff 0%, #c9a24a 45%, rgba(201,162,74,0) 75%);
+    box-shadow: 0 0 10px 3px rgba(201,162,74,0.8);
     transform: translate(-50%, -50%); opacity: 0;
   }
   .dndAtkProjectile.dndFxFly { animation: dndFxFly 0.38s ease-out forwards; }
@@ -300,33 +307,57 @@
   }
   .dndAtkBurst {
     position: absolute; width: 40px; height: 40px; border-radius: 50%;
-    border: 3px solid #ffd76a; transform: translate(-50%, -50%) scale(0.3);
+    border: 3px solid #c9a24a; transform: translate(-50%, -50%) scale(0.3);
     opacity: 0; pointer-events: none;
   }
   .dndAtkBurst.dndFxBurst { animation: dndFxBurst 0.4s ease-out forwards; }
-  .dndAtkBurst.dndFxBurstMiss { border-color: #9aa4b2; }
-  .dndAtkBurst.dndFxBurstCrit { border-color: #ffd76a; box-shadow: 0 0 16px 4px rgba(255,215,106,0.7); }
+  .dndAtkBurst.dndFxBurstMiss { border-color: #9c9a8e; }
+  .dndAtkBurst.dndFxBurstCrit { border-color: #c9a24a; box-shadow: 0 0 16px 4px rgba(201,162,74,0.7); }
   @keyframes dndFxBurst {
     0% { opacity: 0.9; transform: translate(-50%, -50%) scale(0.3); }
     100% { opacity: 0; transform: translate(-50%, -50%) scale(1.6); }
   }
   .dndAtkFloatNum {
     position: absolute; transform: translate(-50%, -50%); font-weight: bold; font-size: 15px;
-    color: #ff8080; text-shadow: 0 1px 3px #000, 0 0 6px rgba(0,0,0,0.6); white-space: nowrap;
+    color: #d9695a; text-shadow: 0 1px 3px #000, 0 0 6px rgba(0,0,0,0.6); white-space: nowrap;
     opacity: 0; pointer-events: none;
   }
   .dndAtkFloatNum.dndFxFloat { animation: dndFxFloat 0.9s ease-out forwards; }
-  .dndAtkFloatNum.dndFxFloatCrit { color: #ffd76a; font-size: 19px; }
-  .dndAtkFloatNum.dndFxFloatMiss { color: #cdd6e0; font-size: 13px; }
-  .dndAtkFloatNum.dndFxFloatHeal { color: #7ee787; }
-  .dndAtkFloatNum.dndFxFloatAoe { font-size: 12px; color: #ffb96f; }
+  .dndAtkFloatNum.dndFxFloatCrit { color: #c9a24a; font-size: 19px; }
+  .dndAtkFloatNum.dndFxFloatMiss { color: #b0ad9e; font-size: 13px; }
+  .dndAtkFloatNum.dndFxFloatHeal { color: #6fb84f; }
+  .dndAtkFloatNum.dndFxFloatAoe { font-size: 12px; color: #d4914a; }
   @keyframes dndFxFloat {
     0% { opacity: 0; transform: translate(-50%, -40%); }
     15% { opacity: 1; transform: translate(-50%, -70%); }
     100% { opacity: 0; transform: translate(-50%, -140%); }
   }
+
+  /* ---- โจมตีปกติ: เอฟเฟกต์ฟันดาบสีเงิน/ขาว แยกจากลูกแสงเวทมนตร์ของสกิล + แรงกระแทกและจอสั่นตอนโดนให้รู้สึกหนักหน่วงขึ้น ---- */
+  .dndAtkSlash {
+    position: absolute; width: 58px; height: 6px; border-radius: 999px;
+    background: linear-gradient(90deg, rgba(234,230,218,0) 0%, #eae6da 40%, #ffffff 55%, rgba(234,230,218,0) 100%);
+    box-shadow: 0 0 10px 3px rgba(234,230,218,0.85);
+    transform: translate(-50%, -50%) rotate(-35deg) scale(0.35); opacity: 0; pointer-events: none;
+  }
+  .dndAtkSlash.dndFxSlash { animation: dndFxSlash 0.3s ease-out forwards; }
+  @keyframes dndFxSlash {
+    0% { opacity: 0; transform: translate(-50%, -50%) rotate(-52deg) scale(0.45); }
+    35% { opacity: 1; transform: translate(-50%, -50%) rotate(-35deg) scale(1.05); }
+    100% { opacity: 0; transform: translate(-50%, -50%) rotate(-18deg) scale(1.3); }
+  }
+  .dndAtkBurst.dndFxBurstNormal { border-color: #eae6da; width: 54px; height: 54px; box-shadow: 0 0 16px 4px rgba(234,230,218,0.55); }
+  #dndMapCanvas.dndFxMapShake { animation: dndFxMapShake 0.26s ease; }
+  @keyframes dndFxMapShake {
+    0% { transform: translate(0, 0); }
+    20% { transform: translate(-5px, 2px); }
+    40% { transform: translate(4px, -3px); }
+    60% { transform: translate(-3px, 2px); }
+    80% { transform: translate(2px, -1px); }
+    100% { transform: translate(0, 0); }
+  }
   .dndAtkAoeRing {
-    position: absolute; border-radius: 50%; border: 3px solid #ffb96f;
+    position: absolute; border-radius: 50%; border: 3px solid #d4914a;
     transform: translate(-50%, -50%) scale(0.2); opacity: 0; pointer-events: none;
   }
   .dndAtkAoeRing.dndFxAoeRing { animation: dndFxAoeRing 0.55s ease-out forwards; }
@@ -363,7 +394,7 @@
   .dndToken.dndFxHeal { animation: dndFxHealGlow 0.5s ease; }
   @keyframes dndFxHealGlow {
     0% { box-shadow: 0 2px 6px rgba(0,0,0,0.55); }
-    40% { box-shadow: 0 0 0 6px rgba(126,231,135,0.65), 0 2px 6px rgba(0,0,0,0.55); }
+    40% { box-shadow: 0 0 0 6px rgba(111,184,79,0.65), 0 2px 6px rgba(0,0,0,0.55); }
     100% { box-shadow: 0 2px 6px rgba(0,0,0,0.55); }
   }
   .dndToken.dndFxMiss { animation: dndFxMissShake 0.35s ease; }
@@ -388,16 +419,23 @@
   }
   #newGameBtn:hover { filter: brightness(1.1); }
 
+  #dndThemeToggleBtn {
+    position: fixed; top: 10px; right: 10px; z-index: 300;
+    padding: 7px 12px; font-size: 12px; font-weight: bold; cursor: pointer;
+    background: #1c1442; color: #fdf3e2; border: 2px solid #fdf3e2; border-radius: 20px;
+  }
+  #dndThemeToggleBtn:hover { background: #2d2154; }
+
   /* ---- D&D room ---- */
   #dndJoinScreen { display: none; }
   #dndErrorToast {
     max-width: 640px; margin: 0 auto 10px auto; padding: 10px 14px; border-radius: 8px;
-    background: #3a1414; border: 1px solid #ff5c5c; color: #ff9a9a; font-size: 13px; text-align: center;
+    background: #2a1512; border: 1px solid #c94a3d; color: #e0897a; font-size: 13px; text-align: center;
   }
-  #dndScreen { display: none; width: 100%; max-width: 2000px; }
-  #dndLayout { display: grid; grid-template-columns: 300px minmax(320px, 1fr) 300px; gap: 14px; align-items: flex-start; justify-content: center; }
+  #dndScreen { display: none; width: 100%; max-width: none; }
+  #dndLayout { display: grid; grid-template-columns: 320px minmax(320px, 1fr) 320px; gap: 14px; align-items: flex-start; justify-content: stretch; width: 100%; }
   #dndLeftCol { width: 100%; max-width: 100%; display: flex; flex-direction: column; gap: 12px; }
-  #dndMidCol { width: 100%; max-width: 1300px; }
+  #dndMidCol { width: 100%; max-width: none; }
   #dndRightCol { width: 100%; max-width: 100%; }
   @media (max-width: 720px) {
     /* บนจอแคบ: ให้แชท/บันทึกอยู่ถัดจากปาร์ตี้ทันที ไม่ต้องเลื่อนผ่านฟอร์มสร้างตัวละคร/ลูกเต๋าก่อนถึงแชท */
@@ -410,106 +448,211 @@
   #dndParty { width: 100%; }
   #dndPartyList { display: flex; flex-direction: column; gap: 8px; }
   .dndPCard {
-    background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; font-size: 13px;
+    background: #181a17; border: 1px solid #3a3a34; border-radius: 8px; padding: 12px 14px; font-size: 13px;
   }
-  .dndPCard.me { border-color: #6fd3ff; }
-  .dndPCard.dm { border-color: #ffd76b; }
+  .dndPCard.me { border-color: #c94a3d; }
+  .dndPCard.dm { border-color: #c9a24a; }
   .dndPCardBody { display: flex; gap: 10px; align-items: flex-start; }
   .dndPCardBodyMain { flex: 1; min-width: 0; }
-  .dndAvatarMini { flex-shrink: 0; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 2px; line-height: 0; }
-  .dndAvatarWrap { display: flex; justify-content: center; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px; margin-bottom: 10px; }
+  .dndAvatarMini { flex-shrink: 0; background: #20221e; border: 1px solid #3a3a34; border-radius: 6px; padding: 2px; line-height: 0; }
+  .dndAvatarWrap { display: flex; justify-content: center; background: #20221e; border: 1px solid #3a3a34; border-radius: 8px; padding: 8px; margin-bottom: 10px; position: relative; }
   .dndAvatarSvg { display: block; }
+
+  /* ---- อวาตาร์ขยับได้เบาๆ แบบ idle (ไม่เดิน แค่หายใจ/กระพริบตา/ผมสะบัด/แขนแกว่งนิดๆ) ---- */
+  .dndAvatarSvg .dndAvatarIdleBob { animation: dndAvIdleBob 3.6s ease-in-out infinite; }
+  .dndAvatarSvg .dndAvatarChest { transform-box: fill-box; transform-origin: 50% 100%; animation: dndAvBreathe 3.6s ease-in-out infinite; }
+  .dndAvatarSvg .dndAvatarHead { transform-box: fill-box; transform-origin: 50% 100%; animation: dndAvHeadTilt 5.2s ease-in-out infinite; }
+  .dndAvatarSvg .dndAvatarHair { transform-box: fill-box; transform-origin: 50% 0%; animation: dndAvHairSway 5.2s ease-in-out infinite; }
+  .dndAvatarSvg .dndAvatarEyes { transform-box: fill-box; transform-origin: 50% 50%; animation: dndAvBlink 4.4s ease-in-out infinite; }
+  .dndAvatarSvg .dndAvatarArmL { transform-box: fill-box; transform-origin: 50% 0%; animation: dndAvArmSway 3.6s ease-in-out infinite; }
+  .dndAvatarSvg .dndAvatarArmR { transform-box: fill-box; transform-origin: 50% 0%; animation: dndAvArmSway 3.6s ease-in-out infinite reverse; }
+  @media (prefers-reduced-motion: reduce) {
+    .dndAvatarSvg .dndAvatarIdleBob, .dndAvatarSvg .dndAvatarChest, .dndAvatarSvg .dndAvatarHead,
+    .dndAvatarSvg .dndAvatarHair, .dndAvatarSvg .dndAvatarEyes, .dndAvatarSvg .dndAvatarArmL,
+    .dndAvatarSvg .dndAvatarArmR { animation: none; }
+  }
+  @keyframes dndAvIdleBob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-1.6px); }
+  }
+  @keyframes dndAvBreathe {
+    0%, 100% { transform: scaleY(1); }
+    50% { transform: scaleY(1.025); }
+  }
+  @keyframes dndAvHeadTilt {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(1.8deg); }
+  }
+  @keyframes dndAvHairSway {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(-2.4deg); }
+  }
+  @keyframes dndAvArmSway {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(2.2deg); }
+  }
+  @keyframes dndAvBlink {
+    0%, 90%, 100% { transform: scaleY(1); }
+    94% { transform: scaleY(0.12); }
+    97% { transform: scaleY(1); }
+  }
+
+  /* ---- ปุ่มวนเปลี่ยนท่าทางอวาตาร์ ---- */
+  .dndAvatarPoseBtn {
+    position: absolute; right: 6px; bottom: 6px; z-index: 2;
+    width: 26px; height: 26px; border-radius: 50%; border: 1px solid #3a3a34; background: #16140fcc;
+    color: #c9a24a; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: transform 0.15s ease;
+  }
+  .dndAvatarPoseBtn:hover { border-color: #c9a24a; transform: scale(1.1); }
+  .dndAvatarPoseBtn:active { transform: scale(0.92) rotate(90deg); }
+
+  /* ---- ท่าทางอวาตาร์แบบต่างๆ วนเปลี่ยนได้ด้วยปุ่ม 🔄 (ท่า 0 = ท่ายืนปกติ ใช้ค่าเริ่มต้นด้านบน) ---- */
+  /* ท่า 1: ชูอาวุธเหนือหัว */
+  .dndAvatarSvg.dndPose1 .dndAvatarArmR { animation: dndAvArmSwayPose1R 3.6s ease-in-out infinite; }
+  .dndAvatarSvg.dndPose1 .dndAvatarArmL { animation: dndAvArmSwayPose1L 3.6s ease-in-out infinite; }
+  .dndAvatarSvg.dndPose1 .dndAvatarHead { animation: dndAvHeadTiltPose1 5.2s ease-in-out infinite; }
+  @keyframes dndAvArmSwayPose1R { 0%, 100% { transform: rotate(-100deg); } 50% { transform: rotate(-108deg); } }
+  @keyframes dndAvArmSwayPose1L { 0%, 100% { transform: rotate(12deg); } 50% { transform: rotate(6deg); } }
+  @keyframes dndAvHeadTiltPose1 { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(0deg); } }
+
+  /* ท่า 2: กอดอก (สงบนิ่ง มั่นใจ) */
+  .dndAvatarSvg.dndPose2 .dndAvatarArmR { animation: dndAvArmSwayPose2R 4.2s ease-in-out infinite; }
+  .dndAvatarSvg.dndPose2 .dndAvatarArmL { animation: dndAvArmSwayPose2L 4.2s ease-in-out infinite; }
+  .dndAvatarSvg.dndPose2 .dndAvatarHead { animation: dndAvHeadTiltPose2 5.2s ease-in-out infinite; }
+  @keyframes dndAvArmSwayPose2R { 0%, 100% { transform: rotate(-72deg); } 50% { transform: rotate(-68deg); } }
+  @keyframes dndAvArmSwayPose2L { 0%, 100% { transform: rotate(72deg); } 50% { transform: rotate(68deg); } }
+  @keyframes dndAvHeadTiltPose2 { 0%, 100% { transform: rotate(2deg); } 50% { transform: rotate(-1deg); } }
+
+  /* ท่า 3: โบกมือทักทาย */
+  .dndAvatarSvg.dndPose3 .dndAvatarArmR { animation: dndAvArmSwayPose3R 1.1s ease-in-out infinite; }
+  .dndAvatarSvg.dndPose3 .dndAvatarArmL { animation: dndAvArmSway 3.6s ease-in-out infinite; }
+  .dndAvatarSvg.dndPose3 .dndAvatarHead { animation: dndAvHeadTiltPose3 3.4s ease-in-out infinite; }
+  @keyframes dndAvArmSwayPose3R { 0%, 100% { transform: rotate(-130deg); } 50% { transform: rotate(-150deg); } }
+  @keyframes dndAvHeadTiltPose3 { 0%, 100% { transform: rotate(-2deg); } 50% { transform: rotate(3deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .dndAvatarSvg.dndPose1 .dndAvatarArmR, .dndAvatarSvg.dndPose1 .dndAvatarArmL, .dndAvatarSvg.dndPose1 .dndAvatarHead,
+    .dndAvatarSvg.dndPose2 .dndAvatarArmR, .dndAvatarSvg.dndPose2 .dndAvatarArmL, .dndAvatarSvg.dndPose2 .dndAvatarHead,
+    .dndAvatarSvg.dndPose3 .dndAvatarArmR, .dndAvatarSvg.dndPose3 .dndAvatarArmL, .dndAvatarSvg.dndPose3 .dndAvatarHead { animation: none; }
+  }
   .dndPCardTop { display: flex; justify-content: space-between; align-items: center; }
   .dndPCardName { font-weight: bold; }
   .dndPCardTag {
-    font-size: 10px; color: #0a0a12; background: #ffd76b; padding: 2px 6px; border-radius: 4px;
+    font-size: 10px; color: #16140f; background: #c9a24a; padding: 2px 6px; border-radius: 4px;
     font-weight: bold; margin-left: 6px;
   }
-  .dndPCardMeta { color: #9aa4b2; font-size: 11px; margin: 5px 0 8px 0; line-height: 1.5; }
+  .dndPCardMeta { color: #9c9a8e; font-size: 11px; margin: 5px 0 8px 0; line-height: 1.5; }
   .dndHpRow { display: flex; align-items: center; gap: 6px; }
-  .dndHpBarWrap { flex: 1; height: 8px; background: #0d1117; border-radius: 4px; overflow: hidden; }
-  .dndHpBar { height: 100%; background: #9fdc9f; transition: width 0.2s; }
-  .dndHpBar.low { background: #ff8080; }
-  .dndHpText { font-size: 12px; color: #9fdc9f; white-space: nowrap; }
+  .dndHpBarWrap { flex: 1; height: 8px; background: #20221e; border-radius: 4px; overflow: hidden; }
+  .dndHpBar { height: 100%; background: #5a9c3f; transition: width 0.2s; }
+  .dndHpBar.low { background: #d9695a; }
+  .dndHpText { font-size: 12px; color: #5a9c3f; white-space: nowrap; }
   .dndSpRow { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
-  .dndSpBarWrap { flex: 1; height: 8px; background: #0d1117; border-radius: 4px; overflow: hidden; }
-  .dndSpBar { height: 100%; background: #6badf5; transition: width 0.2s; }
-  .dndSpText { font-size: 12px; color: #6badf5; white-space: nowrap; }
+  .dndSpBarWrap { flex: 1; height: 8px; background: #20221e; border-radius: 4px; overflow: hidden; }
+  .dndSpBar { height: 100%; background: #5f8fae; transition: width 0.2s; }
+  .dndSpText { font-size: 12px; color: #5f8fae; white-space: nowrap; }
   .dndHpEdit { display: flex; gap: 4px; margin-top: 6px; }
   .dndHpEdit input {
-    width: 64px; padding: 4px 6px; border-radius: 5px; border: 1px solid #444; background: #0d1117; color: #eee;
+    width: 64px; padding: 4px 6px; border-radius: 5px; border: 1px solid #3a3a34; background: #20221e; color: #eae6da;
   }
   .dndHpEdit button {
-    padding: 4px 10px; border: none; border-radius: 5px; background: #6fd3ff; color: #0a0a12;
+    padding: 4px 10px; border: none; border-radius: 5px; background: #c94a3d; color: #16140f;
     font-weight: bold; cursor: pointer; font-size: 12px;
   }
-  #dndDmStatusBox { width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-  #dndDmStatusBox h3 { margin: 0 0 8px 0; color: #ffd76b; font-size: 14px; }
-  #dndTurnBox { width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-  #dndTurnBox h3 { margin: 0 0 8px 0; color: #ffd76b; font-size: 14px; }
+  #dndDmStatusBox { width: 100%; box-sizing: border-box; background: #181a17; border: 1px solid #3a3a34; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  #dndDmStatusBox h3 { margin: 0 0 8px 0; color: #c9a24a; font-size: 14px; }
+  #dndTurnBox { width: 100%; box-sizing: border-box; background: #181a17; border: 1px solid #3a3a34; border-radius: 8px; padding: 12px; margin-bottom: 12px; position: relative; }
+  #dndTurnBox.dndTurnStickerDragOver { outline: 2px dashed #6fd3ff; outline-offset: -6px; }
+  #dndCursorDropZone.dndCursorDragOver { border-color: #6fd3ff !important; background: rgba(111,211,255,0.08); color: #cfeeff !important; }
+  #dndCutsceneOverlay {
+    display: none; position: fixed; inset: 0; background: #000; z-index: 500;
+    align-items: center; justify-content: center;
+  }
+  #dndCutsceneMediaWrap { display: flex; align-items: center; justify-content: center; max-width: 96vw; max-height: 92vh; }
+  #dndCutsceneMediaWrap img, #dndCutsceneMediaWrap video { max-width: 96vw; max-height: 92vh; object-fit: contain; }
+  #dndCutsceneCloseBtn {
+    position: fixed; top: 16px; right: 16px; z-index: 501; padding: 9px 16px; font-size: 13px;
+    border: none; border-radius: 6px; background: #c94a3d; color: #fff; font-weight: bold; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  }
+  #dndTurnStickerLayer { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+  .dndTurnSticker {
+    position: absolute; width: 56px; height: 56px; pointer-events: auto;
+    cursor: grab; touch-action: none; user-select: none; z-index: 6;
+    filter: drop-shadow(0 2px 5px rgba(0,0,0,0.55));
+  }
+  .dndTurnSticker.dragging { cursor: grabbing; opacity: 0.85; }
+  .dndTurnSticker img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; display: block; }
+  .dndTurnStickerRemoveBtn {
+    position: absolute; top: -8px; right: -8px; width: 18px; height: 18px; border-radius: 50%;
+    background: #d9463a; color: #fff; border: none; font-size: 11px; line-height: 18px;
+    cursor: pointer; padding: 0; display: none; pointer-events: auto;
+  }
+  .dndTurnSticker:hover .dndTurnStickerRemoveBtn { display: block; }
+  #dndTurnBox h3 { margin: 0 0 8px 0; color: #c9a24a; font-size: 14px; }
   .dndTurnRow {
     display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin-bottom: 6px;
-    background: #0d1117; border: 1px solid #2c3341; border-radius: 6px; font-size: 13px;
+    background: #20221e; border: 1px solid #2c2e29; border-radius: 6px; font-size: 13px;
   }
-  .dndTurnRow.current { border-color: #ffd76b; box-shadow: 0 0 0 1px #ffd76b inset; }
+  .dndTurnRow.current { border-color: #c9a24a; box-shadow: 0 0 0 1px #c9a24a inset; }
   .dndTurnRowName { flex: 1; }
   .dndTurnRow button { padding: 3px 8px; font-size: 12px; }
   #dndTurnBtnRow { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   #dndTurnBtnRow button { flex: 1; padding: 8px; font-size: 12px; }
-  .dndPCard.myTurn { border-color: #ffd76b; box-shadow: 0 0 0 2px #ffd76b inset; }
-  .dndPCard.dead { border-color: #6b2b2b; opacity: 0.65; filter: grayscale(0.6); }
+  .dndPCard.myTurn { border-color: #c9a24a; box-shadow: 0 0 0 2px #c9a24a inset; }
+  .dndPCard.dead { border-color: #5a1f1a; opacity: 0.65; filter: grayscale(0.6); }
   .dndPCard.permaDead { border-color: #1a1a1a; opacity: 0.55; filter: grayscale(1); }
   .dndDeadBadge {
     display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 10px;
-    background: #3a1414; color: #ff8080; font-size: 11px; font-weight: bold;
+    background: #2a1512; color: #d9695a; font-size: 11px; font-weight: bold;
   }
   .dndPermaDeadBadge { background: #000; color: #bbb; }
   .dndDeadNotice {
-    margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: #2a1212; border: 1px solid #6b2b2b;
-    color: #ff9d9d; font-size: 12px; line-height: 1.5;
+    margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: #2a1512; border: 1px solid #5a1f1a;
+    color: #e0897a; font-size: 12px; line-height: 1.5;
   }
   .dndPermaDeadNotice { background: #0d0d0d; border-color: #1a1a1a; color: #c9c9c9; }
   .dndMyTurnBadge {
     display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 10px;
-    background: #ffd76b; color: #0a0a12; font-size: 11px; font-weight: bold;
+    background: #c9a24a; color: #16140f; font-size: 11px; font-weight: bold;
   }
   .dndPCardSkills { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
   .dndPCardStats { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
-  .dndPCardStatChip { background: #171b22; border: 1px solid #2a3140; color: #c7ccd6; border-radius: 8px; padding: 2px 7px; font-size: 10px; cursor: default; }
-  .dndSkillChip { background: #221d10; border: 1px solid #4a3d1a; color: #ffd76b; border-radius: 10px; padding: 2px 8px; font-size: 10px; }
+  .dndPCardStatChip { background: #181a17; border: 1px solid #3a3a34; color: #9c9a8e; border-radius: 8px; padding: 2px 7px; font-size: 10px; cursor: default; }
+  .dndSkillChip { background: #2e2411; border: 1px solid #5a4a24; color: #c9a24a; border-radius: 10px; padding: 2px 8px; font-size: 10px; }
   .dndEditableSkillChip { cursor: pointer; }
-  .dndEditableSkillChip:hover { border-color: #ffd76b; }
-  .dndSkillCardRules { color: #6fd3ff; font-size: 11px; margin: 0 0 8px 0; }
+  .dndEditableSkillChip:hover { border-color: #c9a24a; }
+  .dndSkillCardRules { color: #c94a3d; font-size: 11px; margin: 0 0 8px 0; }
   #dndSheetBox, #dndDiceBox, #dndLogBox, #dndSkillBox, #dndAttackBox, #dndDmSkillsOverviewBox {
-    width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    width: 100%; box-sizing: border-box; background: #181a17; border: 1px solid #3a3a34; border-radius: 8px;
     padding: 12px; margin-bottom: 12px;
   }
-  #dndSheetBox h3, #dndDiceBox h3, #dndLogBox h3, #dndSkillBox h3, #dndAttackBox h3, #dndParty h3, #dndDmSkillsOverviewBox h3 { margin: 0 0 8px 0; color: #ffd76b; font-size: 14px; }
-  .dndDmSkillsPlayerRow { padding: 8px 0; border-top: 1px solid #23283033; }
+  #dndSheetBox h3, #dndDiceBox h3, #dndLogBox h3, #dndSkillBox h3, #dndAttackBox h3, #dndParty h3, #dndDmSkillsOverviewBox h3 { margin: 0 0 8px 0; color: #c9a24a; font-size: 14px; }
+  .dndDmSkillsPlayerRow { padding: 8px 0; border-top: 1px solid #2c2e2933; }
   .dndDmSkillsPlayerRow:first-child { border-top: none; padding-top: 0; }
-  .dndDmSkillsPlayerName { font-size: 12px; font-weight: bold; color: #eee; margin-bottom: 5px; }
+  .dndDmSkillsPlayerName { font-size: 12px; font-weight: bold; color: #eae6da; margin-bottom: 5px; }
   .dndDmSkillsChips { display: flex; flex-wrap: wrap; gap: 5px; }
   .dndSkillChipLocked { opacity: 0.45; }
   #dndToolTabs { display: flex; gap: 6px; margin-bottom: 10px; }
   .dndToolTabBtn {
-    flex: 1; padding: 8px; border: 1px solid #3a4150; border-radius: 6px; background: #0d1117; color: #9aa4b2;
+    flex: 1; padding: 8px; border: 1px solid #3a3a34; border-radius: 6px; background: #20221e; color: #9c9a8e;
     cursor: pointer; font-size: 12px; font-weight: bold;
   }
-  .dndToolTabBtn.active { background: #6fd3ff; color: #0a0a12; border-color: #6fd3ff; }
-  .dndAttackInfoBox { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:8px; margin-bottom:8px; font-size:12px; line-height:1.6; }
+  .dndToolTabBtn.active { background: #c94a3d; color: #16140f; border-color: #c94a3d; }
+  .dndAttackInfoBox { background:#20221e; border:1px solid #3a3a34; border-radius:6px; padding:8px; margin-bottom:8px; font-size:12px; line-height:1.6; }
   .dndStatTip { position:relative; cursor:help; }
-  .dndStatTip::after { content:attr(data-tip); position:absolute; left:50%; bottom:calc(100% + 8px); transform:translateX(-50%); width:220px; padding:8px; background:#0d1117; border:1px solid #6fd3ff; border-radius:6px; color:#eee; font-size:11px; line-height:1.45; opacity:0; pointer-events:none; transition:opacity .12s; z-index:20; white-space:normal; }
+  .dndStatTip::after { content:attr(data-tip); position:absolute; left:50%; bottom:calc(100% + 8px); transform:translateX(-50%); width:220px; padding:8px; background:#20221e; border:1px solid #c94a3d; border-radius:6px; color:#eae6da; font-size:11px; line-height:1.45; opacity:0; pointer-events:none; transition:opacity .12s; z-index:20; white-space:normal; }
   .dndStatTip:hover::after { opacity:1; }
-  #dndMapBox { width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-  #dndMapBox h3 { margin: 0 0 8px 0; color: #ffd76b; font-size: 14px; }
+  #dndMapBox { width: 100%; box-sizing: border-box; background: #181a17; border: 1px solid #3a3a34; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  #dndMapBox h3 { margin: 0 0 8px 0; color: #c9a24a; font-size: 14px; }
   #dndMapCanvasWrap { width: var(--dndMapSizePx, 1100px); max-width: 96vw; margin: 0 auto; position: relative; }
   #dndMapSizeRow {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 8px 0;
-    font-size: 12px; color: #9aa4b2;
+    font-size: 12px; color: #9c9a8e;
   }
-  #dndMapSizeRow label { color: #9aa4b2; }
-  #dndMapSizeRow input[type="range"] { flex: 1; min-width: 120px; max-width: 260px; accent-color: #6fd3ff; }
-  #dndMapSizeValue { min-width: 52px; color: #ffd76b; font-weight: bold; }
+  #dndMapSizeRow label { color: #9c9a8e; }
+  #dndMapSizeRow input[type="range"] { flex: 1; min-width: 120px; max-width: 260px; accent-color: #c94a3d; }
+  #dndMapSizeValue { min-width: 52px; color: #c9a24a; font-weight: bold; }
   #dndFogOverlay {
     position: absolute; inset: 0; pointer-events: none; z-index: 15;
     border-radius: 8px; overflow: hidden;
@@ -517,22 +660,22 @@
   #dndVisionDmRow { max-width: 1300px; margin: 8px auto 0 auto; }
   #dndWallDmRow { max-width: 1300px; margin: 8px auto 0 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   #dndWallModeToggleBtn {
-    padding: 5px 10px; border-radius: 6px; border: 1px solid #3a4150; background: #0d1117; color: #ffb347;
+    padding: 5px 10px; border-radius: 6px; border: 1px solid #3a3a34; background: #20221e; color: #d4914a;
     font-size: 12px; cursor: pointer; font-weight: bold;
   }
-  #dndWallModeToggleBtn.active { background: #ffb347; color: #0a0a12; border-color: #ffb347; }
+  #dndWallModeToggleBtn.active { background: #d4914a; color: #16140f; border-color: #d4914a; }
   #dndWallLayer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  .dndWallLine { stroke: #ffb347; stroke-width: 1.6; stroke-linecap: round; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.85)); }
+  .dndWallLine { stroke: #d4914a; stroke-width: 1.6; stroke-linecap: round; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.85)); }
   .dndWallHit { stroke: transparent; stroke-width: 6; cursor: pointer; pointer-events: stroke; }
-  .dndWallLinePreview { stroke: #ffd76b; stroke-width: 1.6; stroke-dasharray: 2.4 1.6; stroke-linecap: round; pointer-events: none; }
+  .dndWallLinePreview { stroke: #c9a24a; stroke-width: 1.6; stroke-dasharray: 2.4 1.6; stroke-linecap: round; pointer-events: none; }
   #dndMapCanvas {
     position: relative; width: 100%; aspect-ratio: 4 / 3;
-    background-color: #0d1117;
+    background-color: #20221e;
     background-image:
       linear-gradient(to right, rgba(255,255,255,0.07) 1px, transparent 1px),
       linear-gradient(to bottom, rgba(255,255,255,0.07) 1px, transparent 1px);
     background-size: 10% 10%;
-    border: 1px solid #3a4150; border-radius: 8px; overflow: hidden; touch-action: none;
+    border: 1px solid #3a3a34; border-radius: 8px; overflow: hidden; touch-action: none;
   }
   .dndToken {
     /* ขนาด token ปกติ = 1 ช่องตารางแผนที่พอดีเสมอ อ้างอิงจำนวนช่อง (--dndGridCols) ที่ตั้งไว้บน #dndMapCanvas
@@ -541,422 +684,489 @@
     position: absolute; width: calc(100% / var(--dndGridCols, 10)); height: calc(100% / var(--dndGridCols, 10) * 4 / 3);
     transform: translate(-50%, -50%);
     border-radius: 50%; display: flex; align-items: center; justify-content: center;
-    font-size: 11px; font-weight: bold; color: #0a0a12; text-align: center; line-height: 1.1;
+    font-size: 11px; font-weight: bold; color: #16140f; text-align: center; line-height: 1.1;
     border: 2px solid rgba(255,255,255,0.65); box-shadow: 0 2px 6px rgba(0,0,0,0.55);
     background-size: cover; background-position: center; cursor: default; user-select: none;
   }
   .dndToken.dndTokenMine, .dndToken.dndTokenDm { cursor: grab; }
   /* สัตว์อัญเชิญของผู้เล่น: ขอบเส้นประสีฟ้าอ่อน แยกจาก NPC ของ DM ที่เป็นเส้นทึบ ให้เห็นชัดว่าเป็นของใครตั้งแต่แรกเห็นบนแผนที่ */
-  .dndToken.dndTokenSummon { border-style: dashed; border-color: #7ee8fa; }
-  .dndToken.dndTokenSummon .dndTokenLabel { color: #7ee8fa; }
-  .dndToken.dndTokenDragging { cursor: grabbing; z-index: 20; box-shadow: 0 0 0 3px #ffd76b; }
-  .dndToken.dndTokenDead { filter: grayscale(0.85); opacity: 0.7; border-color: #6b2b2b; cursor: default; }
+  .dndToken.dndTokenSummon { border-style: dashed; border-color: #5fb09f; }
+  .dndToken.dndTokenSummon .dndTokenLabel { color: #5fb09f; }
+  .dndToken.dndTokenDragging { cursor: grabbing; z-index: 20; box-shadow: 0 0 0 3px #c9a24a; }
+  .dndToken.dndTokenDead { filter: grayscale(0.85); opacity: 0.7; border-color: #5a1f1a; cursor: default; }
   .dndToken.dndTokenDead::after { content: "💀"; position: absolute; top: -8px; right: -6px; font-size: 14px; }
   .dndToken.dndTokenLarge {
     /* ตัวใหญ่ = กินพื้นที่ 2x2 ช่อง (เหมือนกติกา D&D จริงที่ครีเจอร์ไซส์ Large กินพื้นที่ 2 ช่อง) */
     width: calc(200% / var(--dndGridCols, 10)); height: calc(200% / var(--dndGridCols, 10) * 4 / 3);
-    font-size: 13px; border-width: 3px; border-color: #ffb96f; box-shadow: 0 3px 10px rgba(0,0,0,0.6), 0 0 0 2px rgba(255,185,111,0.35);
+    font-size: 13px; border-width: 3px; border-color: #d4914a; box-shadow: 0 3px 10px rgba(0,0,0,0.6), 0 0 0 2px rgba(255,185,111,0.35);
   }
   .dndToken.dndTokenHuge {
     /* ตัวใหญ่มาก = กินพื้นที่ 3x3 ช่อง */
     width: calc(300% / var(--dndGridCols, 10)); height: calc(300% / var(--dndGridCols, 10) * 4 / 3);
-    font-size: 15px; border-width: 4px; border-color: #ff6b6b; box-shadow: 0 4px 14px rgba(0,0,0,0.65), 0 0 0 3px rgba(255,107,107,0.4);
+    font-size: 15px; border-width: 4px; border-color: #c94a3d; box-shadow: 0 4px 14px rgba(0,0,0,0.65), 0 0 0 3px rgba(255,107,107,0.4);
   }
   .dndTokenLabel {
     position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 2px;
-    font-size: 10px; color: #cdd6e0; white-space: nowrap; text-shadow: 0 1px 2px #000; pointer-events: none;
+    font-size: 10px; color: #b0ad9e; white-space: nowrap; text-shadow: 0 1px 2px #000; pointer-events: none;
   }
-  #dndMapHint { font-size: 11px; color: #9aa4b2; margin: 8px 0; }
+  #dndMapHint { font-size: 11px; color: #9c9a8e; margin: 8px 0; }
   #dndMapTabsRow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
   .dndMapTab {
-    display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 6px; border: 1px solid #3a4150;
-    background: #0d1117; color: #9aa4b2; font-size: 12px; cursor: pointer; font-weight: bold;
+    display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 6px; border: 1px solid #3a3a34;
+    background: #20221e; color: #9c9a8e; font-size: 12px; cursor: pointer; font-weight: bold;
   }
-  .dndMapTab.active { background: #6fd3ff; color: #0a0a12; border-color: #6fd3ff; }
-  .dndMapTab .dndMapTabDel { color: #ff8080; margin-left: 2px; cursor: pointer; }
-  .dndMapTab.active .dndMapTabDel { color: #7a2020; }
+  .dndMapTab.active { background: #c94a3d; color: #16140f; border-color: #c94a3d; }
+  .dndMapTab .dndMapTabDel { color: #d9695a; margin-left: 2px; cursor: pointer; }
+  .dndMapTab.active .dndMapTabDel { color: #6b241d; }
   #dndMapAddBtn {
-    padding: 5px 10px; border-radius: 6px; border: 1px dashed #3a4150; background: transparent; color: #6fd3ff;
+    padding: 5px 10px; border-radius: 6px; border: 1px dashed #3a3a34; background: transparent; color: #c94a3d;
     font-size: 12px; cursor: pointer; font-weight: bold;
   }
-  #dndMapCurrentLabel { font-size: 12px; color: #ffd76b; font-weight: bold; margin-bottom: 6px; }
-  .dndNpcRow .dndNpcCopyBtn { background: #1c3d24; color: #9fdc9f; }
-  #dndMapMyTokenBox, #dndMapNpcAddBox { background: #0d1117; border: 1px solid #2c3341; border-radius: 8px; padding: 10px; margin-top: 10px; }
-  #dndMapMyTokenBox h4, #dndMapNpcAddBox h4 { margin: 0 0 8px 0; color: #ffd76b; font-size: 12px; }
+  #dndMapCurrentLabel { font-size: 12px; color: #c9a24a; font-weight: bold; margin-bottom: 6px; }
+  .dndNpcRow .dndNpcCopyBtn { background: #2e4720; color: #5a9c3f; }
+  #dndMapMyTokenBox, #dndMapNpcAddBox { background: #20221e; border: 1px solid #2c2e29; border-radius: 8px; padding: 10px; margin-top: 10px; }
+  #dndMapMyTokenBox h4, #dndMapNpcAddBox h4 { margin: 0 0 8px 0; color: #c9a24a; font-size: 12px; }
   .dndTokenColorRow { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
   .dndTokenColorSwatch {
     width: 22px; height: 22px; border-radius: 50%; cursor: pointer; border: 2px solid transparent;
   }
   .dndTokenColorSwatch.active { border-color: #fff; }
   .dndTokenImgRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
-  .dndTokenImgRow input[type=file] { font-size: 11px; color: #9aa4b2; max-width: 170px; }
+  .dndTokenImgRow input[type=file] { font-size: 11px; color: #9c9a8e; max-width: 170px; }
   #dndMapNpcList { margin-top: 10px; }
-  .dndNpcRow { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid #262c36; font-size: 12px; }
+  .dndNpcRow { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid #2c2e29; font-size: 12px; }
   .dndNpcRow .dndNpcSwatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; background-size: cover; background-position: center; }
   .dndNpcRow .dndNpcName { flex: 1; }
-  .dndNpcRow button { padding: 3px 8px; font-size: 11px; border: none; border-radius: 5px; background: #4a2020; color: #ffb0b0; cursor: pointer; margin-left: 4px; }
-  .dndNpcRow .dndNpcEditBtn { background: #1c2b3d; color: #6fd3ff; }
-  .dndNpcRow .dndNpcRollBtn { background: #3d2b1c; color: #ffb96f; }
+  .dndNpcRow button { padding: 3px 8px; font-size: 11px; border: none; border-radius: 5px; background: #3a1f1a; color: #e0897a; cursor: pointer; margin-left: 4px; }
+  .dndNpcRow .dndNpcEditBtn { background: #3a1f1c; color: #c94a3d; }
+  .dndNpcRow .dndNpcRollBtn { background: #4a3018; color: #d4914a; }
   .dndAppearanceBox { margin-top: 10px; }
-  .dndAppearanceBox label { display: block; font-size: 11px; color: #9aa4b2; margin: 8px 0 4px 0; }
+  .dndAppearanceBox label { display: block; font-size: 11px; color: #9c9a8e; margin: 8px 0 4px 0; }
   .dndApPickRow { display: flex; flex-wrap: wrap; gap: 6px; }
   .dndApPickBtn {
-    padding: 5px 9px; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #c9d1d9;
+    padding: 5px 9px; border-radius: 6px; border: 1px solid #3a3a34; background: #20221e; color: #b0ad9e;
     font-size: 11px; cursor: pointer;
   }
-  .dndApPickBtn.active { border-color: #ffd76b; background: #221d10; color: #ffd76b; }
-  .dndShopCard { background: #0d1117; border: 1px solid #2c3341; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+  .dndApPickBtn.active { border-color: #c9a24a; background: #2e2411; color: #c9a24a; }
+  .dndShopCard { background: #20221e; border: 1px solid #2c2e29; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
   .dndShopCardHead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .dndShopCardHead h4 { flex: 1; margin: 0; color: #ffd76b; font-size: 13px; }
+  .dndShopCardHead h4 { flex: 1; margin: 0; color: #c9a24a; font-size: 13px; }
   .dndShopCardHead button { padding: 3px 8px; font-size: 11px; border: none; border-radius: 5px; cursor: pointer; }
-  .dndShopDelBtn { background: #4a2020; color: #ffb0b0; }
-  .dndShopItemRow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #262c36; font-size: 12px; }
+  .dndShopDelBtn { background: #3a1f1a; color: #e0897a; }
+  .dndShopItemRow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #2c2e29; font-size: 12px; }
   .dndShopItemRow:last-child { border-bottom: none; }
   .dndShopItemInfo { flex: 1; }
   .dndShopItemName { font-weight: bold; }
-  .dndShopItemMeta { color: #9aa4b2; font-size: 11px; }
-  .dndShopItemDesc { color: #9aa4b2; font-size: 11px; margin-top: 2px; }
+  .dndShopItemMeta { color: #9c9a8e; font-size: 11px; }
+  .dndShopItemDesc { color: #9c9a8e; font-size: 11px; margin-top: 2px; }
   .dndLibrarySkillDetail { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 4px; }
-  .dndLibraryDetailBadge { display: inline-block; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 1px 6px; font-size: 10.5px; font-weight: bold; white-space: nowrap; color: #cdd6e0; }
-  .dndShopBuyBtn { background: #1c3d24; color: #9fdc9f; padding: 4px 10px; border: none; border-radius: 5px; font-size: 11px; cursor: pointer; }
-  .dndShopSellBtn { background: #3d2b1c; color: #ffb96f; padding: 4px 10px; border: none; border-radius: 5px; font-size: 11px; cursor: pointer; margin-left: 4px; }
-  .dndShopItemDelBtn { background: #4a2020; color: #ffb0b0; padding: 4px 8px; border: none; border-radius: 5px; font-size: 11px; cursor: pointer; margin-left: 4px; }
+  .dndLibraryDetailBadge { display: inline-block; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 1px 6px; font-size: 10.5px; font-weight: bold; white-space: nowrap; color: #b0ad9e; }
+  .dndShopBuyBtn { background: #2e4720; color: #5a9c3f; padding: 4px 10px; border: none; border-radius: 5px; font-size: 11px; cursor: pointer; }
+  .dndShopSellBtn { background: #4a3018; color: #d4914a; padding: 4px 10px; border: none; border-radius: 5px; font-size: 11px; cursor: pointer; margin-left: 4px; }
+  .dndShopItemDelBtn { background: #3a1f1a; color: #e0897a; padding: 4px 8px; border: none; border-radius: 5px; font-size: 11px; cursor: pointer; margin-left: 4px; }
   .dndShopAddItemRow { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-  .dndShopAddItemRow input { flex: 1; min-width: 70px; background: #0d1117; border: 1px solid #30363d; border-radius: 5px; color: #e6edf3; padding: 5px 7px; font-size: 11px; }
-  .dndShopAddItemRow button { background: #1c2b3d; color: #6fd3ff; border: none; border-radius: 5px; padding: 5px 10px; font-size: 11px; cursor: pointer; }
+  .dndShopAddItemRow input { flex: 1; min-width: 70px; background: #20221e; border: 1px solid #3a3a34; border-radius: 5px; color: #eae6da; padding: 5px 7px; font-size: 11px; }
+  .dndShopAddItemRow button { background: #3a1f1c; color: #c94a3d; border: none; border-radius: 5px; padding: 5px 10px; font-size: 11px; cursor: pointer; }
   /* ---- ค้นหา + จัดกลุ่มแบบย่อ/ขยายในร้านห้องสมุด/ร้านไอเทมทั่วไป (กันรายการยาวเลื่อนไม่จบ) ---- */
   .dndShopSearchRow { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
-  .dndShopSearchInput { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; padding: 6px 9px; font-size: 12px; }
-  .dndShopSearchInput:focus { outline: none; border-color: #6fd3ff; }
-  .dndShopSearchToggleBtn { background: #1c2b3d; color: #6fd3ff; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; cursor: pointer; white-space: nowrap; }
-  .dndLibraryGroup { border: 1px solid #262c36; border-radius: 6px; margin-bottom: 6px; overflow: hidden; }
+  .dndShopSearchInput { flex: 1; background: #20221e; border: 1px solid #3a3a34; border-radius: 6px; color: #eae6da; padding: 6px 9px; font-size: 12px; }
+  .dndShopSearchInput:focus { outline: none; border-color: #c94a3d; }
+  .dndShopSearchToggleBtn { background: #3a1f1c; color: #c94a3d; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .dndLibraryGroup { border: 1px solid #2c2e29; border-radius: 6px; margin-bottom: 6px; overflow: hidden; }
   .dndLibraryGroup:last-child { margin-bottom: 0; }
   .dndLibraryGroupSummary {
-    list-style: none; cursor: pointer; padding: 7px 10px; font-size: 12px; font-weight: bold; color: #ffd76b;
-    background: #0d1117; display: flex; align-items: center; gap: 6px; user-select: none;
+    list-style: none; cursor: pointer; padding: 7px 10px; font-size: 12px; font-weight: bold; color: #c9a24a;
+    background: #20221e; display: flex; align-items: center; gap: 6px; user-select: none;
   }
   .dndLibraryGroupSummary::-webkit-details-marker { display: none; }
-  .dndLibraryGroupSummary::before { content: '▸'; font-size: 10px; color: #6fd3ff; }
+  .dndLibraryGroupSummary::before { content: '▸'; font-size: 10px; color: #c94a3d; }
   details[open] > .dndLibraryGroupSummary::before { content: '▾'; }
   .dndLibraryGroupBody { padding: 2px 10px 4px; }
   .dndLibraryGroupBody .dndShopItemRow:first-child { border-top: none; }
-  .dndForgePlusTag { display: inline-block; background: #3d2b1c; color: #ffb96f; border-radius: 5px; padding: 1px 6px; font-size: 11px; font-weight: bold; vertical-align: middle; }
+  .dndForgePlusTag { display: inline-block; background: #4a3018; color: #d4914a; border-radius: 5px; padding: 1px 6px; font-size: 11px; font-weight: bold; vertical-align: middle; }
   .dndForgeTypeRow { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
-  .dndForgeSlotRow { background: #0d1117; border: 1px solid #2c3341; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .dndForgeSlotRow { background: #20221e; border: 1px solid #2c2e29; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
   .dndForgeSlotHead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   .dndForgeSlotHead .dndForgeSlotName { flex: 1; font-weight: bold; font-size: 13px; }
-  .dndForgeNextInfo { color: #9aa4b2; font-size: 11px; margin-bottom: 6px; }
-  .dndForgeAttemptBtn { background: #1c3d24; color: #9fdc9f; padding: 5px 12px; border: none; border-radius: 5px; font-size: 12px; cursor: pointer; }
+  .dndForgeNextInfo { color: #9c9a8e; font-size: 11px; margin-bottom: 6px; }
+  .dndForgeAttemptBtn { background: #2e4720; color: #5a9c3f; padding: 5px 12px; border: none; border-radius: 5px; font-size: 12px; cursor: pointer; }
   .dndForgeAttemptBtn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .dndForgeMaxedTag { color: #6fd3ff; font-size: 11px; }
+  .dndForgeMaxedTag { color: #c94a3d; font-size: 11px; }
   .dndBagList { display: flex; flex-wrap: wrap; gap: 6px; }
-  .dndBagChip { background: #0d1117; border: 1px solid #2c3341; border-radius: 6px; padding: 3px 8px; font-size: 11px; color: #ffd76b; }
+  .dndBagChip { background: #20221e; border: 1px solid #2c2e29; border-radius: 6px; padding: 3px 8px; font-size: 11px; color: #c9a24a; }
   .dndBagChipUsable { display: inline-flex; align-items: center; gap: 6px; padding-right: 4px; }
-  .dndBagUseBtn { background: #1f6f4a; color: #d6ffe8; border: 1px solid #2fae7a; border-radius: 4px; padding: 2px 7px; font-size: 10px; font-weight: bold; cursor: pointer; }
-  .dndBagUseBtn:disabled { background: #3a3a3a; color: #888; border-color: #555; cursor: not-allowed; }
-  .dndBagSkillItemRow { flex-basis: 100%; width: 100%; background: #0d1117; border: 1px solid #2c3341; border-radius: 6px; padding: 6px 8px; }
+  .dndBagUseBtn { background: #2e4720; color: #d9ecc9; border: 1px solid #5a9c3f; border-radius: 4px; padding: 2px 7px; font-size: 10px; font-weight: bold; cursor: pointer; }
+  .dndBagUseBtn:disabled { background: #242621; color: #9c9a8e; border-color: #3a3a34; cursor: not-allowed; }
+  .dndBagSkillItemRow { flex-basis: 100%; width: 100%; background: #20221e; border: 1px solid #2c2e29; border-radius: 6px; padding: 6px 8px; }
   .dndBagSkillItemHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
   .dndBagSkillItemRow .dndLibrarySkillDetail { margin-top: 4px; }
-  .dndTradePickList { display: flex; flex-direction: column; gap: 5px; background: #0d1117; border: 1px solid #2c3341; border-radius: 6px; padding: 6px 8px; max-height: 160px; overflow-y: auto; margin-top: 4px; }
+  .dndTradePickList { display: flex; flex-direction: column; gap: 5px; background: #20221e; border: 1px solid #2c2e29; border-radius: 6px; padding: 6px 8px; max-height: 160px; overflow-y: auto; margin-top: 4px; }
   .dndTradeItemPickRow { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
   .dndTradeItemPickName { flex: 1; }
-  .dndTradeItemPickRow input { width: 60px; background: #0a0e14; border: 1px solid #30363d; border-radius: 5px; color: #e6edf3; padding: 3px 5px; font-size: 11px; }
-  .dndTradeCard { background: #0d1117; border: 1px solid #2c3341; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
-  .dndTradeCardHead { font-weight: bold; color: #ffd76b; font-size: 12px; margin-bottom: 6px; }
-  .dndTradeCardRow { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; color: #c9d1d9; }
-  .dndTradeCardRow span:first-child { color: #9aa4b2; }
+  .dndTradeItemPickRow input { width: 60px; background: #0d0f0d; border: 1px solid #3a3a34; border-radius: 5px; color: #eae6da; padding: 3px 5px; font-size: 11px; }
+  .dndTradeCard { background: #20221e; border: 1px solid #2c2e29; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .dndTradeCardHead { font-weight: bold; color: #c9a24a; font-size: 12px; margin-bottom: 6px; }
+  .dndTradeCardRow { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; color: #b0ad9e; }
+  .dndTradeCardRow span:first-child { color: #9c9a8e; }
   .dndTradeCardBtnRow { display: flex; gap: 8px; margin-top: 8px; }
-  .dndTradeAcceptBtn { background: #1c3d24; color: #9fdc9f; border: none; border-radius: 5px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
-  .dndTradeDeclineBtn, .dndTradeCancelBtn { background: #4a2020; color: #ffb0b0; border: none; border-radius: 5px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+  .dndTradeAcceptBtn { background: #2e4720; color: #5a9c3f; border: none; border-radius: 5px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+  .dndTradeDeclineBtn, .dndTradeCancelBtn { background: #3a1f1a; color: #e0897a; border: none; border-radius: 5px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
   #dndGiveItemBtnRow { display: flex; gap: 8px; margin-top: 6px; }
   #dndGiveItemBtnRow button { flex: 1; }
-  #dndTakeItemBtn { background: #4a2020 !important; color: #ffb0b0 !important; }
+  #dndTakeItemBtn { background: #3a1f1a !important; color: #e0897a !important; }
   .dndTokenHpWrap {
     position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 16px;
     width: 44px; height: 5px; background: #000; border-radius: 3px; overflow: hidden; border: 1px solid rgba(255,255,255,0.3);
   }
-  .dndTokenHpBarFill { height: 100%; background: #6fdc7f; }
-  .dndTokenHpBarFill.mid { background: #ffd76b; }
-  .dndTokenHpBarFill.low { background: #ff6b6b; }
-  .dndTokenAcBadge {
-    position: absolute; top: -6px; right: -6px; background: #0d1117; border: 1px solid #6fd3ff; color: #6fd3ff;
-    font-size: 9px; font-weight: bold; border-radius: 8px; padding: 0px 4px; line-height: 14px;
-  }
+  .dndTokenHpBarFill { height: 100%; background: #5a9c3f; }
+  .dndTokenHpBarFill.mid { background: #c9a24a; }
+  .dndTokenHpBarFill.low { background: #c94a3d; }
   .dndTokenStatusRow { position: absolute; top: -6px; left: -6px; display: flex; flex-wrap: wrap; gap: 2px; max-width: 60px; }
-  .dndTokenStatusDot { width: 10px; height: 10px; border-radius: 50%; background: #b23b3b; border: 1px solid #fff; font-size: 7px; }
+  .dndTokenStatusDot { width: 10px; height: 10px; border-radius: 50%; background: #a8342b; border: 1px solid #fff; font-size: 7px; }
   .dndStatusChip {
-    display: inline-flex; align-items: center; gap: 4px; background: #2a1414; border: 1px solid #6b2c2c;
-    color: #ffb0b0; border-radius: 10px; padding: 2px 8px 2px 10px; font-size: 11px; margin: 2px 4px 2px 0;
+    display: inline-flex; align-items: center; gap: 4px; background: #2a1512; border: 1px solid #5a1f1a;
+    color: #e0897a; border-radius: 10px; padding: 2px 8px 2px 10px; font-size: 11px; margin: 2px 4px 2px 0;
   }
-  .dndStatusChip button { background: none; border: none; color: #ff8080; cursor: pointer; font-size: 12px; padding: 0 2px; }
-  .dndStatusCd { font-size: 10px; color: #ffcf7a; margin-left: 4px; opacity: 0.9; }
-  .dndStatusModTag { font-size: 10px; color: #9fdc9f; margin-left: 4px; opacity: 0.95; }
+  .dndStatusChip button { background: none; border: none; color: #d9695a; cursor: pointer; font-size: 12px; padding: 0 2px; }
+  .dndStatusCd { font-size: 10px; color: #c9a24a; margin-left: 4px; opacity: 0.9; }
+  .dndStatusModTag { font-size: 10px; color: #5a9c3f; margin-left: 4px; opacity: 0.95; }
   .dndStatusManagerBox { margin-top: 8px; }
-  .dndStatusManagerBox h5 { margin: 8px 0 6px 0; color: #ffd76b; font-size: 11px; }
-  .dndSkillHealBox { border: 1px solid #3a6b4a; background: rgba(126,232,126,0.06); border-radius: 8px; padding: 8px 8px 2px 8px; margin-bottom: 6px; }
-  .dndSkillHealBox h5 { margin: 0 0 6px 0; color: #7ee87e; font-size: 12px; }
+  .dndStatusManagerBox h5 { margin: 8px 0 6px 0; color: #c9a24a; font-size: 11px; }
+  .dndSkillHealBox { border: 1px solid #4a7a3a; background: rgba(111,184,79,0.06); border-radius: 8px; padding: 8px 8px 2px 8px; margin-bottom: 6px; }
+  .dndSkillHealBox h5 { margin: 0 0 6px 0; color: #6fb84f; font-size: 12px; }
   .dndStatusAddRow { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
-  .dndStatusAddRow input { flex: 1; min-width: 80px; padding: 6px 8px; font-size: 12px; border-radius: 6px; border: 1px solid #3a4150; background: #0d1117; color: #eee; }
-  .dndStatusAddRow button { padding: 6px 10px; font-size: 12px; border: none; border-radius: 6px; background: #6b2c2c; color: #ffd0d0; cursor: pointer; font-weight: bold; }
-  .dndAttackRow { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid #262c36; font-size: 12px; }
+  .dndStatusAddRow input { flex: 1; min-width: 80px; padding: 6px 8px; font-size: 12px; border-radius: 6px; border: 1px solid #3a3a34; background: #20221e; color: #eae6da; }
+  .dndStatusAddRow button { padding: 6px 10px; font-size: 12px; border: none; border-radius: 6px; background: #5a1f1a; color: #ffd0d0; cursor: pointer; font-weight: bold; }
+  .dndAttackRow { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid #2c2e29; font-size: 12px; }
   .dndAttackRow .dndAttackInfo { flex: 1; }
-  .dndAttackRow .dndAttackName { font-weight: bold; color: #eee; }
-  .dndAttackRow .dndAttackDice { color: #9aa4b2; font-size: 11px; }
+  .dndAttackRow .dndAttackName { font-weight: bold; color: #eae6da; }
+  .dndAttackRow .dndAttackDice { color: #9c9a8e; font-size: 11px; }
   .dndAttackRow button { padding: 4px 8px; font-size: 11px; border: none; border-radius: 5px; cursor: pointer; }
-  .dndAttackUseBtn { background: #1c2b3d; color: #6fd3ff; }
-  .dndAttackDelBtn { background: #4a2020; color: #ffb0b0; }
+  .dndSoundRow { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid #2c2e29; font-size: 13px; }
+  .dndSoundRow .dndSoundName { flex: 1; color: #eae6da; }
+  .dndSoundRow button { padding: 5px 10px; font-size: 12px; border: none; border-radius: 5px; cursor: pointer; }
+  .dndSoundPlayBtn { background: #6fd3ff; color: #16140f; font-weight: bold; }
+  .dndSoundDelBtn { background: #3a3a34; color: #eae6da; }
+  #dndMusicBar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; margin: 4px auto; max-width: 520px; background: #20221e; border: 1px solid #3a3a34; border-radius: 20px; font-size: 12px; color: #eae6da; }
+  #dndMusicBarIcon { flex-shrink: 0; }
+  #dndMusicBarTrackName { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #dndMusicBarMuteBtn { flex-shrink: 0; background: none; border: none; cursor: pointer; font-size: 14px; color: #eae6da; padding: 2px 4px; }
+  #dndMusicBarVolumeInput { flex-shrink: 0; width: 80px; }
+  #dndMusicControlsRow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  #dndMusicControlsRow button { padding: 6px 12px; font-size: 12px; border: none; border-radius: 6px; cursor: pointer; background: #6fd3ff; color: #16140f; font-weight: bold; }
+  #dndMusicStopBtn { background: #3a3a34 !important; color: #eae6da !important; }
+  #dndMusicLoopLabel { font-size: 12px; color: #eae6da; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .dndAttackUseBtn { background: #3a1f1c; color: #c94a3d; }
+  .dndAttackDelBtn { background: #3a1f1a; color: #e0897a; }
   #dndTokenEditBox .dndFieldRow { margin-bottom: 8px; }
   .dndSkillCard {
-    background: #0d1117; border: 1px solid #2c3341; border-radius: 8px; padding: 10px 12px; font-size: 13px;
+    background: #20221e; border: 1px solid #2c2e29; border-radius: 8px; padding: 10px 12px; font-size: 13px;
     margin-bottom: 8px;
   }
   .dndSkillCardTop { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
-  .dndSkillCardName { font-weight: bold; color: #ffd76b; }
+  .dndSkillCardName { font-weight: bold; color: #c9a24a; }
   .dndSkillCardStat {
-    font-size: 10px; color: #0a0a12; background: #9fdc9f; padding: 2px 6px; border-radius: 4px; font-weight: bold;
+    font-size: 10px; color: #16140f; background: #5a9c3f; padding: 2px 6px; border-radius: 4px; font-weight: bold;
   }
-  .dndSkillCardDesc { color: #9aa4b2; font-size: 12px; margin: 5px 0 8px 0; line-height: 1.4; }
-  .dndSkillCardDmg { color: #ff9d9d; font-size: 11px; margin: 0 0 8px 0; font-weight: bold; }
-  .dndSkillCardAssigned { color: #6fd3ff; font-size: 10px; margin: 0 0 8px 0; }
+  .dndSkillCardDesc { color: #9c9a8e; font-size: 12px; margin: 5px 0 8px 0; line-height: 1.4; }
+  .dndSkillCardDmg { color: #e0897a; font-size: 11px; margin: 0 0 8px 0; font-weight: bold; }
+  .dndSkillCardAssigned { color: #c94a3d; font-size: 10px; margin: 0 0 8px 0; }
   .dndAssignChip {
-    display: flex; align-items: center; gap: 5px; font-size: 12px; color: #ccc;
-    background: #0d1117; border: 1px solid #2c3341; border-radius: 5px; padding: 5px 9px; cursor: pointer;
+    display: flex; align-items: center; gap: 5px; font-size: 12px; color: #b0ad9e;
+    background: #20221e; border: 1px solid #2c2e29; border-radius: 5px; padding: 5px 9px; cursor: pointer;
   }
   .dndAssignChip input { cursor: pointer; }
   .dndSkillCardBtns { display: flex; gap: 6px; }
   .dndSkillUseBtn {
-    padding: 5px 10px; border: none; border-radius: 5px; background: #6fd3ff; color: #0a0a12;
+    padding: 5px 10px; border: none; border-radius: 5px; background: #c94a3d; color: #16140f;
     font-weight: bold; cursor: pointer; font-size: 12px;
   }
   .dndSkillDelBtn {
-    padding: 5px 10px; border: 1px solid #ff8080; border-radius: 5px; background: transparent; color: #ff8080;
+    padding: 5px 10px; border: 1px solid #d9695a; border-radius: 5px; background: transparent; color: #d9695a;
     cursor: pointer; font-size: 12px;
   }
   .dndFieldRow { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-  .dndFieldRow label { font-size: 11px; color: #9aa4b2; display: block; margin-bottom: 4px; }
+  .dndFieldRow label { font-size: 11px; color: #9c9a8e; display: block; margin-bottom: 4px; }
   .dndFieldRow .dndField { flex: 1; min-width: 110px; }
   .dndFieldRow input, .dndFieldRow textarea {
-    width: 100%; padding: 8px 9px; border-radius: 5px; border: 1px solid #444; background: #0d1117;
-    color: #eee; font-size: 13px; font-family: inherit;
+    width: 100%; padding: 8px 9px; border-radius: 5px; border: 1px solid #3a3a34; background: #20221e;
+    color: #eae6da; font-size: 13px; font-family: inherit;
   }
   .dndInputWithBtn { display: flex; gap: 6px; }
   .dndInputWithBtn input { flex: 1; min-width: 0; }
   .dndInputWithBtn button {
-    flex-shrink: 0; padding: 0 10px; border-radius: 5px; border: 1px solid #2fae7a; background: #1f6f4a;
-    color: #d6ffe8; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap;
+    flex-shrink: 0; padding: 0 10px; border-radius: 5px; border: 1px solid #5a9c3f; background: #2e4720;
+    color: #d9ecc9; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap;
   }
-  .dndInputWithBtn button:disabled { background: #2a2a2a; color: #777; border-color: #444; cursor: not-allowed; }
+  .dndInputWithBtn button:disabled { background: #242621; color: #68665c; border-color: #3a3a34; cursor: not-allowed; }
   .dndStatGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 8px; margin-bottom: 10px; }
   .dndStatGrid .dndField input { text-align: center; }
   #dndSheetSaveBtn {
-    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #6fd3ff; color: #0a0a12;
+    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #c94a3d; color: #16140f;
     font-weight: bold; cursor: pointer; margin-top: 4px; font-size: 13px;
   }
   .dndDiceGrid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
   .dndDieBtn {
-    padding: 8px 10px; border-radius: 6px; border: 1px solid #3a4150; background: #0d1117; color: #ccc;
+    padding: 8px 10px; border-radius: 6px; border: 1px solid #3a3a34; background: #20221e; color: #b0ad9e;
     cursor: pointer; font-size: 13px; font-weight: bold;
   }
-  .dndDieBtn.active { background: #6fd3ff; color: #0a0a12; border-color: #6fd3ff; }
+  .dndDieBtn.active { background: #c94a3d; color: #16140f; border-color: #c94a3d; }
   .dndDiceOptsRow { display: flex; gap: 6px; align-items: flex-end; margin-bottom: 8px; }
   .dndDiceOptsRow > div { flex: 1; min-width: 0; }
   .dndDiceOptsRow input {
-    width: 100%; padding: 6px 8px; border-radius: 5px; border: 1px solid #444; background: #0d1117; color: #eee;
+    width: 100%; padding: 6px 8px; border-radius: 5px; border: 1px solid #3a3a34; background: #20221e; color: #eae6da;
   }
-  .dndDiceOptsRow label { font-size: 11px; color: #9aa4b2; display: block; margin-bottom: 2px; }
+  .dndDiceOptsRow label { font-size: 11px; color: #9c9a8e; display: block; margin-bottom: 2px; }
   #dndRollBtn {
-    width: 100%; padding: 9px; border: none; border-radius: 6px; background: #ffd76b; color: #0a0a12;
+    width: 100%; padding: 9px; border: none; border-radius: 6px; background: #c9a24a; color: #16140f;
     font-weight: bold; cursor: pointer; font-size: 14px;
   }
-  #dndLog { height: 220px; overflow-y: auto; font-size: 12px; color: #aab; }
+  #dndLog { height: 220px; overflow-y: auto; font-size: 12px; color: #b0ad9e; }
   #dndLog div { margin-bottom: 5px; word-break: break-word; }
   #dndChatInputRow { display: flex; gap: 6px; margin-top: 8px; }
   #dndChatInputRow input {
-    flex: 1; padding: 7px 8px; border-radius: 5px; border: 1px solid #444; background: #0d1117; color: #eee; min-width: 0;
+    flex: 1; padding: 7px 8px; border-radius: 5px; border: 1px solid #3a3a34; background: #20221e; color: #eae6da; min-width: 0;
   }
   #dndChatInputRow button {
-    padding: 7px 14px; border: none; border-radius: 5px; background: #6fd3ff; color: #0a0a12;
+    padding: 7px 14px; border: none; border-radius: 5px; background: #c94a3d; color: #16140f;
     font-weight: bold; cursor: pointer;
   }
   #dndHeaderRow { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
   #dndHowToBtn, #dndPatchNotesBtn {
-    padding: 6px 12px; font-size: 12px; cursor: pointer; border: 1px solid #3a4150; border-radius: 20px;
-    background: #0d1117; color: #ffd76b; font-weight: bold;
+    padding: 6px 12px; font-size: 12px; cursor: pointer; border: 1px solid #3a3a34; border-radius: 20px;
+    background: #20221e; color: #c9a24a; font-weight: bold;
   }
-  #dndHowToBtn:hover, #dndPatchNotesBtn:hover { border-color: #ffd76b; }
+  #dndHowToBtn:hover, #dndPatchNotesBtn:hover { border-color: #c9a24a; }
   .dndCardGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-bottom: 10px; }
   .dndPickCard {
-    background: #0d1117; border: 2px solid #2c3341; border-radius: 8px; padding: 10px 8px; text-align: center;
+    background: #20221e; border: 2px solid #2c2e29; border-radius: 8px; padding: 10px 8px; text-align: center;
     cursor: pointer; transition: border-color 0.15s, transform 0.1s;
   }
-  .dndPickCard:hover { border-color: #6fd3ff; transform: translateY(-1px); }
-  .dndPickCard.selected { border-color: #ffd76b; background: #221d10; }
+  .dndPickCard:hover { border-color: #c94a3d; transform: translateY(-1px); }
+  .dndPickCard.selected { border-color: #c9a24a; background: #2e2411; }
   .dndPickCardIcon { font-size: 26px; }
   .dndPickCardName { font-weight: bold; font-size: 12px; margin: 4px 0 2px 0; }
-  .dndPickCardDesc { font-size: 10px; color: #9aa4b2; line-height: 1.3; }
-  .dndPickCardBonus { font-size: 10px; color: #9fdc9f; margin-top: 4px; font-weight: bold; }
-  #dndCreateBox, #dndMySheetBox, #dndMySummonsBox { width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-  #dndCreateBox h3, #dndMySheetBox h3, #dndMySummonsBox h3, #dndCreateBox label { color: #ffd76b; font-size: 14px; }
-  .dndMySummonRow.current { border-color: #ffd76b; box-shadow: 0 0 0 1px #ffd76b inset; }
-  .dndNpcRow .dndSummonDismissBtn { background: #4a2020; color: #ffb0b0; }
-  #dndCreateBox > label, #dndPointBuyBox label { display: block; font-size: 12px; color: #9aa4b2; margin: 8px 0 6px 0; }
+  .dndPickCardDesc { font-size: 10px; color: #9c9a8e; line-height: 1.3; }
+  .dndPickCardBonus { font-size: 10px; color: #5a9c3f; margin-top: 4px; font-weight: bold; }
+  #dndCreateBox, #dndMySummonsBox { width: 100%; box-sizing: border-box; background: #181a17; border: 1px solid #3a3a34; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  #dndCreateBox h3, #dndMySummonsBox h3, #dndCreateBox label { color: #c9a24a; font-size: 14px; }
+  .dndMySummonRow.current { border-color: #c9a24a; box-shadow: 0 0 0 1px #c9a24a inset; }
+  .dndNpcRow .dndSummonDismissBtn { background: #3a1f1a; color: #e0897a; }
+  #dndCreateBox > label, #dndPointBuyBox label { display: block; font-size: 12px; color: #9c9a8e; margin: 8px 0 6px 0; }
   .dndStatAllocGrid { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
   .dndStatAllocRow { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-  .dndStatAllocRow .dndStatAllocLabel { width: 40px; font-weight: bold; color: #ccc; }
+  .dndStatAllocRow .dndStatAllocLabel { width: 40px; font-weight: bold; color: #b0ad9e; }
   .dndStatAllocRow button {
-    width: 26px; height: 26px; border-radius: 5px; border: 1px solid #3a4150; background: #0d1117; color: #eee;
+    width: 26px; height: 26px; border-radius: 5px; border: 1px solid #3a3a34; background: #20221e; color: #eae6da;
     cursor: pointer; font-weight: bold; font-size: 14px; line-height: 1;
   }
   .dndStatAllocRow button:disabled { opacity: 0.3; cursor: not-allowed; }
   .dndStatAllocRow .dndStatAllocVal { width: 34px; text-align: center; font-weight: bold; }
-  .dndStatAllocRow .dndStatAllocBreakdown { flex: 1; font-size: 10px; color: #9aa4b2; text-align: right; }
-  #dndPointsLeft { color: #ffd76b; }
-  #dndPointsLeft.zero { color: #9fdc9f; }
-  .dndRangeHint { font-size: 10px; color: #9aa4b2; font-weight: normal; }
-  .dndBagCapacityFull { color: #ff6b6b; font-weight: bold; }
+  .dndStatAllocRow .dndStatAllocBreakdown { flex: 1; font-size: 10px; color: #9c9a8e; text-align: right; }
+  #dndPointsLeft { color: #c9a24a; }
+  #dndPointsLeft.zero { color: #5a9c3f; }
+  .dndRangeHint { font-size: 10px; color: #9c9a8e; font-weight: normal; }
+  .dndBagCapacityFull { color: #c94a3d; font-weight: bold; }
   #dndCreateSaveBtn, #dndDmEditSaveBtn {
-    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #6fd3ff; color: #0a0a12;
+    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #c94a3d; color: #16140f;
     font-weight: bold; cursor: pointer; margin-top: 6px; font-size: 13px;
   }
   #dndCreateSaveBtn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .dndSheetViewRow { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; border-bottom: 1px solid #222833; }
-  .dndSheetViewRow span:first-child { color: #9aa4b2; }
+  .dndSheetViewRow { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; border-bottom: 1px solid #2c2e29; }
+  .dndSheetViewRow span:first-child { color: #9c9a8e; }
   .dndSheetStatRow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; text-align: center; margin: 8px 0; }
-  .dndSheetStatRow div { background: #0d1117; border-radius: 6px; padding: 5px 2px; }
-  .dndSheetStatRow .dndStatKey { font-size: 10px; color: #9aa4b2; }
-  .dndSheetStatRow .dndStatVal { font-size: 14px; font-weight: bold; color: #ffd76b; }
-  .dndStatModBadge { font-size: 10px; font-weight: normal; color: #9aa4b2; }
-  .dndStatPlusBtn { margin-top: 4px; width: 100%; border: 1px solid #3fbf5f; background: #133a1f; color: #7ee787; border-radius: 5px; font-size: 10px; font-weight: bold; padding: 2px 0; cursor: pointer; }
-  .dndStatPlusBtn:hover:not(:disabled) { background: #1c5230; }
-  .dndStatPlusBtn:disabled { border-color: #3a3f47; background: #16191d; color: #5a616b; cursor: not-allowed; }
+  .dndSheetStatRow div { background: #20221e; border-radius: 6px; padding: 5px 2px; }
+  .dndSheetStatRow .dndStatKey { font-size: 10px; color: #9c9a8e; }
+  .dndSheetStatRow .dndStatVal { font-size: 14px; font-weight: bold; color: #c9a24a; }
+  .dndStatModBadge { font-size: 10px; font-weight: normal; color: #9c9a8e; }
+  .dndStatPlusBtn { margin-top: 4px; width: 100%; border: 1px solid #5a9c3f; background: #2e4720; color: #6fb84f; border-radius: 5px; font-size: 10px; font-weight: bold; padding: 2px 0; cursor: pointer; }
+  .dndStatPlusBtn:hover:not(:disabled) { background: #3a5a28; }
+  .dndStatPlusBtn:disabled { border-color: #3a3a34; background: #1c1a16; color: #68665c; cursor: not-allowed; }
   #dndQuickChatOverlay {
     position: fixed; inset: 0; z-index: 500; background: rgba(0,0,0,0.55);
     display: none; align-items: flex-start; justify-content: center; padding: 6vh 14px 0 14px;
   }
   #dndQuickChatBox {
     width: 100%; max-width: 760px; height: 70vh; max-height: 640px;
-    background: #161b22; border: 1px solid #6fd3ff; border-radius: 12px;
+    background: #181a17; border: 1px solid #c94a3d; border-radius: 12px;
     display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
     overflow: hidden;
   }
   #dndQuickChatHeader {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 16px; background: #0d1117; border-bottom: 1px solid #30363d;
-    color: #ffd76b; font-weight: bold; font-size: 15px;
+    padding: 12px 16px; background: #20221e; border-bottom: 1px solid #3a3a34;
+    color: #c9a24a; font-weight: bold; font-size: 15px;
   }
-  #dndQuickChatHint { font-size: 11px; color: #9aa4b2; font-weight: normal; }
+  #dndQuickChatHint { font-size: 11px; color: #9c9a8e; font-weight: normal; }
   #dndQuickChatMessages {
-    flex: 1; overflow-y: auto; padding: 14px 16px; font-size: 13px; color: #ddd;
+    flex: 1; overflow-y: auto; padding: 14px 16px; font-size: 13px; color: #b0ad9e;
   }
   #dndQuickChatMessages div { margin-bottom: 8px; word-break: break-word; line-height: 1.5; }
-  #dndQuickChatMessages b { color: #6fd3ff; }
-  #dndQuickChatInputRow { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid #30363d; background: #0d1117; }
+  #dndQuickChatMessages b { color: #c94a3d; }
+  #dndQuickChatInputRow { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid #3a3a34; background: #20221e; }
   #dndQuickChatInputRow input {
-    flex: 1; padding: 10px 12px; border-radius: 7px; border: 1px solid #444;
-    background: #0a0a12; color: #eee; font-size: 13px;
+    flex: 1; padding: 10px 12px; border-radius: 7px; border: 1px solid #3a3a34;
+    background: #16140f; color: #eae6da; font-size: 13px;
   }
   #dndQuickChatInputRow button {
-    padding: 10px 18px; border: none; border-radius: 7px; background: #6fd3ff;
-    color: #0a0a12; font-weight: bold; cursor: pointer; font-size: 13px;
+    padding: 10px 18px; border: none; border-radius: 7px; background: #c94a3d;
+    color: #16140f; font-weight: bold; cursor: pointer; font-size: 13px;
   }
   .dndModalOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 200; align-items: center; justify-content: center; padding: 14px; }
-  .dndModalBox { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; max-width: 460px; width: 100%; max-height: 86vh; overflow-y: auto; }
-  .dndModalBox h3 { color: #ffd76b; margin-top: 0; margin-bottom: 14px; }
-  .dndModalBox p, .dndModalBox li { font-size: 13px; line-height: 1.6; color: #ccc; }
+  .dndModalBox { background: #181a17; border: 1px solid #3a3a34; border-radius: 10px; padding: 20px; max-width: 460px; width: 100%; max-height: 86vh; overflow-y: auto; }
+  .dndModalBox h3 { color: #c9a24a; margin-top: 0; margin-bottom: 14px; }
+  .dndModalBox p, .dndModalBox li { font-size: 13px; line-height: 1.6; color: #b0ad9e; }
   .dndModalBox ul { padding-left: 20px; margin: 6px 0; }
+
+  /* ---- หน้าต่างลอยทั่วไป ลากไปมาได้ (เช่น แท็บสกิล) — ไม่บังแผนที่ด้านหลัง ต่างจาก .dndModalOverlay ที่มีพื้นหลังมืดบังทั้งจอ ---- */
+  .dndFloatOverlay { display: none; position: fixed; inset: 0; z-index: 200; pointer-events: none; }
+  .dndFloatBox {
+    position: fixed; pointer-events: auto; width: 92vw; max-width: 560px; max-height: 86vh;
+    background: #181a17; border: 1px solid #3a3a34; border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5); display: flex; flex-direction: column; overflow: hidden;
+  }
+  .dndFloatBoxHeader {
+    flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 9px 10px 9px 14px; background: #20221e; border-bottom: 1px solid #3a3a34;
+    cursor: move; touch-action: none; user-select: none;
+  }
+  .dndFloatBoxTitle { font-size: 14px; font-weight: bold; color: #c9a24a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dndFloatBoxClose {
+    flex: none; width: 24px; height: 24px; border-radius: 6px; border: 1px solid #3a3a34; background: #16140f;
+    color: #b0ad9e; font-size: 13px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .dndFloatBoxClose:hover { color: #eae6da; border-color: #c94a3d; }
+  .dndFloatBoxBody { padding: 20px; overflow-y: auto; }
+  .dndFloatBoxBody h3 { color: #c9a24a; margin-top: 0; margin-bottom: 14px; }
+
+  /* ---- ป็อปอัพดูรายละเอียดคร่าวๆ ของ token ผู้เล่นอื่น/มอนสเตอร์ (คลิกที่ token บนแผนที่) — เป็นหน้าต่างลอย ลากไปมาได้ เปิดพร้อมกันได้หลายอัน (ซ้อน stack) ---- */
+  .dndPeekWindowsLayer { position: fixed; inset: 0; z-index: 200; pointer-events: none; }
+  .dndPeekWindow {
+    position: fixed; pointer-events: auto; width: 92vw; max-width: 560px; max-height: 86vh;
+    background: #181a17; border: 1px solid #3a3a34; border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5); display: flex; flex-direction: column; overflow: hidden;
+  }
+  .dndPeekWindowHeader {
+    flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 9px 10px 9px 14px; background: #20221e; border-bottom: 1px solid #3a3a34;
+    cursor: move; touch-action: none; user-select: none;
+  }
+  .dndPeekWindowTitle { font-size: 13px; font-weight: bold; color: #c9a24a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dndPeekWindowClose {
+    flex: none; width: 24px; height: 24px; border-radius: 6px; border: 1px solid #3a3a34; background: #16140f;
+    color: #b0ad9e; font-size: 13px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .dndPeekWindowClose:hover { color: #eae6da; border-color: #c94a3d; }
+  .dndPeekWindowBody { padding: 22px; overflow-y: auto; }
+  .dndPeekHeader { display: flex; gap: 18px; align-items: center; margin-bottom: 14px; }
+  .dndPeekAvatarWrap { flex: none; display: flex; justify-content: center; align-items: center; width: 150px; height: 190px; background: #20221e; border: 1px solid #3a3a34; border-radius: 10px; overflow: hidden; position: relative; }
+  .dndPeekAvatarWrap img { width: 100%; height: 100%; object-fit: cover; }
+  .dndPeekAvatarInitials { font-size: 46px; font-weight: bold; color: #16140f; }
+  .dndPeekTitleBox { flex: 1; min-width: 0; }
+  .dndPeekName { font-size: 26px; font-weight: bold; color: #eae6da; line-height: 1.25; word-break: break-word; }
+  .dndPeekSub { font-size: 15px; color: #c9a24a; margin-top: 4px; }
+  .dndPeekTag { font-size: 12px; color: #9c9a8e; margin-top: 6px; }
+  .dndPeekBadgeRow { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .dndPeekBadge { background: #20221e; border: 1px solid #3a3a34; border-radius: 8px; padding: 6px 12px; font-size: 15px; font-weight: bold; color: #eae6da; }
+  .dndPeekBadge span { color: #9c9a8e; font-weight: normal; font-size: 11px; display: block; margin-bottom: 2px; }
+  .dndPeekSectionTitle { font-size: 13px; color: #ffd76b; margin: 14px 0 6px; }
+  .dndPeekAttackRow { font-size: 13px; color: #b0ad9e; padding: 5px 0; border-bottom: 1px solid #2c2e29; }
+  .dndPeekAttackRow b { color: #eae6da; }
+  .dndPeekHiddenNote { font-size: 12px; color: #9c9a8e; font-style: italic; }
+  .dndPeekBackstory { font-size: 13px; line-height: 1.6; color: #b0ad9e; white-space: pre-wrap; word-break: break-word; }
   .dndModalCloseBtn {
-    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #6fd3ff; color: #0a0a12;
+    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #c94a3d; color: #16140f;
     font-weight: bold; cursor: pointer; margin-top: 10px; font-size: 13px;
   }
-  .dndDmEditCancelBtn { width: 100%; padding: 8px; border: none; border-radius: 6px; background: #2c3341; color: #eee; font-weight: bold; cursor: pointer; margin-top: 6px; font-size: 13px; }
+  .dndDmEditCancelBtn { width: 100%; padding: 8px; border: none; border-radius: 6px; background: #2c2e29; color: #eae6da; font-weight: bold; cursor: pointer; margin-top: 6px; font-size: 13px; }
   .dndFieldRow select {
-    width: 100%; padding: 6px 8px; border-radius: 5px; border: 1px solid #444; background: #0d1117;
-    color: #eee; font-size: 13px; font-family: inherit;
+    width: 100%; padding: 6px 8px; border-radius: 5px; border: 1px solid #3a3a34; background: #20221e;
+    color: #eae6da; font-size: 13px; font-family: inherit;
   }
-  .dndLockRow { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9aa4b2; margin: 14px 0 10px 0; }
+  .dndLockRow { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9c9a8e; margin: 14px 0 10px 0; }
   .dndEditBtn {
-    padding: 4px 10px; border: none; border-radius: 5px; background: #ffd76b; color: #0a0a12;
+    padding: 4px 10px; border: none; border-radius: 5px; background: #c9a24a; color: #16140f;
     font-weight: bold; cursor: pointer; font-size: 11px; margin-top: 6px;
   }
-  .dndKickBtn { background: #b23a48; color: #ffe3e3; margin-left: 6px; }
+  .dndKickBtn { background: #a8342b; color: #ffe3e3; margin-left: 6px; }
   /* ---- อุปกรณ์สวมใส่: อาวุธ / เกราะ / รองเท้า / เครื่องประดับ ---- */
-  #dndEquipBox { width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-top: 10px; }
-  #dndEquipBox h4 { margin: 0 0 8px 0; color: #ffd76b; font-size: 13px; }
+  #dndEquipBox { width: 100%; box-sizing: border-box; background: #181a17; border: 1px solid #3a3a34; border-radius: 8px; padding: 12px; margin-top: 10px; }
+  #dndEquipBox h4 { margin: 0 0 8px 0; color: #c9a24a; font-size: 13px; }
   .dndEquipGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 8px; }
-  .dndEquipSlotCard { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 8px; }
-  .dndEquipSlotCard.broken { border-color: #b23a48; background: #1a0f11; }
-  .dndEquipBrokenTag { color: #ff9a9a; font-weight: bold; }
-  .dndEquipSlotLabel { font-size: 11px; color: #9aa4b2; font-weight: bold; margin-bottom: 6px; display: flex; align-items: center; gap: 4px; }
+  .dndEquipSlotCard { background: #20221e; border: 1px solid #3a3a34; border-radius: 6px; padding: 8px; }
+  .dndEquipSlotCard.broken { border-color: #a8342b; background: #190f0d; }
+  .dndEquipBrokenTag { color: #e0897a; font-weight: bold; }
+  .dndEquipSlotLabel { font-size: 11px; color: #9c9a8e; font-weight: bold; margin-bottom: 6px; display: flex; align-items: center; gap: 4px; }
   .dndEquipSlotCard input {
-    width: 100%; box-sizing: border-box; padding: 5px 6px; margin-bottom: 4px; border-radius: 4px; border: 1px solid #444;
-    background: #161b22; color: #eee; font-size: 12px; font-family: inherit;
+    width: 100%; box-sizing: border-box; padding: 5px 6px; margin-bottom: 4px; border-radius: 4px; border: 1px solid #3a3a34;
+    background: #181a17; color: #eae6da; font-size: 12px; font-family: inherit;
   }
   .dndEquipSlotCard .dndEquipRow { display: flex; gap: 4px; }
   .dndEquipSlotCard .dndEquipRow input { text-align: center; }
-  .dndEquipSlotCard .dndEquipMiniLabel { font-size: 9px; color: #6b7280; margin-bottom: 2px; }
-  .dndEquipItemIcon { display: block; width: 100%; max-height: 72px; object-fit: contain; background: #05070a; border: 1px solid #30363d; border-radius: 4px; margin: 6px 0; }
-  .dndEquipIconLabel { display: block; font-size: 9px; color: #6b7280; margin-top: 6px; }
-  .dndEquipIconLabel input[type="file"] { display: block; width: 100%; font-size: 10px; color: #9aa4b2; margin-top: 2px; }
+  .dndEquipSlotCard .dndEquipMiniLabel { font-size: 9px; color: #68665c; margin-bottom: 2px; }
+  .dndEquipItemIcon { display: block; width: 100%; max-height: 72px; object-fit: contain; background: #0d0f0d; border: 1px solid #3a3a34; border-radius: 4px; margin: 6px 0; }
+  .dndEquipIconLabel { display: block; font-size: 9px; color: #68665c; margin-top: 6px; }
+  .dndEquipIconLabel input[type="file"] { display: block; width: 100%; font-size: 10px; color: #9c9a8e; margin-top: 2px; }
   .dndUnequipBtn { width: 100%; margin-top: 8px; }
   #dndEquipSaveBtn {
-    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #9fdc9f; color: #0a0a12;
+    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #5a9c3f; color: #16140f;
     font-weight: bold; cursor: pointer; font-size: 13px;
   }
-  .dndTotalDefBadge { color: #6fd3ff; font-weight: bold; }
+  .dndTotalDefBadge { color: #c94a3d; font-weight: bold; }
   .dndEquipSummary { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
-  .dndEquipChip { background: #0d1117; border: 1px solid #30363d; color: #9aa4b2; border-radius: 10px; padding: 2px 8px; font-size: 10px; }
-  .dndEquipChip b { color: #ccc; }
-  .dndEquipReadValue { display: block; min-height: 28px; box-sizing: border-box; padding: 6px 8px; margin-bottom: 6px; border-radius: 5px; border: 1px solid #30363d; background: #161b22; color: #f0f3f6; font-size: 13px; font-weight: 600; line-height: 1.25; word-break: break-word; }
-  .dndEquipReadValue.empty { color: #6b7280; font-weight: 400; }
-  .dndEquipStatValue { text-align: center; min-height: 28px; padding: 6px 3px; box-sizing: border-box; border-radius: 5px; border: 1px solid #30363d; background: #161b22; color: #f0f3f6; font-size: 13px; font-weight: 700; }
+  .dndEquipChip { background: #20221e; border: 1px solid #3a3a34; color: #9c9a8e; border-radius: 10px; padding: 2px 8px; font-size: 10px; }
+  .dndEquipChip b { color: #b0ad9e; }
+  .dndEquipReadValue { display: block; min-height: 28px; box-sizing: border-box; padding: 6px 8px; margin-bottom: 6px; border-radius: 5px; border: 1px solid #3a3a34; background: #181a17; color: #eae6da; font-size: 13px; font-weight: 600; line-height: 1.25; word-break: break-word; }
+  .dndEquipReadValue.empty { color: #68665c; font-weight: 400; }
+  .dndEquipStatValue { text-align: center; min-height: 28px; padding: 6px 3px; box-sizing: border-box; border-radius: 5px; border: 1px solid #3a3a34; background: #181a17; color: #eae6da; font-size: 13px; font-weight: 700; }
   /* ---- ป้ายประกาศสถานที่ / สถานการณ์ (DM เท่านั้นที่กำหนด) ---- */
   #dndSceneBanner {
-    display: none; width: 100%; box-sizing: border-box; background: linear-gradient(135deg, #221d10, #161b22);
-    border: 1px solid #4a3d1a; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; text-align: center;
+    display: none; width: 100%; box-sizing: border-box; background: linear-gradient(135deg, #2e2411, #181a17);
+    border: 1px solid #5a4a24; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; text-align: center;
   }
-  #dndSceneLocation { color: #ffd76b; font-weight: bold; font-size: 15px; }
-  #dndSceneSituation { color: #e6e6e6; font-size: 13px; margin-top: 4px; line-height: 1.5; white-space: pre-wrap; }
-  #dndSceneEditBox { width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-  #dndSceneEditBox h4 { margin: 0 0 8px 0; color: #ffd76b; font-size: 13px; }
+  #dndSceneLocation { color: #c9a24a; font-weight: bold; font-size: 15px; }
+  #dndSceneSituation { color: #eae6da; font-size: 13px; margin-top: 4px; line-height: 1.5; white-space: pre-wrap; }
+  #dndSceneEditBox { width: 100%; box-sizing: border-box; background: #181a17; border: 1px solid #3a3a34; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  #dndSceneEditBox h4 { margin: 0 0 8px 0; color: #c9a24a; font-size: 13px; }
   #dndSceneEditBox .dndFieldRow { margin-bottom: 8px; }
   #dndSceneAnnounceBtn {
-    flex: 1; padding: 8px; border: none; border-radius: 6px; background: #6fd3ff; color: #0a0a12;
+    flex: 1; padding: 8px; border: none; border-radius: 6px; background: #c94a3d; color: #16140f;
     font-weight: bold; cursor: pointer; font-size: 13px;
   }
   #dndSceneClearBtn {
-    flex: 1; padding: 8px; border: none; border-radius: 6px; background: #2c3341; color: #eee;
+    flex: 1; padding: 8px; border: none; border-radius: 6px; background: #2c2e29; color: #eae6da;
     font-weight: bold; cursor: pointer; font-size: 13px;
   }
   #dndSceneEditBtnRow { display: flex; gap: 8px; }
   /* ---- นาฬิกาในเกม ---- */
   #dndTimeBanner {
     display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; box-sizing: border-box;
-    background: linear-gradient(135deg, #10182a, #161b22); border: 1px solid #2a3550; border-radius: 8px;
-    padding: 8px 14px; margin-bottom: 12px; color: #9fc9ff; font-weight: bold; font-size: 14px;
+    background: linear-gradient(135deg, #20140f, #181a17); border: 1px solid #4a3020; border-radius: 8px;
+    padding: 8px 14px; margin-bottom: 12px; color: #d4a86a; font-weight: bold; font-size: 14px;
   }
   #dndTimeBannerIcon { font-size: 17px; }
-  #dndTimeBannerAuto { font-size: 12px; color: #7ee87e; animation: dndTimeAutoPulse 1.6s ease-in-out infinite; }
+  #dndTimeBannerAuto { font-size: 12px; color: #6fb84f; animation: dndTimeAutoPulse 1.6s ease-in-out infinite; }
   @keyframes dndTimeAutoPulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
   #dndTimeAutoRow { display: flex; gap: 8px; margin-bottom: 8px; }
   #dndTimeAutoToggleBtn {
-    flex: 1; padding: 8px; border: none; border-radius: 6px; background: #7ee87e; color: #0a0a12;
+    flex: 1; padding: 8px; border: none; border-radius: 6px; background: #6fb84f; color: #16140f;
     font-weight: bold; cursor: pointer; font-size: 13px;
   }
-  #dndTimeAutoToggleBtn.dndTimeAutoOn { background: #ff8080; }
+  #dndTimeAutoToggleBtn.dndTimeAutoOn { background: #d9695a; }
   #dndTimeAutoSpeedSelect {
-    padding: 6px 8px; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #eee; font-size: 12px;
+    padding: 6px 8px; border-radius: 6px; border: 1px solid #3a3a34; background: #20221e; color: #eae6da; font-size: 12px;
   }
-  #dndTimeEditBox { width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-  #dndTimeEditBox h4 { margin: 0 0 8px 0; color: #ffd76b; font-size: 13px; }
+  #dndTimeEditBox { width: 100%; box-sizing: border-box; background: #181a17; border: 1px solid #3a3a34; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  #dndTimeEditBox h4 { margin: 0 0 8px 0; color: #c9a24a; font-size: 13px; }
   #dndTimeEditBox .dndFieldRow { margin-bottom: 8px; }
   #dndTimeQuickBtnRow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
   .dndTimeAdvBtn, #dndTimeSkipDayBtn {
-    padding: 6px 10px; border: none; border-radius: 6px; background: #2c3341; color: #eee;
+    padding: 6px 10px; border: none; border-radius: 6px; background: #2c2e29; color: #eae6da;
     font-weight: bold; cursor: pointer; font-size: 12px;
   }
-  #dndTimeSkipDayBtn { background: #6fd3ff; color: #0a0a12; }
+  #dndTimeSkipDayBtn { background: #c94a3d; color: #16140f; }
   #dndTimeSetBtn {
-    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #7ee87e; color: #0a0a12;
+    width: 100%; padding: 8px; border: none; border-radius: 6px; background: #6fb84f; color: #16140f;
     font-weight: bold; cursor: pointer; font-size: 13px;
   }
   #blackout {
@@ -964,16 +1174,16 @@
     align-items: center; justify-content: center; cursor: pointer;
   }
   #blackout span {
-    color: #333; font-size: 14px; letter-spacing: 1px; user-select: none;
+    color: #68665c; font-size: 14px; letter-spacing: 1px; user-select: none;
   }
 
   .dndSkillLockedBtn { opacity:0.65; cursor:not-allowed !important; }
   .dndTargetList { display:flex; flex-direction:column; gap:10px; max-height:360px; overflow:auto; }
-  .dndTargetOption { width:100%; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 14px; border:1px solid #30363d; border-radius:10px; background:#161b22; color:#f0f3f6; cursor:pointer; text-align:left; font-size:14px; }
-  .dndTargetOption:hover { border-color:#58a6ff; background:#1c2530; }
-  .dndTargetOption.selected { border-color:#ffd76b; box-shadow:0 0 0 2px rgba(255,215,107,.18); background:#2a2414; }
-  .dndTargetOption span:last-child { color:#9aa4b2; font-size:12px; white-space:nowrap; }
-  .dndTargetOption { width:100%; display:flex; justify-content:space-between; gap:10px; align-items:center; padding:11px 12px; border:1px solid #3a4150; border-radius:8px; background:#0d1117; color:#eee; cursor:pointer; text-align:left; }
-  .dndTargetOption:hover { border-color:#6fd3ff; }
-  .dndTargetOption.selected { border-color:#ffd76b; box-shadow:0 0 0 2px rgba(255,215,107,.2); background:#211d10; }
-  .dndTargetOption span:last-child { color:#9aa4b2; font-size:12px; white-space:nowrap; }
+  .dndTargetOption { width:100%; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 14px; border:1px solid #3a3a34; border-radius:10px; background:#181a17; color:#eae6da; cursor:pointer; text-align:left; font-size:14px; }
+  .dndTargetOption:hover { border-color:#c94a3d; background:#2c2e29; }
+  .dndTargetOption.selected { border-color:#c9a24a; box-shadow:0 0 0 2px rgba(201,162,74,.18); background:#342a16; }
+  .dndTargetOption span:last-child { color:#9c9a8e; font-size:12px; white-space:nowrap; }
+  .dndTargetOption { width:100%; display:flex; justify-content:space-between; gap:10px; align-items:center; padding:11px 12px; border:1px solid #3a3a34; border-radius:8px; background:#20221e; color:#eae6da; cursor:pointer; text-align:left; }
+  .dndTargetOption:hover { border-color:#c94a3d; }
+  .dndTargetOption.selected { border-color:#c9a24a; box-shadow:0 0 0 2px rgba(201,162,74,.2); background:#2e2411; }
+  .dndTargetOption span:last-child { color:#9c9a8e; font-size:12px; white-space:nowrap; }

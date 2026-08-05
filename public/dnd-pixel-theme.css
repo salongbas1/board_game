@@ -1,0 +1,352 @@
+/* =====================================================================
+   ธีมกรอบเกมพิกเซล/เรโทรน่ารักๆ — เฉพาะโซน D&D (หน้าเลือกตัวละคร + หน้าเกม)
+   แนวคิด: ทุกกล่อง/ปุ่ม เป็น "หน้าต่างเกมคอนโซลย้อนยุค" ขอบครีมหนา มุมบาก
+   ปุ่ม/การ์ด/แท็บ = อัญมณีพิกเซล (มุมบากตัว L) ส่วนหน้าต่างที่ต้องเลื่อน (สกิล/
+   ร้านค้า/แชท) = จอคอนโซลกรอบหนาเงาทึบ (ไม่ตัดมุม กันปัญหา overflow ซ้อน clip-path)
+   สีของแต่ละแท็บ/โซน ใช้แทนหมวดหมู่ (โทนแบบเมนู RPG คลาสสิก)
+   ===================================================================== */
+
+body.dndTheme {
+  --px-bg: #150f2e;
+  --px-bg-soft: #1c1442;
+  --px-panel: #241a44;
+  --px-panel-soft: #2d2154;
+  --px-cream: #fdf3e2;
+  --px-ink: #241a44;
+  --px-pink: #ff6fa0;
+  --px-cyan: #5fe0e6;
+  --px-gold: #ffcf4d;
+  --px-green: #86e08a;
+  --px-purple: #b98af1;
+  --px-blue: #7ec8ff;
+  --px-red: #ff5566;
+  --px-accent: var(--px-cream);
+
+  --font-thai: 'Mitr', 'Trebuchet MS', 'Tahoma', sans-serif;
+  --font-pixel: 'Press Start 2P', monospace;
+
+  /* มุมบากตัว L ขนาด 8px/12px — ใช้ทำกรอบ "อัญมณีพิกเซล" บนปุ่ม/การ์ด/แบดจ์ */
+  --notch-sm: polygon(0 6px, 6px 6px, 6px 0, calc(100% - 6px) 0, calc(100% - 6px) 6px, 100% 6px,
+              100% calc(100% - 6px), calc(100% - 6px) calc(100% - 6px), calc(100% - 6px) 100%,
+              6px 100%, 6px calc(100% - 6px), 0 calc(100% - 6px));
+  --notch-lg: polygon(0 10px, 10px 10px, 10px 0, calc(100% - 10px) 0, calc(100% - 10px) 10px, 100% 10px,
+              100% calc(100% - 10px), calc(100% - 10px) calc(100% - 10px), calc(100% - 10px) 100%,
+              10px 100%, 10px calc(100% - 10px), 0 calc(100% - 10px));
+
+  background: var(--px-bg);
+  font-family: var(--font-thai);
+}
+
+/* พื้นหลังจุดพิกเซลจางๆ แบบท้องฟ้ายามค่ำคืน */
+body.dndTheme {
+  background-image:
+    radial-gradient(1px 1px at 20px 30px, rgba(253,243,226,0.35) 1px, transparent 1px),
+    radial-gradient(1px 1px at 90px 80px, rgba(253,243,226,0.25) 1px, transparent 1px),
+    radial-gradient(1px 1px at 150px 40px, rgba(253,243,226,0.3) 1px, transparent 1px),
+    radial-gradient(1px 1px at 60px 120px, rgba(253,243,226,0.2) 1px, transparent 1px);
+  background-size: 180px 160px;
+  background-repeat: repeat;
+}
+
+/* =====================================================================
+   ธีมเพิ่มเติม: ใช้โครงเดียวกับธีมพิกเซลด้านบนทั้งหมด (กรอบ/มุมบาก/ฟอนต์)
+   แค่สลับชุดสี --px-* เท่านั้น เลยไม่ต้องคัดลอกกฎ 200+ บรรทัดด้านล่างซ้ำ
+   ระบุ 2 คลาสร่วมกัน (.dndTheme.dndTheme--xxx) ให้ specificity สูงกว่า
+   ทับค่าตัวแปรของ body.dndTheme เดิมได้เสมอไม่ว่าจะประกาศลำดับไหน
+   ===================================================================== */
+
+/* ---------- ธีม "ป่าลึกลับ" — เขียวมรกต/น้ำตาลไม้/ทองอำพัน โทนดันเจี้ยนในป่า ---------- */
+body.dndTheme.dndTheme--forest {
+  --px-bg: #101d14;
+  --px-bg-soft: #16281b;
+  --px-panel: #1c3322;
+  --px-panel-soft: #24402c;
+  --px-cream: #f2ead0;
+  --px-ink: #1c3322;
+  --px-pink: #e8916b;
+  --px-cyan: #7fd9b6;
+  --px-gold: #d9b354;
+  --px-green: #8fce6a;
+  --px-purple: #b6935a;
+  --px-blue: #6fb5a8;
+  --px-red: #d8663f;
+  --px-accent: var(--px-cream);
+}
+body.dndTheme.dndTheme--forest {
+  background-image:
+    radial-gradient(1px 1px at 20px 30px, rgba(217,179,84,0.30) 1px, transparent 1px),
+    radial-gradient(1px 1px at 90px 80px, rgba(217,179,84,0.22) 1px, transparent 1px),
+    radial-gradient(1px 1px at 150px 40px, rgba(143,206,106,0.22) 1px, transparent 1px),
+    radial-gradient(1px 1px at 60px 120px, rgba(143,206,106,0.16) 1px, transparent 1px);
+}
+body.dndTheme.dndTheme--forest #dndLog div { border-bottom: 1px dashed rgba(242,234,208,0.15); }
+
+/* ---------- ธีม "เพลิงมังกร" — แดงถ่านไฟ/ส้มลาวา/ดำ โทนดันเจี้ยนภูเขาไฟ ---------- */
+body.dndTheme.dndTheme--ember {
+  --px-bg: #1a0906;
+  --px-bg-soft: #250d09;
+  --px-panel: #34140f;
+  --px-panel-soft: #421a12;
+  --px-cream: #ffe9d6;
+  --px-ink: #34140f;
+  --px-pink: #ff7a4d;
+  --px-cyan: #ffb648;
+  --px-gold: #ffcf4d;
+  --px-green: #e0a24d;
+  --px-purple: #ff5f6d;
+  --px-blue: #ff9752;
+  --px-red: #ff3b30;
+  --px-accent: var(--px-cream);
+}
+body.dndTheme.dndTheme--ember {
+  background-image:
+    radial-gradient(1px 1px at 20px 30px, rgba(255,182,72,0.35) 1px, transparent 1px),
+    radial-gradient(1px 1px at 90px 80px, rgba(255,122,77,0.28) 1px, transparent 1px),
+    radial-gradient(1px 1px at 150px 40px, rgba(255,182,72,0.30) 1px, transparent 1px),
+    radial-gradient(1px 1px at 60px 120px, rgba(255,59,48,0.18) 1px, transparent 1px);
+}
+body.dndTheme.dndTheme--ember #dndLog div { border-bottom: 1px dashed rgba(255,233,214,0.15); }
+
+body.dndTheme #pageTitle,
+body.dndTheme h1 { font-family: var(--font-pixel); font-size: 15px; line-height: 1.7; letter-spacing: 0.5px; color: var(--px-gold); text-shadow: 2px 2px 0 #000; }
+
+body.dndTheme #connStatus { font-family: var(--font-pixel); font-size: 9px; color: var(--px-cream); opacity: 0.6; }
+
+/* ---------- Join screen (เข้าห้อง/เลือกที่นั่ง) ---------- */
+body.dndTheme #dndJoinScreen {
+  background: var(--px-panel); border: 4px solid var(--px-cream); border-radius: 0;
+  box-shadow: 8px 8px 0 var(--px-pink); font-family: var(--font-thai); color: var(--px-cream);
+}
+body.dndTheme #dndJoinScreen h2, body.dndTheme #dndJoinScreen h3 { font-family: var(--font-pixel); font-size: 12px; color: var(--px-gold); line-height: 1.8; }
+
+/* =========================== พื้นฐานทั่วทั้งโซน DnD =========================== */
+body.dndTheme #dndScreen,
+body.dndTheme #dndJoinScreen,
+body.dndTheme .dndModalOverlay {
+  font-family: var(--font-thai);
+  color: var(--px-cream);
+}
+body.dndTheme #dndScreen h3,
+body.dndTheme #dndScreen h4,
+body.dndTheme #dndJoinScreen h3,
+body.dndTheme .dndModalBox h3 {
+  font-family: var(--font-pixel);
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--px-gold);
+  text-shadow: 1px 1px 0 #000;
+}
+body.dndTheme #dndScreen h4 { font-size: 10px; color: var(--px-cyan); }
+
+/* ตัวเลข/ค่าพลัง ให้เป็นฟอนต์พิกเซลจิ๋วเพื่อความอ่านง่าย (มีเฉพาะภาษาอังกฤษ/ตัวเลข) */
+body.dndTheme .dndHpText, body.dndTheme .dndSpText,
+body.dndTheme #dndTotalDefVal, body.dndTheme #dndTotalAtkVal,
+body.dndTheme #dndBagGoldVal, body.dndTheme #dndBagCapacityVal {
+  font-family: var(--font-pixel); font-size: 10px;
+}
+
+/* ---------- แถบแท็บบนสุด: ปุ่มพิกเซลไล่สีตามหมวดหมู่ ---------- */
+body.dndTheme #dndToolTabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+body.dndTheme .dndToolTabBtn {
+  position: relative; z-index: 1;
+  font-family: var(--font-thai); font-weight: 600; font-size: 12px;
+  background: var(--px-panel-soft); color: var(--px-cream);
+  border: 3px solid var(--px-cream); border-radius: 0;
+  clip-path: var(--notch-sm);
+  padding: 9px 10px; cursor: pointer; transition: transform 0.05s ease;
+}
+body.dndTheme .dndToolTabBtn::before {
+  content: ""; position: absolute; inset: 0; transform: translate(4px, 4px);
+  background: var(--px-accent); clip-path: inherit; z-index: -1;
+}
+body.dndTheme .dndToolTabBtn:hover { transform: translate(-1px, -1px); }
+body.dndTheme .dndToolTabBtn.active { transform: translate(2px, 2px); }
+body.dndTheme .dndToolTabBtn.active::before { transform: translate(2px, 2px); }
+body.dndTheme .dndToolTabBtn:active { transform: translate(4px, 4px); }
+body.dndTheme .dndToolTabBtn:active::before { transform: translate(0, 0); }
+
+body.dndTheme #dndToolTabDice { --px-accent: var(--px-gold); }
+body.dndTheme #dndToolTabAttack { --px-accent: var(--px-pink); }
+body.dndTheme #dndToolTabSkill { --px-accent: var(--px-cyan); }
+body.dndTheme #dndToolTabMap { --px-accent: var(--px-blue); }
+body.dndTheme #dndToolTabShop { --px-accent: var(--px-green); }
+body.dndTheme #dndToolTabBag { --px-accent: var(--px-purple); }
+
+/* ---------- หน้าต่างป็อปอัพ (ลูกเต๋า/โจมตี/สกิล/ร้านค้า/กระเป๋า/เป้าหมาย/แก้ไข DM) ---------- */
+body.dndTheme .dndModalOverlay { background: rgba(10, 6, 26, 0.78); backdrop-filter: blur(1px); }
+body.dndTheme .dndModalBox {
+  background: var(--px-panel);
+  border: 4px solid var(--px-cream);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--px-accent, var(--px-pink));
+  padding: 18px;
+}
+body.dndTheme #dndDiceOverlay .dndModalBox, body.dndTheme #dndDiceBox { --px-accent: var(--px-gold); }
+body.dndTheme #dndAttackOverlay .dndModalBox, body.dndTheme #dndAttackBox { --px-accent: var(--px-pink); }
+body.dndTheme #dndSkillOverlay .dndModalBox, body.dndTheme #dndSkillBox { --px-accent: var(--px-cyan); }
+body.dndTheme #dndShopOverlay .dndModalBox, body.dndTheme #dndShopBox { --px-accent: var(--px-green); }
+body.dndTheme #dndBagOverlay .dndModalBox, body.dndTheme #dndBagBox { --px-accent: var(--px-purple); }
+body.dndTheme #dndMapBox { --px-accent: var(--px-blue); }
+body.dndTheme .dndPeekWindow {
+  background: var(--px-panel);
+  border: 4px solid var(--px-cream);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--px-pink);
+}
+body.dndTheme .dndPeekWindowHeader { background: var(--px-panel-soft); border-bottom: 4px solid var(--px-cream); }
+body.dndTheme .dndPeekWindowTitle { font-family: var(--font-pixel); font-size: 9px; }
+body.dndTheme .dndPeekWindowClose { background: var(--px-cream); color: var(--px-ink); border: 2px solid var(--px-cream); border-radius: 0; }
+
+body.dndTheme .dndModalBox::-webkit-scrollbar,
+body.dndTheme #dndLog::-webkit-scrollbar { width: 12px; }
+body.dndTheme .dndModalBox::-webkit-scrollbar-track,
+body.dndTheme #dndLog::-webkit-scrollbar-track { background: var(--px-bg-soft); }
+body.dndTheme .dndModalBox::-webkit-scrollbar-thumb,
+body.dndTheme #dndLog::-webkit-scrollbar-thumb { background: var(--px-accent, var(--px-cream)); border: 2px solid var(--px-panel); border-radius: 0; }
+
+/* ---------- แผนที่: กรอบจอฟ้าเรโทร ---------- */
+body.dndTheme #dndMapBox {
+  background: var(--px-panel); border: 4px solid var(--px-cream); border-radius: 0;
+  box-shadow: 8px 8px 0 var(--px-blue); padding: 16px; margin-bottom: 12px;
+}
+
+/* ---------- กล่องแผงหลัก (สถานะ DM / ลำดับเทิร์น / การ์ดตัวละครใหม่ / บันทึกแชท / สรุปสกิล DM) ---------- */
+body.dndTheme #dndDmStatusBox,
+body.dndTheme #dndTurnBox,
+body.dndTheme #dndCreateBox,
+body.dndTheme #dndLogBox,
+body.dndTheme #dndDmSkillsOverviewBox {
+  background: var(--px-panel);
+  border: 4px solid var(--px-cream);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--px-accent, var(--px-gold));
+  padding: 14px;
+}
+body.dndTheme #dndTurnBox { --px-accent: var(--px-purple); }
+body.dndTheme #dndLogBox { --px-accent: var(--px-cyan); }
+body.dndTheme #dndLog { background: var(--px-bg-soft); border: 2px solid var(--px-panel-soft); padding: 8px; font-family: var(--font-thai); }
+body.dndTheme #dndLog div { border-bottom: 1px dashed rgba(253,243,226,0.15); padding: 3px 0; }
+
+/* ---------- การ์ดตัวละครในปาร์ตี้: อัญมณีพิกเซลมุมบาก ---------- */
+body.dndTheme .dndPCard {
+  position: relative; z-index: 1;
+  background: var(--px-panel-soft);
+  border: 3px solid var(--px-cream);
+  border-radius: 0;
+  clip-path: var(--notch-lg);
+  padding: 12px 14px;
+  --px-accent: var(--px-purple);
+}
+body.dndTheme .dndPCard::before {
+  content: ""; position: absolute; inset: 0; transform: translate(5px, 5px);
+  background: var(--px-accent); clip-path: inherit; z-index: -1;
+}
+body.dndTheme .dndPCard.me { --px-accent: var(--px-pink); border-color: var(--px-pink); }
+body.dndTheme .dndPCard.dm { --px-accent: var(--px-gold); border-color: var(--px-gold); }
+body.dndTheme .dndPCard.myTurn { border-color: var(--px-gold); box-shadow: none; }
+body.dndTheme .dndPCard.dead { --px-accent: #3a2a2a; opacity: 0.75; }
+body.dndTheme .dndPCard.permaDead { --px-accent: #1a1a1a; }
+body.dndTheme .dndAvatarWrap { background: var(--px-bg-soft); border: 2px solid var(--px-cream); border-radius: 0; }
+body.dndTheme .dndPCardName { font-family: var(--font-pixel); font-size: 10px; color: var(--px-cream); }
+body.dndTheme .dndPCardTag { font-family: var(--font-pixel); font-size: 7px; border-radius: 0; background: var(--px-gold); color: var(--px-ink); }
+body.dndTheme .dndDeadBadge, body.dndTheme .dndMyTurnBadge, body.dndTheme .dndPermaDeadBadge {
+  font-family: var(--font-pixel); font-size: 7px; border-radius: 0;
+}
+body.dndTheme .dndMyTurnBadge { background: var(--px-gold); color: var(--px-ink); }
+body.dndTheme .dndDeadBadge { background: var(--px-red); color: #2a0505; }
+
+/* ---------- แถบ HP / SP: แถบพลังพิกเซลลายทาง ---------- */
+body.dndTheme .dndHpBarWrap, body.dndTheme .dndSpBarWrap {
+  height: 12px; border: 2px solid var(--px-cream); border-radius: 0; background: var(--px-bg-soft);
+}
+body.dndTheme .dndHpBar {
+  background-color: var(--px-green);
+  background-image: repeating-linear-gradient(90deg, transparent 0 5px, rgba(0,0,0,0.18) 5px 6px);
+}
+body.dndTheme .dndHpBar.low { background-color: var(--px-red); }
+body.dndTheme .dndSpBar {
+  background-color: var(--px-cyan);
+  background-image: repeating-linear-gradient(90deg, transparent 0 5px, rgba(0,0,0,0.18) 5px 6px);
+}
+body.dndTheme .dndHpText { color: var(--px-green); font-family: var(--font-pixel); font-size: 9px; }
+body.dndTheme .dndHpText.low, body.dndTheme .dndHpBar.low + .dndHpText { color: var(--px-red); }
+body.dndTheme .dndSpText { color: var(--px-cyan); font-family: var(--font-pixel); font-size: 9px; }
+
+/* ---------- ชิป/แบดจ์ (สกิล, สถานะ) ---------- */
+body.dndTheme .dndSkillChip, body.dndTheme .dndPCardStatChip {
+  position: relative; z-index: 1;
+  border-radius: 0; clip-path: var(--notch-sm);
+  border: 2px solid var(--px-cream); background: var(--px-panel-soft); color: var(--px-cream);
+  font-family: var(--font-thai); font-weight: 600;
+}
+body.dndTheme .dndSkillChip { --px-accent: var(--px-gold); }
+body.dndTheme .dndSkillChipLocked { --px-accent: #555; }
+
+/* ---------- ปุ่มทั่วไปในโซน DnD: ปุ่มพิกเซลกดได้ ---------- */
+body.dndTheme #dndScreen button:not(.linkBtn),
+body.dndTheme #dndJoinScreen button:not(.linkBtn),
+body.dndTheme .dndModalBox button:not(.linkBtn) {
+  position: relative; z-index: 1;
+  font-family: var(--font-thai); font-weight: 600; font-size: 12px;
+  background: var(--px-cream); color: var(--px-ink);
+  border: 3px solid var(--px-cream); border-radius: 0;
+  clip-path: var(--notch-sm);
+  padding: 9px 14px; cursor: pointer;
+  transition: transform 0.05s ease;
+}
+body.dndTheme #dndScreen button:not(.linkBtn)::before,
+body.dndTheme #dndJoinScreen button:not(.linkBtn)::before,
+body.dndTheme .dndModalBox button:not(.linkBtn)::before {
+  content: ""; position: absolute; inset: 0; transform: translate(4px, 4px);
+  background: var(--px-accent, var(--px-ink)); clip-path: inherit; z-index: -2;
+}
+body.dndTheme #dndScreen button:not(.linkBtn):hover,
+body.dndTheme #dndJoinScreen button:not(.linkBtn):hover,
+body.dndTheme .dndModalBox button:not(.linkBtn):hover { transform: translate(-1px, -1px); }
+body.dndTheme #dndScreen button:not(.linkBtn):active,
+body.dndTheme #dndJoinScreen button:not(.linkBtn):active,
+body.dndTheme .dndModalBox button:not(.linkBtn):active { transform: translate(4px, 4px); }
+body.dndTheme #dndScreen button:not(.linkBtn):disabled,
+body.dndTheme .dndModalBox button:not(.linkBtn):disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ปุ่มหลักตามหมวดสี */
+body.dndTheme #dndRollBtn { --px-accent: var(--px-gold); }
+body.dndTheme #dndNormalAttackBtn { --px-accent: var(--px-pink); }
+body.dndTheme #dndSkillAddBtn, body.dndTheme #dndPassiveAddBtn { --px-accent: var(--px-cyan); }
+body.dndTheme #dndShopAddBtn { --px-accent: var(--px-green); }
+body.dndTheme #dndTargetConfirmBtn { --px-accent: var(--px-purple); }
+body.dndTheme .dndDmEditCancelBtn { --px-accent: #555; background: var(--px-panel-soft); color: var(--px-cream); border-color: var(--px-cream); }
+
+/* ---------- ลูกเต๋า: ปุ่มลูกเต๋าฟอนต์พิกเซลจริง ---------- */
+body.dndTheme .dndDieBtn {
+  font-family: var(--font-pixel) !important; font-size: 11px !important;
+  --px-accent: var(--px-panel-soft);
+}
+body.dndTheme .dndDieBtn.active { --px-accent: var(--px-gold); background: var(--px-gold); color: var(--px-ink); }
+
+/* ---------- ฟอร์ม: input / select / textarea ---------- */
+body.dndTheme #dndScreen input, body.dndTheme #dndScreen select, body.dndTheme #dndScreen textarea,
+body.dndTheme #dndJoinScreen input,
+body.dndTheme .dndModalBox input, body.dndTheme .dndModalBox select, body.dndTheme .dndModalBox textarea {
+  font-family: var(--font-thai); background: var(--px-bg-soft); color: var(--px-cream);
+  border: 2px solid var(--px-cream); border-radius: 0; padding: 7px 9px; font-size: 13px;
+}
+body.dndTheme #dndScreen input:focus, body.dndTheme #dndScreen select:focus, body.dndTheme #dndScreen textarea:focus,
+body.dndTheme .dndModalBox input:focus, body.dndTheme .dndModalBox select:focus, body.dndTheme .dndModalBox textarea:focus {
+  outline: 2px solid var(--px-gold); outline-offset: 1px;
+}
+body.dndTheme #dndScreen label, body.dndTheme .dndModalBox label { font-size: 12px; color: var(--px-cream); opacity: 0.85; }
+body.dndTheme .dndRangeHint { color: #c9bfe0; font-size: 11px; }
+
+/* เคารพผู้ใช้ที่ปิดอนิเมชัน */
+@media (prefers-reduced-motion: reduce) {
+  body.dndTheme .dndToolTabBtn,
+  body.dndTheme #dndScreen button:not(.linkBtn),
+  body.dndTheme .dndModalBox button:not(.linkBtn) { transition: none; }
+}
+
+/* จอแคบ: ลดขนาดฟอนต์พิกเซลของหัวข้อลงอีกนิด กันล้นบรรทัด */
+@media (max-width: 480px) {
+  body.dndTheme #dndScreen h3, body.dndTheme .dndModalBox h3 { font-size: 10px; }
+  body.dndTheme #pageTitle, body.dndTheme h1 { font-size: 12px; }
+}

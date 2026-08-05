@@ -62,6 +62,35 @@ let dndRacePassiveOverrides = {}; // { `${raceKey}:${passiveKey}`: {name, icon, 
 let dndNextPassiveId = 1;
 let dndSummonTemplateOverrides = {}; // { summonTemplateKey: {name, icon, color, size, maxHp, ac, str..cha, statusResist, attacks} } — DM edits to the default values of a built-in summon template (DND_SUMMON_TEMPLATES), same override pattern as dndRacePassiveOverrides above
 let dndScene = { location: '', situation: '' }; // ป้ายประกาศสถานที่/สถานการณ์บนจอทุกคน — DM เท่านั้นที่กำหนดได้
+let dndCutscene = null; // { kind: 'image'|'video', url, local } — DM เปิดภาพ/วิดีโอคัตซีนเต็มจอให้ทุกคนเห็นพร้อมกัน, null = ไม่มีคัตซีนแสดงอยู่ (local=true คือมาจากไฟล์ในเครื่อง DM ไม่ใช่ url)
+// ไฟล์คัตซีนจากเครื่อง DM (base64 data URI) — แยกเก็บ/ส่งเหมือน dndSounds ด้านล่าง ไม่ใส่ไว้ใน dndBroadcastState
+// เพราะเป็นข้อมูลหนัก ถ้าใส่ไว้ใน state ปกติจะถูกส่งซ้ำทุกครั้งที่มีอะไรเปลี่ยนในห้อง — ส่งแค่ตอนคัตซีนเปลี่ยน หรือตอนมีคนเพิ่งต่อเข้ามาเท่านั้น (ดู dndBroadcastCutsceneMedia)
+let dndCutsceneMedia = null; // { kind: 'image'|'video', data } | null
+const DND_MAX_CUTSCENE_CHARS = 6000000; // ไฟล์จริง ~4.5MB (base64 ใหญ่กว่าไฟล์จริงประมาณ 4/3 เท่า) — พอสำหรับภาพ/คลิปสั้นๆ ไม่ควรใหญ่เกินนี้เพราะกระจายให้ทุกคนพร้อมกัน
+// ---- กล่องเสียง (Soundboard): DM อัปโหลดคลิปเสียงสั้นๆ ไว้ล่วงหน้า แล้วกดเล่นให้ทุกคนได้ยินพร้อมกันตอนไหนก็ได้ ----
+// [{id, name, data}] — data คือไฟล์เสียงในรูป base64 data URI (data:audio/...) เก็บไว้ที่นี่ครั้งเดียว ไม่ใส่ไว้ใน dndBroadcastState
+// (ซึ่งยิงซ้ำทุกครั้งที่มีอะไรเปลี่ยนในห้อง) เพราะจะทำให้ข้อมูลเสียงถูกส่งซ้ำๆ หนักเปล่าประโยชน์ — ส่งแค่ตอนรายการเปลี่ยน หรือตอนมีคนเพิ่งต่อเข้ามาเท่านั้น (ดู dndBroadcastSounds)
+let dndSounds = [];
+let dndNextSoundId = 1;
+const DND_MAX_SOUND_CHARS = 700000; // ไฟล์จริง ~500KB (base64 ใหญ่กว่าไฟล์จริงประมาณ 4/3 เท่า) — พอสำหรับคลิปเอฟเฟกต์สั้นๆ
+// ---- ดนตรีพื้นหลัง (Background Music): DM อัปโหลดเพลงไว้ล่วงหน้า แล้วสั่งเล่น/หยุดชั่วคราว/หยุดสนิท/ปรับเสียง/วนลูปให้ทุกคนในห้องได้ยินพร้อมกัน ----
+// ต่างจากกล่องเสียงเอฟเฟกต์ด้านบน (เล่นครั้งเดียวจบ ไม่มี state ค้าง) เพลงพื้นหลังต้อง "ค้างสถานะ" ไว้ที่ห้อง
+// เพื่อให้คนที่เพิ่งเข้าห้อง/รีเฟรชหน้า sync กับเพลงที่กำลังเล่นอยู่ได้ทันที ไม่ใช่แค่คนที่อยู่ตอนกดเล่น
+let dndMusicTracks = []; // [{id, name, data}] — data คือไฟล์เพลงในรูป base64 data URI เก็บไว้ครั้งเดียว ไม่ใส่ไว้ใน dndBroadcastState (เหตุผลเดียวกับ dndSounds ด้านบน)
+let dndNextMusicId = 1;
+const DND_MAX_MUSIC_CHARS = 8000000; // ไฟล์จริง ~6MB ต่อเพลง (เพลงยาวกว่าคลิปเอฟเฟกต์ในกล่องเสียง จึงให้โควตาใหญ่กว่า)
+let dndMusicState = {
+  trackId: null,   // id เพลงที่กำลังเลือกอยู่ (null = ไม่มีเพลงเล่นอยู่ในห้อง)
+  playing: false,
+  volume: 0.6,     // 0..1 ระดับเสียงกลางที่ DM ตั้ง — ผู้เล่นแต่ละคนยังปรับเสียงในเครื่องตัวเองทับได้อีกที (ฝั่ง client เท่านั้น ไม่กระทบคนอื่น)
+  loop: true,
+  startedAt: null, // Date.now() ตอนเริ่ม/เล่นต่อช่วงล่าสุด — ใช้คำนวณตำแหน่งเพลง ณ ตอนนี้ (ดู dndMusicPositionSec) ให้คนเข้าห้องทีหลัง sync ตำแหน่งเพลงได้ตรงจุด
+  offsetSec: 0,    // ตำแหน่งวินาทีสะสมตอนหยุดชั่วคราวไว้ล่าสุด — เล่นต่อจากตรงนี้
+};
+function dndMusicPositionSec() {
+  if (!dndMusicState.playing || !dndMusicState.startedAt) return dndMusicState.offsetSec;
+  return dndMusicState.offsetSec + (Date.now() - dndMusicState.startedAt) / 1000;
+}
 // นาฬิกาในเกม + เวลาวิ่งอัตโนมัติ — state ย้ายไปอยู่ใน server/dnd/game-time.js แล้ว (ดูการ instantiate ด้านล่าง)
 // ---- ลำดับเทิร์นผู้เล่น+มอนสเตอร์: DM จัดลำดับเอง (ไม่ทอย initiative) แล้วกดเลื่อนตาไปเรื่อยๆ วนลูป ----
 // state (turnOrder/turnIndex) ย้ายไปอยู่ใน server/dnd/turn-order.js แล้ว (module 4, ดูการ instantiate ด้านล่าง)
@@ -277,6 +306,8 @@ function dndHandleClassSkillOverrideSave(ws, targetId, skillId, payload) {
   const dmgDie = DND_VALID_DICE.includes(Number(dmg.die)) ? Number(dmg.die) : 0;
   const dmgCount = Math.max(1, Math.min(20, Math.round(Number(dmg.count) || 1)));
   const dmgMod = Math.max(-100, Math.min(100, Math.round(Number(dmg.mod) || 0)));
+  // ทอยโจมตี modifier เพิ่มเติมของสกิลนี้ (เฉพาะผู้เล่นคนนี้คนเดียว) — ดูรายละเอียดที่ dndHandleSkillCreate
+  const atkMod = Math.max(-50, Math.min(50, Math.round(Number(payload.atkMod) || 0)));
   const cooldownSec = Math.max(0, Math.min(3600, Math.round(Number(payload.cooldownSec) || 0)));
   const maxUses = Math.max(0, Math.min(99, Math.round(Number(payload.maxUses) || 0)));
   // SP ที่ต้องใช้ต่อการใช้สกิลนี้ 1 ครั้ง เฉพาะผู้เล่นคนนี้คนเดียว — 0 = ไม่ใช้ SP เลย
@@ -316,7 +347,7 @@ function dndHandleClassSkillOverrideSave(ws, targetId, skillId, payload) {
 
   target.character.skillOverrides = target.character.skillOverrides || {};
   target.character.skillOverrides[sid] = {
-    name, stat, desc, dmgDie, dmgCount, dmgMod, cooldownSec, maxUses, spCost, hitChance, guaranteedHit,
+    name, stat, desc, dmgDie, dmgCount, dmgMod, atkMod, cooldownSec, maxUses, spCost, hitChance, guaranteedHit,
     healDie, healCount, healMod, healRevive, statusName: status.name, statusNote: status.note, statusChance: status.chance, buffAlly, targetMode,
     statusDurationSec: status.durationSec, statusAtkMod: status.atkMod, statusDmgMod: status.dmgMod, statusDefMod: status.defMod, statusVisionMod: status.visionMod,
     statusTickValue: status.tickValue, statusTickIntervalSec: status.tickIntervalSec, statusIcon: status.icon, statusColor: status.color,
@@ -373,7 +404,13 @@ function dndPublicPlayer(p, viewerId) {
   }));
   // แอบเป็น DM (/game mode 1): ซ่อนสถานะ DM จริงจากทุกคนยกเว้นตัวเอง ให้คนอื่นมองว่าเป็นผู้เล่นปกติ
   const shownIsDM = (p.secretDM && viewerId !== p.id) ? false : p.isDM;
-  return { id: p.id, isDM: shownIsDM, connected: p.connected, character: p.character, assignedSkills, classSkills };
+  // ความเป็นส่วนตัวของกระเป๋าไอเทม: เห็นของในกระเป๋าได้เฉพาะเจ้าของเอง + DM เท่านั้น
+  // ผู้เล่นคนอื่น (ไม่ใช่เจ้าของ ไม่ใช่ DM) จะไม่เห็นรายการไอเทมในกระเป๋าของคนนี้เลย (ซ่อนเป็น [] ตั้งแต่ต้นทาง ไม่ใช่แค่ซ่อนที่ UI)
+  const viewer = dndPlayers.find(pl => pl.id === viewerId);
+  const viewerIsDM = !!(viewer && viewer.isDM);
+  const isSelf = viewerId === p.id;
+  const character = (viewerIsDM || isSelf) ? p.character : Object.assign({}, p.character, { bag: [] });
+  return { id: p.id, isDM: shownIsDM, connected: p.connected, character, assignedSkills, classSkills };
 
 }
 // คืนรายการสกิลที่ผู้เล่นคนนี้มองเห็น พร้อมสถานะคูลดาวน์/จำนวนครั้งที่ใช้ไปแล้ว "เฉพาะของเขาเอง"
@@ -448,6 +485,7 @@ function dndBroadcastState() {
         itemEffects: dndItemEffects,
         trades: dndTradesForPlayer(p),
         scene: dndScene,
+        cutscene: dndCutscene,
         gameTime: dndGameTimeModule.getGameTime(),
         timeAuto: dndGameTimeModule.getTimeAuto(),
         tokens: dndTokensPublic(),
@@ -523,6 +561,7 @@ function dndPublicToken(t) {
     hp: t.hp, maxHp: t.maxHp, ac: t.ac, size: t.size || 'normal',
     str: t.str || 10, dex: t.dex || 10, con: t.con || 10, int: t.int || 10, wis: t.wis || 10, cha: t.cha || 10,
     attacks: t.attacks || [], statuses: t.statuses || [], expReward: t.expReward || 0, goldReward: t.goldReward || 0, loot: t.loot || [], statusResist: t.statusResist || 0,
+    backstory: t.backstory || '',
     summoned: !!t.summoned, summonExpiresAt: t.summonExpiresAt || 0,
   };
 }
@@ -599,9 +638,9 @@ function dndSendError(ws, msg) {
 // ตัวละครถือว่า "หมดสติ/ตาย" เมื่อ HP <= 0 — ทำอะไรไม่ได้ (โจมตี/ใช้สกิล/ใช้ไอเทม/ขยับ token) จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้โดยตรง
 const DND_DEAD_MSG = 'คุณหมดสติอยู่ ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้';
 // โดนโจมตีครั้งเดียวดาเมจ >= 2 เท่าของ "เลือดสูงสุด" ตัวเอง (โอเวอร์คิล) = ตายถาวร ("permaDead")
-// ต่างจากหมดสติปกติตรงที่ไอเทม/สกิลชุบ (แม้แต่ประเภท "ชุบชีวิต") ปลุกไม่ได้เด็ดขาด — ต้องให้ DM เพิ่ม HP ให้โดยตรงเท่านั้นถึงจะฟื้นกลับมาได้
+// ต่างจากหมดสติปกติตรงที่ต้องใช้ไอเทม/สกิลประเภท "ชุบชีวิต" (revive) เท่านั้นถึงจะปลุกได้ — ไอเทม/สกิล "ฟื้นฟู HP" ธรรมดา (heal) ยังปลุกไม่ได้เหมือนเดิม (เงื่อนไขเดียวกับคนหมดสติทั่วไปทุกประการ)
 const DND_OVERKILL_MULT = 2;
-const DND_PERMADEAD_MSG = 'คุณตายถาวรแล้ว (โดนดาเมจครั้งเดียวเกิน 2 เท่าของเลือดสูงสุด) ไอเทม/สกิลชุบใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้นถึงจะฟื้นได้';
+const DND_PERMADEAD_MSG = 'คุณตายถาวรแล้ว (โดนดาเมจครั้งเดียวเกิน 2 เท่าของเลือดสูงสุด) ต้องใช้ไอเทม/สกิล "ชุบชีวิต" เท่านั้นถึงจะปลุกได้';
 function dndIsCharDead(c) { return !!c && ((Number(c.hp) || 0) <= 0 || !!c.permaDead); }
 function dndDeadMsgFor(c) { return (c && c.permaDead) ? DND_PERMADEAD_MSG : DND_DEAD_MSG; }
 
@@ -636,6 +675,7 @@ const {
 dndCtx.dndBagAdd = dndBagAdd;
 dndCtx.dndBagRemove = dndBagRemove;
 dndCtx.dndBagHasRoomFor = dndBagHasRoomFor;
+dndCtx.dndSanitizeBag = dndSanitizeBag;
 
 // ---- แลกเปลี่ยนไอเทมระหว่างผู้เล่น: ย้ายไปอยู่ที่ server/dnd/trade.js แล้ว (module 6) ----
 // getPlayers ต้องเป็นฟังก์ชัน (ไม่ใช่ค่าตรงๆ) เพราะ dndPlayers ถูกแทนที่ทั้งก้อนได้ (เช่นตอนโหลดไฟล์เซฟ)
@@ -740,12 +780,16 @@ function dndHandleJoin(ws, name) {
   // ก่อนที่เซิร์ฟเวอร์จะรู้ตัวว่าการเชื่อมต่อเก่าหลุดไปแล้ว ถ้าปล่อยให้สร้างตัวละครใหม่ซ้อนไป จะเกิดตัวละคร "ผี" ค้าง
   // อยู่ในห้อง (โชว์สถานะ/ค่าสเตตัสเก่าค้างไม่อัปเดต เพราะ ws เดียวกันไปผูกกับผู้เล่น 2 รายการพร้อมกัน) — จึงส่งสถานะปัจจุบันกลับไปแทน
   const existing = dndFindByWs(ws);
-  if (existing) { dndBroadcastState(); return; }
+  if (existing) { dndBroadcastState(); dndBroadcastSounds(ws); dndBroadcastCutsceneMedia(ws); dndBroadcastMusicList(ws); dndBroadcastMusicState(ws); return; }
   const cleanName = (name || '').toString().trim().slice(0, 16) || `นักผจญภัย${dndPlayers.length + 1}`;
   const isDM = dndPlayers.length === 0; // คนแรกที่เข้าห้องเป็น DM เสมอ และจะยังคงเป็น DM แม้หลุดการเชื่อมต่อ (ไม่มีใครมาแทนที่)
   const id = dndNextId++;
   dndPlayers.push({ id, ws, name: cleanName, isDM, connected: true, character: newDndCharacter(cleanName), dndMovedAtStep: -1 });
   dndAddLog(isDM ? `${cleanName} เข้าห้องในฐานะ DM` : `${cleanName} เข้าร่วมปาร์ตี้`);
+  dndBroadcastSounds(ws); // ส่งกล่องเสียงปัจจุบันให้คนที่เพิ่งเข้าห้องนี้คนเดียว (ไม่ต้องรบกวนคนอื่นที่มีอยู่แล้ว)
+  dndBroadcastCutsceneMedia(ws); // ส่งไฟล์คัตซีนปัจจุบัน (ถ้ามี) ให้คนที่เพิ่งเข้าห้องนี้คนเดียวเช่นกัน
+  dndBroadcastMusicList(ws); // ส่งเพลย์ลิสต์เพลงพื้นหลังปัจจุบันให้คนที่เพิ่งเข้าห้องนี้คนเดียว
+  dndBroadcastMusicState(ws); // ส่งสถานะเพลงที่กำลังเล่นอยู่ (ถ้ามี) ให้คนนี้ sync เข้าไปทันทีตั้งแต่เข้าห้อง
 }
 function dndVacantSeats() {
   return dndPlayers.filter(p => !p.connected).map(p => ({
@@ -769,6 +813,10 @@ function dndHandleTakeSeat(ws, id) {
   target.ws = ws;
   target.connected = true;
   dndAddLog(`${target.character.charName || target.name} กลับเข้ามานั่งที่เดิม${(target.isDM && !target.secretDM) ? ' (DM)' : ''}`);
+  dndBroadcastSounds(ws); // ส่งกล่องเสียงปัจจุบันให้คนนี้อีกครั้งตอนกลับเข้ามานั่ง (เผื่อพลาดตอนออกไปแล้วมีเสียงเพิ่ม/ลบระหว่างนั้น)
+  dndBroadcastCutsceneMedia(ws); // ส่งไฟล์คัตซีนปัจจุบัน (ถ้ามี) ให้คนนี้อีกครั้งตอนกลับเข้ามานั่งเช่นกัน
+  dndBroadcastMusicList(ws); // ส่งเพลย์ลิสต์เพลงพื้นหลังให้คนนี้อีกครั้งตอนกลับเข้ามานั่ง
+  dndBroadcastMusicState(ws); // ส่งสถานะเพลงปัจจุบันให้คนนี้ sync ตำแหน่งเพลงตอนกลับเข้ามานั่งเช่นกัน
 }
 
 // ผู้เล่นสร้างการ์ดตัวละครของตัวเองได้ "ครั้งเดียว" เท่านั้น — หลังบันทึกแล้วจะถูกล็อกทันที
@@ -1030,6 +1078,7 @@ function dndHandleDmUpdate(ws, targetId, updates) {
       const slotItem = c.equipment[slotKey];
       if (slotItem && slotItem.name) dndAutoRegisterEquipItemEffect(slotItem.name, slotItem, slotKey);
     }
+    dndAutoUnequipBrokenGear(target);
   }
   if (updates.appearance !== undefined) c.appearance = dndSanitizeAppearance(updates.appearance);
   // DM ปรับแต่ง "โจมตีปกติ" ของผู้เล่นคนนี้ได้ — ส่ง null มา = ล้างกลับไปใช้ค่าเริ่มต้นของระบบ (max STR/DEX, 1d6)
@@ -1073,6 +1122,42 @@ const {
   handleTurnNext: dndHandleTurnNext,
   handleTurnStop: dndHandleTurnStop,
 } = dndTurnOrderModule;
+// ระบบคงทนหมด → ถอดอุปกรณ์ออกอัตโนมัติ: เช็คทุกช่องอุปกรณ์ที่ใช้ระบบความคงทนจริง (maxDurability > 0) ถ้าคงทนเหลือ 0 (ชำรุด)
+// จะถอดออกจากช่องทันที เก็บเข้ากระเป๋าเป็นกอง "ชำรุด" แยกจากของปกติชื่อเดียวกัน (ห้ามกองรวม เพราะใช้/สวมใส่ไม่ได้)
+// ของที่ไม่ได้ตั้งค่าความคงทนไว้เลย (maxDurability = 0 หรือไม่ได้กำหนด เช่น "0/0") ถือว่าเป็นของถาวรไม่มีระบบคงทน จะไม่ถูกถอดออกเด็ดขาด
+// ต้องซ่อมก่อน (dndHandleRepairBagItem) ถึงจะกดปุ่ม "ใช้" เพื่อสวมใส่กลับได้ — กันไม่ให้ถอด-สวมใหม่ได้ของเต็มคงทนฟรีๆ
+function dndAutoUnequipBrokenGear(target) {
+  if (!target || !target.character) return;
+  const c = target.character;
+  c.equipment = dndSanitizeEquipment(c.equipment);
+  for (const slot of DND_EQUIP_SLOTS) {
+    const item = c.equipment[slot];
+    if (!item || !item.name) continue;
+    if (!(item.maxDurability > 0) || !(item.durability <= 0)) continue; // ต้องมีระบบคงทนจริง (max>0) และคงทนหมดพอดีถึงจะถอด
+    const label = DND_EQUIP_SLOT_LABELS[slot] || slot;
+    dndBagAdd(c, item.name, 1, true, true, item.maxDurability); // force + broken:true — กันของหายเพราะกระเป๋าเต็ม, แยกกองของชำรุด
+    c.equipment[slot] = dndSanitizeEquipSlot(null);
+    dndAddLog(`💔 ${label} "${item.name}" ของ ${c.charName || target.name} คงทนหมด ถูกถอดเก็บเข้ากระเป๋าอัตโนมัติ — ต้องซ่อมก่อนถึงจะสวมใส่กลับได้`);
+  }
+}
+// ผู้เล่นซ่อมของชำรุดในกระเป๋าของตัวเอง (จ่ายทองตามความคงทนเต็มของไอเทมนั้น) — ซ่อมแล้วของจะกลับมาสวมใส่ได้ปกติทันที (กดปุ่ม "ใช้" เพื่อสวมใส่)
+function dndHandleRepairBagItem(ws, name) {
+  const p = dndFindByWs(ws);
+  if (!p || p.isDM) return;
+  const c = p.character;
+  const cleanName = (name || '').toString().trim().slice(0, 40);
+  if (!cleanName) return;
+  c.bag = dndSanitizeBag(c.bag);
+  const row = c.bag.find(it => it.name === cleanName && it.broken);
+  if (!row) { dndSendError(ws, `ไม่พบ "${cleanName}" ที่ชำรุดอยู่ในกระเป๋า`); return; }
+  const cost = Math.max(0, row.maxDurability || 0) * DND_ARMOR_REPAIR_COST_PER_POINT;
+  if ((c.gold || 0) < cost) { dndSendError(ws, `ทองไม่พอซ่อม "${cleanName}" (ต้องการ ${cost}, มี ${c.gold || 0})`); return; }
+  c.gold -= cost;
+  row.qty -= 1;
+  if (row.qty <= 0) c.bag = c.bag.filter(it => it !== row);
+  dndBagAdd(c, cleanName, 1); // เพิ่มกลับเป็นของปกติ (ไม่ชำรุดแล้ว) — สวมใส่กลับได้ด้วยปุ่ม "ใช้" ตามปกติ
+  dndAddLog(`🛠️ ${c.charName || p.name} ซ่อม "${cleanName}" จนสวมใส่ได้ปกติแล้ว ด้วยทอง ${cost}`);
+}
 // ผู้เล่นแก้ไขอุปกรณ์สวมใส่ (อาวุธ/เกราะ/รองเท้า/เครื่องประดับ) ของตัวเองได้ทุกเมื่อ — ไม่ผูกกับสถานะล็อกของการ์ดตัวละคร
 // เพราะของสวมใส่เปลี่ยนบ่อยระหว่างเล่น (เจอไอเทมใหม่ ของพังจากความคงทนหมด ฯลฯ)
 function dndHandleEquipUpdate(ws, equipment) {
@@ -1090,6 +1175,7 @@ function dndHandleEquipUpdate(ws, equipment) {
       const slotItem = target.character.equipment[slotKey];
       if (slotItem && slotItem.name) dndAutoRegisterEquipItemEffect(slotItem.name, slotItem, slotKey);
     }
+    dndAutoUnequipBrokenGear(target);
     dndAddLog(`DM ปรับปรุงอุปกรณ์ของ ${target.character.charName || target.name}`);
     return;
   }
@@ -1293,6 +1379,222 @@ function dndHandleSceneUpdate(ws, payload) {
     : '(ล้างประกาศแล้ว)';
   dndAddLog(`🖥️ DM ประกาศสถานการณ์: ${text}`);
 }
+// DM เท่านั้นที่เปิด/ปิดคัตซีน (ภาพหรือวิดีโอ) แสดงเต็มจอให้ผู้เล่นทุกคนเห็นพร้อมกันได้ — รับได้ทั้งลิงก์ (URL) และไฟล์จากเครื่อง DM เอง
+// ไฟล์จากเครื่อง (base64) แยกส่งต่างหากจาก dndCutscene/state ปกติ (ดู dndCutsceneMedia + dndBroadcastCutsceneMedia ด้านบน) เพื่อไม่ให้ถูกส่งซ้ำทุกครั้งที่ state อัปเดต
+function dndIsValidCutsceneUrl(u) {
+  return /^https?:\/\/\S+$/i.test((u || '').toString().trim());
+}
+function dndBroadcastCutsceneMedia(targetWs) {
+  const payload = JSON.stringify({ type: 'dndCutsceneMedia', cutsceneMedia: dndCutsceneMedia });
+  if (targetWs) {
+    if (targetWs.readyState === WebSocket.OPEN) targetWs.send(payload);
+    return;
+  }
+  for (const pp of dndPlayers) {
+    if (pp.ws && pp.ws.readyState === WebSocket.OPEN) pp.ws.send(payload);
+  }
+}
+function dndHandleCutsceneShow(ws, payload) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM || !payload || typeof payload !== 'object') return;
+  const url = (payload.url || '').toString().trim();
+  if (!dndIsValidCutsceneUrl(url)) return;
+  let kind = (payload.kind || '').toString().trim().toLowerCase();
+  if (kind !== 'image' && kind !== 'video') {
+    kind = /\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(url) ? 'video' : 'image';
+  }
+  dndCutscene = { kind, url: url.slice(0, 1000), local: false };
+  if (dndCutsceneMedia) { dndCutsceneMedia = null; dndBroadcastCutsceneMedia(); } // เปลี่ยนมาใช้ url แล้ว เคลียร์ไฟล์เก่าที่เคยอัปโหลดทิ้ง
+  dndAddLog(`🎬 DM เปิดคัตซีนให้ทุกคนดู (${kind === 'video' ? 'วิดีโอ' : 'ภาพ'})`);
+}
+// เหมือน dndHandleCutsceneShow แต่รับไฟล์จากเครื่อง DM โดยตรง (base64 data URI) แทนลิงก์
+function dndHandleCutsceneShowLocal(ws, payload) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM || !payload || typeof payload !== 'object') return;
+  const data = (payload.data || '').toString();
+  if ((!data.startsWith('data:image/') && !data.startsWith('data:video/')) || data.length > DND_MAX_CUTSCENE_CHARS) {
+    dndSendError(ws, 'ไฟล์ใหญ่เกินไปหรือไม่ใช่รูปภาพ/วิดีโอ (ควรไม่เกินประมาณ 4-5MB)');
+    return;
+  }
+  const kind = data.startsWith('data:video/') ? 'video' : 'image';
+  dndCutscene = { kind, url: '', local: true };
+  dndCutsceneMedia = { kind, data };
+  dndBroadcastCutsceneMedia();
+  dndAddLog(`🎬 DM เปิดคัตซีนจากไฟล์ในเครื่องให้ทุกคนดู (${kind === 'video' ? 'วิดีโอ' : 'ภาพ'})`);
+}
+function dndHandleCutsceneClose(ws) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  if (!dndCutscene && !dndCutsceneMedia) return;
+  dndCutscene = null;
+  if (dndCutsceneMedia) { dndCutsceneMedia = null; dndBroadcastCutsceneMedia(); }
+  dndAddLog('🎬 DM ปิดคัตซีนแล้ว');
+}
+// ---- กล่องเสียง (Soundboard): DM เท่านั้นที่เพิ่ม/ลบ/สั่งเล่นเสียงได้ ----
+// รายการเสียง (พร้อมไฟล์ข้อมูล) ส่งแยกจาก dndBroadcastState เสมอ — ส่งให้ "ทุกคน" ก็ต่อเมื่อรายการเปลี่ยนจริงๆ (เพิ่ม/ลบ)
+// หรือส่งให้ "คนเดียว" ตอนเพิ่งต่อเข้าห้อง/กลับเข้านั่งที่เดิม (ผ่าน targetWs) — ไม่งั้นไฟล์เสียงจะโดนส่งซ้ำทุกครั้งที่มี state อัปเดตซึ่งเกิดถี่มาก
+function dndBroadcastSounds(targetWs) {
+  const payload = JSON.stringify({ type: 'dndSoundsList', sounds: dndSounds.map(s => ({ id: s.id, name: s.name, data: s.data })) });
+  if (targetWs) {
+    if (targetWs.readyState === WebSocket.OPEN) targetWs.send(payload);
+    return;
+  }
+  for (const pp of dndPlayers) {
+    if (pp.ws && pp.ws.readyState === WebSocket.OPEN) pp.ws.send(payload);
+  }
+}
+function dndHandleSoundAdd(ws, payload) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM || !payload || typeof payload !== 'object') return;
+  const name = (payload.name || '').toString().trim().slice(0, 30);
+  if (!name) { dndSendError(ws, 'กรุณาตั้งชื่อเสียง'); return; }
+  const data = (payload.data || '').toString();
+  if (!data.startsWith('data:audio/') || data.length > DND_MAX_SOUND_CHARS) {
+    dndSendError(ws, 'ไฟล์เสียงไม่ถูกต้องหรือใหญ่เกินไป (ประมาณ 500KB)');
+    return;
+  }
+  if (dndSounds.length >= 40) { dndSendError(ws, 'มีเสียงอยู่เต็มกล่องแล้ว (สูงสุด 40 เสียง) ลบบางอันก่อนเพิ่มใหม่'); return; }
+  dndSounds.push({ id: dndNextSoundId++, name, data });
+  dndBroadcastSounds();
+  dndAddLog(`🔊 DM เพิ่มเสียง "${name}" เข้ากล่องเสียง`);
+}
+function dndHandleSoundDelete(ws, soundId) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const idx = dndSounds.findIndex(s => s.id === Number(soundId));
+  if (idx === -1) return;
+  const [removed] = dndSounds.splice(idx, 1);
+  dndBroadcastSounds();
+  dndAddLog(`🔊 DM ลบเสียง "${removed.name}" ออกจากกล่องเสียง`);
+}
+// สั่งเล่นเสียงให้ทุกคนได้ยินพร้อมกัน "ตอนนี้เลย" — ไม่ต้องรอ/ผูกกับ state ของห้อง (ไม่มีไฟล์เสียงติดไปกับข้อความนี้ เพราะทุกคนมีไฟล์อยู่แล้วจาก dndSoundsList)
+function dndHandleSoundPlay(ws, soundId) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const s = dndSounds.find(ss => ss.id === Number(soundId));
+  if (!s) return;
+  const payload = JSON.stringify({ type: 'dndSoundPlay', id: s.id, name: s.name });
+  for (const pp of dndPlayers) {
+    if (pp.ws && pp.ws.readyState === WebSocket.OPEN) pp.ws.send(payload);
+  }
+  dndAddLog(`🔊 DM เล่นเสียง "${s.name}"`);
+}
+// ---- ดนตรีพื้นหลัง (Background Music): DM เท่านั้นที่เพิ่ม/ลบ/สั่งเล่น/หยุด/ปรับเสียงได้ — ผู้เล่นทุกคนได้ยินพร้อมกันแบบ real-time ----
+// รายการเพลง (พร้อมไฟล์ข้อมูล) ส่งแยกจาก dndBroadcastState เสมอ เหตุผลเดียวกับ dndBroadcastSounds ด้านบน
+function dndBroadcastMusicList(targetWs) {
+  const payload = JSON.stringify({ type: 'dndMusicList', tracks: dndMusicTracks.map(t => ({ id: t.id, name: t.name, data: t.data })) });
+  if (targetWs) {
+    if (targetWs.readyState === WebSocket.OPEN) targetWs.send(payload);
+    return;
+  }
+  for (const pp of dndPlayers) {
+    if (pp.ws && pp.ws.readyState === WebSocket.OPEN) pp.ws.send(payload);
+  }
+}
+// สถานะการเล่นปัจจุบัน (เพลงไหน เล่นอยู่ไหม เสียงเท่าไหร่ ตำแหน่งวินาทีไหน) — ส่งแยกจากไฟล์เพลง เบาและถี่กว่า ส่งทุกครั้งที่สถานะเปลี่ยน
+function dndBroadcastMusicState(targetWs) {
+  const payload = JSON.stringify({
+    type: 'dndMusicState',
+    state: {
+      trackId: dndMusicState.trackId,
+      playing: dndMusicState.playing,
+      volume: dndMusicState.volume,
+      loop: dndMusicState.loop,
+      positionSec: dndMusicPositionSec(),
+    },
+  });
+  if (targetWs) {
+    if (targetWs.readyState === WebSocket.OPEN) targetWs.send(payload);
+    return;
+  }
+  for (const pp of dndPlayers) {
+    if (pp.ws && pp.ws.readyState === WebSocket.OPEN) pp.ws.send(payload);
+  }
+}
+function dndHandleMusicAdd(ws, payload) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM || !payload || typeof payload !== 'object') return;
+  const name = (payload.name || '').toString().trim().slice(0, 40);
+  if (!name) { dndSendError(ws, 'กรุณาตั้งชื่อเพลง'); return; }
+  const data = (payload.data || '').toString();
+  if (!data.startsWith('data:audio/') || data.length > DND_MAX_MUSIC_CHARS) {
+    dndSendError(ws, 'ไฟล์เพลงไม่ถูกต้องหรือใหญ่เกินไป (ประมาณ 6MB)');
+    return;
+  }
+  if (dndMusicTracks.length >= 20) { dndSendError(ws, 'มีเพลงอยู่เต็มเพลย์ลิสต์แล้ว (สูงสุด 20 เพลง) ลบบางเพลงก่อนเพิ่มใหม่'); return; }
+  dndMusicTracks.push({ id: dndNextMusicId++, name, data });
+  dndBroadcastMusicList();
+  dndAddLog(`🎵 DM เพิ่มเพลง "${name}" เข้าเพลย์ลิสต์`);
+}
+function dndHandleMusicDelete(ws, trackId) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const idx = dndMusicTracks.findIndex(t => t.id === Number(trackId));
+  if (idx === -1) return;
+  const [removed] = dndMusicTracks.splice(idx, 1);
+  if (dndMusicState.trackId === removed.id) {
+    dndMusicState.trackId = null;
+    dndMusicState.playing = false;
+    dndMusicState.startedAt = null;
+    dndMusicState.offsetSec = 0;
+    dndBroadcastMusicState();
+  }
+  dndBroadcastMusicList();
+  dndAddLog(`🎵 DM ลบเพลง "${removed.name}" ออกจากเพลย์ลิสต์`);
+}
+function dndHandleMusicPlay(ws, trackId) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const t = dndMusicTracks.find(tt => tt.id === Number(trackId));
+  if (!t) return;
+  dndMusicState.trackId = t.id;
+  dndMusicState.playing = true;
+  dndMusicState.startedAt = Date.now();
+  dndMusicState.offsetSec = 0;
+  dndBroadcastMusicState();
+  dndAddLog(`🎵 DM เปิดเพลง "${t.name}"`);
+}
+function dndHandleMusicPause(ws) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM || !dndMusicState.trackId || !dndMusicState.playing) return;
+  dndMusicState.offsetSec = dndMusicPositionSec();
+  dndMusicState.playing = false;
+  dndMusicState.startedAt = null;
+  dndBroadcastMusicState();
+  dndAddLog('🎵 DM หยุดเพลงชั่วคราว');
+}
+function dndHandleMusicResume(ws) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM || !dndMusicState.trackId || dndMusicState.playing) return;
+  dndMusicState.playing = true;
+  dndMusicState.startedAt = Date.now();
+  dndBroadcastMusicState();
+  dndAddLog('🎵 DM เล่นเพลงต่อ');
+}
+function dndHandleMusicStop(ws) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  dndMusicState.trackId = null;
+  dndMusicState.playing = false;
+  dndMusicState.startedAt = null;
+  dndMusicState.offsetSec = 0;
+  dndBroadcastMusicState();
+  dndAddLog('🎵 DM ปิดเพลงพื้นหลัง');
+}
+function dndHandleMusicVolumeSet(ws, volume) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  const v = Number(volume);
+  if (!Number.isFinite(v)) return;
+  dndMusicState.volume = Math.max(0, Math.min(1, v));
+  dndBroadcastMusicState();
+}
+function dndHandleMusicLoopToggle(ws, loop) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) return;
+  dndMusicState.loop = !!loop;
+  dndBroadcastMusicState();
+}
 // ---- นาฬิกาในเกม — DM เท่านั้นที่เดินเวลา/ข้ามวัน/ตั้งเวลาเองได้ (ย้ายไป server/dnd/game-time.js) ----
 const DND_TIME_DAY_LABELS_TH = ['วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์', 'วันอาทิตย์'];
 const dndGameTimeModule = require('./dnd/game-time').createGameTime({ findByWs: dndFindByWs, addLog: dndAddLog });
@@ -1361,6 +1663,10 @@ function dndHandleRoll(ws, die, count, modifier, label, statKey) {
   const safeLabel = (label || '').toString().trim().slice(0, 30);
   const labelStr = safeLabel ? ` (${safeLabel})` : '';
   dndAddLog(`🎲 ${p.character.charName || p.name} ทอย ${n}d${d}${modStr}${labelStr}${statTag}: [${rolls.join(', ')}]${modStr} = ${sum}`);
+  // ส่งผลทอยจริงกลับไปให้เฉพาะคนที่ทอยเท่านั้น (แยกจาก log ข้อความ) เพื่อเล่นแอนิเมชันลูกเต๋าสปินแล้วลงเลขจริงในหน้าต่างทอยลูกเต๋าของเขาเอง
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'dndRollResult', die: d, rolls, mod, sum, label: safeLabel }));
+  }
 }
 const DND_SKILL_STATS = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const DND_STAT_LABELS_TH = { str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA' };
@@ -1470,6 +1776,9 @@ function dndHandleSkillCreate(ws, payload) {
   const dmgDie = DND_VALID_DICE.includes(Number(dmg.die)) ? Number(dmg.die) : 0; // 0 = ไม่มีดาเมจ
   const dmgCount = Math.max(1, Math.min(20, Math.round(Number(dmg.count) || 1)));
   const dmgMod = Math.max(-100, Math.min(100, Math.round(Number(dmg.mod) || 0)));
+  // ทอยโจมตี modifier เพิ่มเติมของสกิลนี้โดยเฉพาะ (บวก/ลบเข้ากับ 1d20 vs AC ตรง ๆ) — แยกจาก dmgMod (โบนัสดาเมจ) และ statusAtkMod (บัฟ/ดีบัฟที่ติดสถานะให้เป้าหมาย)
+  // ใช้ปรับความแม่นของสกิลนี้เป็นการเฉพาะ โดยไม่ต้องพึ่งค่าสเตตัส/พาสซีฟ/สถานะที่ติดตัวผู้เล่นอยู่ — บวกเข้ากับ mod ตอนทอย 1d20 vs AC เสมอ (ดู dndHandleSkillUse)
+  const atkMod = Math.max(-50, Math.min(50, Math.round(Number(payload.atkMod) || 0)));
 
   // สกิลชุบ/ฟื้นฟู HP — DM ตั้งลูกเต๋าฮีลแยกจากดาเมจได้ (0 = ไม่ใช่สกิลชุบ) ใช้กับผู้เล่นเท่านั้น รวมถึงชุบคนหมดสติให้ฟื้นได้ด้วย
   const heal = (payload.heal && typeof payload.heal === 'object') ? payload.heal : {};
@@ -1542,7 +1851,7 @@ function dndHandleSkillCreate(ws, payload) {
   // กันไม่ให้ DM เผลอตั้ง targetMode ผิด (เช่น 'monster') แล้วร่ายไม่ได้เพราะหาเป้าหมายไม่เจอตอนแผนที่ไม่มีมอนสเตอร์เลย
   if (isSummon) targetMode = 'self';
 
-  const skill = { id: dndNextSkillId++, name, icon, color, stat, desc, level, dmgDie, dmgCount, dmgMod, healDie, healCount, healMod, healRevive,
+  const skill = { id: dndNextSkillId++, name, icon, color, stat, desc, level, dmgDie, dmgCount, dmgMod, atkMod, healDie, healCount, healMod, healRevive,
     statusName: status.name, statusNote: status.note, statusChance: status.chance,
     statusDurationSec: status.durationSec, statusAtkMod: status.atkMod, statusDmgMod: status.dmgMod, statusDefMod: status.defMod, statusVisionMod: status.visionMod,
     statusTickValue: status.tickValue, statusTickIntervalSec: status.tickIntervalSec, statusIcon: status.icon, statusColor: status.color,
@@ -1557,7 +1866,7 @@ function dndHandleSkillCreate(ws, payload) {
   const ruleText = `${libraryOnly ? ' 🔒ต้องเรียนก่อน' : ''}${cooldownSec ? ` (คูลดาวน์ ${cooldownSec}วิ)` : ''}${maxUses ? ` (ใช้ได้ ${maxUses} ครั้ง)` : ''}${spCost ? ` (ใช้ SP ${spCost})` : ''}${reqItem.reqItemName ? ` (ต้องมี ${reqItem.reqItemName} x${reqItem.reqItemQty})` : ''}`;
   const healText = healDie ? ` (${healRevive ? '🌟 ชุบชีวิต' : '💚 ฟื้นฟู'} HP ${healCount}d${healDie}${healMod ? (healMod > 0 ? '+' + healMod : healMod) : ''})` : '';
   const targetModeText = targetMode === 'both' ? ' 🎯เป้าหมาย: มอนสเตอร์+ผู้เล่น' : (targetMode === 'self' ? ' 🎯เป้าหมาย: ตัวเองเท่านั้น' : (targetMode === 'player' ? ' 🎯เป้าหมาย: ผู้เล่นเท่านั้น' : ' 🎯เป้าหมาย: มอนสเตอร์เท่านั้น'));
-  dndAddLog(`✨ DM ออกแบบสกิลใหม่: ${name}${levelText}${stat ? ` (ผูก ${stat.toUpperCase()})` : (hitChance < 100 ? ` (🎯 โอกาสโดน ${hitChance}%)` : '')}${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${dmgDie ? ` (ดาเมจ ${dmgCount}d${dmgDie}${dmgMod ? (dmgMod > 0 ? '+' + dmgMod : dmgMod) : ''})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec, status.visionMod)})` : ''}${aoeRadius ? ` (💥 AOE${aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${aoeRadius})` : ''}${range ? ` (📏 ระยะโจมตี ${range} ช่อง)` : ''}${cleanseEnabled ? ` (✨ ลบล้างสถานะ${cleanseName ? ` "${cleanseName}"` : 'ทั้งหมด'})` : ''}${classText}${ruleText}${assignText}${targetModeText}${isSummon ? ` (🔮 อัญเชิญ: ${summonTemplateKey ? dndSummonTemplateByKey(summonTemplateKey).name : 'ยังไม่เลือกตัว'}${summonMaxActive > 1 ? ` x${summonMaxActive}` : ''}${summonDurationSec ? ` อยู่ได้ ${summonDurationSec}วิ` : ''})` : ''}`);
+  dndAddLog(`✨ DM ออกแบบสกิลใหม่: ${name}${levelText}${stat ? ` (ผูก ${stat.toUpperCase()}${atkMod ? `, ทอยโจมตี${atkMod > 0 ? '+' : ''}${atkMod}` : ''})` : (hitChance < 100 ? ` (🎯 โอกาสโดน ${hitChance}%)` : '')}${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${dmgDie ? ` (ดาเมจ ${dmgCount}d${dmgDie}${dmgMod ? (dmgMod > 0 ? '+' + dmgMod : dmgMod) : ''})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec, status.visionMod)})` : ''}${aoeRadius ? ` (💥 AOE${aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${aoeRadius})` : ''}${range ? ` (📏 ระยะโจมตี ${range} ช่อง)` : ''}${cleanseEnabled ? ` (✨ ลบล้างสถานะ${cleanseName ? ` "${cleanseName}"` : 'ทั้งหมด'})` : ''}${classText}${ruleText}${assignText}${targetModeText}${isSummon ? ` (🔮 อัญเชิญ: ${summonTemplateKey ? dndSummonTemplateByKey(summonTemplateKey).name : 'ยังไม่เลือกตัว'}${summonMaxActive > 1 ? ` x${summonMaxActive}` : ''}${summonDurationSec ? ` อยู่ได้ ${summonDurationSec}วิ` : ''})` : ''}`);
 }
 // DM แก้ไขสกิลที่มีอยู่แล้วได้ทุกเมื่อ — เปลี่ยนรายละเอียด, คูลดาวน์, จำนวนครั้ง, หรือมอบ/ถอนสิทธิ์ให้ผู้เล่นคนไหนก็ได้
 function dndHandleSkillEdit(ws, skillId, payload) {
@@ -1576,6 +1885,8 @@ function dndHandleSkillEdit(ws, skillId, payload) {
   const dmgDie = DND_VALID_DICE.includes(Number(dmg.die)) ? Number(dmg.die) : 0;
   const dmgCount = Math.max(1, Math.min(20, Math.round(Number(dmg.count) || 1)));
   const dmgMod = Math.max(-100, Math.min(100, Math.round(Number(dmg.mod) || 0)));
+  // ทอยโจมตี modifier เพิ่มเติมของสกิลนี้ — แก้ไขได้เหมือนกัน ดูรายละเอียดที่ dndHandleSkillCreate
+  const atkMod = Math.max(-50, Math.min(50, Math.round(Number(payload.atkMod) || 0)));
   const cooldownSec = Math.max(0, Math.min(3600, Math.round(Number(payload.cooldownSec) || 0)));
   const maxUses = Math.max(0, Math.min(99, Math.round(Number(payload.maxUses) || 0)));
   // SP ที่ต้องใช้ต่อการใช้สกิลนี้ 1 ครั้ง — 0 = ไม่ใช้ SP เลย
@@ -1633,7 +1944,7 @@ function dndHandleSkillEdit(ws, skillId, payload) {
   if (isSummon) targetMode = 'self';
 
   skill.name = name; skill.icon = dndSanitizeSkillIcon(payload.icon); skill.color = dndSanitizeStatusColor(payload.color); skill.stat = stat; skill.desc = desc; skill.level = level;
-  skill.dmgDie = dmgDie; skill.dmgCount = dmgCount; skill.dmgMod = dmgMod;
+  skill.dmgDie = dmgDie; skill.dmgCount = dmgCount; skill.dmgMod = dmgMod; skill.atkMod = atkMod;
   skill.healDie = healDie; skill.healCount = healCount; skill.healMod = healMod; skill.healRevive = healRevive;
   skill.statusName = status.name; skill.statusNote = status.note; skill.statusChance = status.chance; skill.buffAlly = buffAlly; skill.targetMode = targetMode;
   skill.statusDurationSec = status.durationSec; skill.statusAtkMod = status.atkMod; skill.statusDmgMod = status.dmgMod; skill.statusDefMod = status.defMod; skill.statusVisionMod = status.visionMod;
@@ -1651,7 +1962,7 @@ function dndHandleSkillEdit(ws, skillId, payload) {
   const healText = healDie ? ` (${healRevive ? '🌟 ชุบชีวิต' : '💚 ฟื้นฟู'} HP ${healCount}d${healDie}${healMod ? (healMod > 0 ? '+' + healMod : healMod) : ''})` : '';
   const reqItemText = reqItem.reqItemName ? ` (ต้องมี ${reqItem.reqItemName} x${reqItem.reqItemQty})` : '';
   const summonText = isSummon ? ` (🔮 อัญเชิญ: ${summonTemplateKey ? dndSummonTemplateByKey(summonTemplateKey).name : 'ยังไม่เลือกตัว'}${summonMaxActive > 1 ? ` x${summonMaxActive}` : ''}${summonDurationSec ? ` อยู่ได้ ${summonDurationSec}วิ` : ''})` : '';
-  dndAddLog(`✏️ DM แก้ไขสกิล: ${name} (📖 เวทย์เลเวล ${level === 0 ? 'แคนทริป' : level})${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${range ? ` (📏 ระยะโจมตี ${range} ช่อง)` : ''}${aoeRadius ? ` (💥 AOE${aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${aoeRadius})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec, status.visionMod)})` : ''}${reqItemText}${classText}${assignText}${summonText}`);
+  dndAddLog(`✏️ DM แก้ไขสกิล: ${name}${stat && atkMod ? ` (ทอยโจมตี${atkMod > 0 ? '+' : ''}${atkMod})` : ''} (📖 เวทย์เลเวล ${level === 0 ? 'แคนทริป' : level})${guaranteedHit ? ' (✅ โดนเสมอ)' : ''}${range ? ` (📏 ระยะโจมตี ${range} ช่อง)` : ''}${aoeRadius ? ` (💥 AOE${aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${aoeRadius})` : ''}${healText}${status.name ? ` (ติดสถานะ "${status.name}"${buffAlly ? ' — บัฟเพื่อน' : ''}${status.durationSec ? ` คูลดาวน์ ${status.durationSec}วิ` : ''}${dndBuildStatusModText(status.atkMod, status.dmgMod, status.defMod, status.tickValue, status.tickIntervalSec, status.visionMod)})` : ''}${reqItemText}${classText}${assignText}${summonText}`);
 }
 function dndHandleSkillDelete(ws, skillId) {
   const p = dndFindByWs(ws);
@@ -1819,21 +2130,25 @@ function dndFindCombatTarget(targetType, targetId, selfId) {
       obj.permaDead = !!target.character.permaDead;
       if (!wasDead && dndIsCharDead(target.character)) {
         if (target.character.permaDead) {
-          dndAddLog(`☠️ ${obj.name} โดนโจมตีแรงเกินไป (ดาเมจ ${dmg} ≥ 2 เท่าของเลือดสูงสุด ${target.character.maxHp}) ตายถาวร! ไอเทม/สกิลชุบใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้น`);
+          dndAddLog(`☠️ ${obj.name} โดนโจมตีแรงเกินไป (ดาเมจ ${dmg} ≥ 2 เท่าของเลือดสูงสุด ${target.character.maxHp}) ตายถาวร! ต้องใช้ไอเทม/สกิล "ชุบชีวิต" เท่านั้นถึงจะปลุกได้ (ฟื้นฟู HP ธรรมดาปลุกไม่ได้ เหมือนคนหมดสติทั่วไป)`);
         } else {
           dndAddLog(`💀 ${obj.name} หมดสติ! ทำอะไรไม่ได้จนกว่าจะมีคนใช้ไอเทมชุบให้ หรือ DM เพิ่ม HP ให้`);
         }
       }
     };
     // ชุบ HP ให้เป้าหมาย — ใช้กับสกิลชุบของ DM ได้ รวมถึงชุบคนหมดสติ (HP 0) ให้ฟื้นกลับมาได้ด้วย
-    // (แต่ถ้าตายถาวรจากการโอเวอร์คิลแล้ว ฟื้นด้วยวิธีนี้ไม่ได้เด็ดขาด — ต้องให้ DM เพิ่ม HP ให้โดยตรงเท่านั้น)
+    // ตายถาวรจากการโอเวอร์คิลก็ปลุกด้วยวิธีนี้ได้เหมือนคนหมดสติทั่วไป (ไม่ต้องรอ DM เพิ่ม HP ให้อีกต่อไป) — เงื่อนไข "ต้องเป็นสกิล/ไอเทมชุบชีวิต (revive) เท่านั้น" ยังคงเดิม (เช็คก่อนเรียก applyHeal)
     obj.applyHeal = amount => {
-      if (target.character.permaDead) return { revived: false, permaDeadBlocked: true };
       const wasDead = dndIsCharDead(target.character);
+      const wasPermaDead = !!target.character.permaDead;
       target.character.hp = Math.max(0, Math.min(target.character.maxHp, target.character.hp + amount));
       obj.hp = target.character.hp;
       const revived = wasDead && !dndIsCharDead(target.character);
-      if (revived) dndAddLog(`🌟 ${obj.name} ฟื้นจากหมดสติแล้ว!`);
+      if (revived) {
+        if (wasPermaDead) target.character.permaDead = false; // ปลุกจากตายถาวรสำเร็จ — เคลียร์ธงตายถาวรออก กลับมาเป็นสถานะปกติทุกอย่าง
+        dndAddLog(`🌟 ${obj.name} ฟื้นจาก${wasPermaDead ? 'ตายถาวร' : 'หมดสติ'}แล้ว!`);
+      }
+      obj.permaDead = !!target.character.permaDead;
       return { revived };
     };
     return obj;
@@ -1931,11 +2246,7 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
   if (skillTargetMode === 'self' && (target.type !== 'player' || target.id !== p.id)) { dndSendError(ws, `สกิล "${skill.name}" ใช้ได้กับตัวเองเท่านั้น`); return; }
   // สกิล "ฟื้นฟู" ธรรมดา (healRevive = false) ใช้ปลุกคนหมดสติไม่ได้เด็ดขาด — ต้องเป็นสกิล "ชุบชีวิต" ที่ DM ตั้งค่าไว้โดยเฉพาะเท่านั้น (เหมือนไอเทม heal/revive)
   // (มอนสเตอร์ไม่มีสถานะ "หมดสติ" แบบผู้เล่น จึงเช็คเฉพาะตอนเป้าหมายเป็นผู้เล่นเท่านั้น)
-  // เป้าหมายตายถาวรจากการโอเวอร์คิล (โดนดาเมจครั้งเดียว >= 2 เท่าของเลือดสูงสุด) — สกิลชุบใช้ปลุกไม่ได้เด็ดขาด แม้จะเป็นสกิล "ชุบชีวิต" ก็ตาม
-  if (isHealSkill && target.type === 'player' && target.permaDead) {
-    dndSendError(ws, `${target.name} ตายถาวรแล้ว (โดนโอเวอร์คิลเกิน 2 เท่าของเลือดสูงสุด) สกิล "${skill.name}" ใช้ปลุกไม่ได้ ต้องรอ DM เพิ่ม HP ให้เท่านั้น`);
-    return;
-  }
+  // เป้าหมายตายถาวรจากการโอเวอร์คิล (โดนดาเมจครั้งเดียว >= 2 เท่าของเลือดสูงสุด) ก็ใช้เงื่อนไขเดียวกันนี้เป๊ะๆ — ต้องเป็นสกิล "ชุบชีวิต" (healRevive) เท่านั้นถึงจะปลุกได้ ไม่ได้ถูกกันแยกต่างหากอีกต่อไป
   if (isHealSkill && target.type === 'player' && target.dead && !skill.healRevive) {
     dndSendError(ws, `สกิล "${skill.name}" ฟื้นฟู HP เท่านั้น ใช้ปลุก ${target.name} ที่หมดสติไม่ได้ — ต้องใช้สกิลชุบชีวิตแทน (ให้ DM ตั้งค่าสกิลประเภท "ชุบชีวิต")`);
     return;
@@ -2057,7 +2368,7 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
       parts.push(`🎯 ใช้ตัวช่วยโดนแน่นอน — ข้ามทอย 1d20 vs AC ${target.ac} — ✅ โดน (ไม่นับคริติคอล)`);
     } else {
       const score = Number(p.character[skill.stat]) || 10;
-      const mod = dndAbilityMod(score) + passive.atk + statusMods.atk;
+      const mod = dndAbilityMod(score) + passive.atk + statusMods.atk + (Number(skill.atkMod) || 0);
       const modStr = mod ? (mod > 0 ? ` +${mod}` : ` ${mod}`) : '';
       const roll = 1 + Math.floor(Math.random() * 20);
       const res = dndRollVsAC(roll, mod, target.ac, passive.critRange);
@@ -2087,7 +2398,7 @@ function dndHandleSkillUse(ws, skillId, targetType, targetId) {
     const wear = dndWearArmorOnHit(targetPlayer);
     if (wear) {
       parts.push(wear.broken
-        ? `💔 เกราะ "${wear.armor.name}" ของ ${target.name} ชำรุด! หมดความคงทน ไม่ได้รับโบนัสป้องกันอีกจนกว่าจะซ่อม`
+        ? `💔 เกราะ "${wear.armor.name}" ของ ${target.name} ชำรุด! ถูกถอดเก็บเข้ากระเป๋าอัตโนมัติ ต้องซ่อมก่อนถึงจะสวมใส่กลับได้`
         : `🛠️ เกราะ "${wear.armor.name}" ของ ${target.name} สึกไป 1 (คงทนเหลือ ${wear.armor.durability}/${wear.armor.maxDurability})`);
     }
   }
@@ -2290,13 +2601,16 @@ function dndHandleNormalAttack(ws, targetType, targetId) {
   const equipAtk = dndTotalAttack(c.equipment);
   const passive = dndCharPassiveEffect(c);
   const statusMods = dndStatusMods(c.statuses);
-  const mod = abilityMod + equipAtk + passive.atk + statusMods.atk + naAtkBonus;
+  // แยก mod ทอยโดน (hitMod) ออกจาก mod ดาเมจ (dmgMod) เหมือนระบบสกิล — ค่า atk จากอุปกรณ์ (equipAtk) มีผลแค่ดาเมจ ไม่ไปเพิ่มโอกาสโดน
+  const hitMod = abilityMod + passive.atk + statusMods.atk + naAtkBonus;
+  const dmgMod = abilityMod + equipAtk + passive.dmg + statusMods.dmg + naDmgBonus;
   const attackRoll = 1 + Math.floor(Math.random() * 20);
-  const res = dndRollVsAC(attackRoll, mod, target.ac, passive.critRange);
-  const modStr = mod >= 0 ? ` +${mod}` : ` ${mod}`;
+  const res = dndRollVsAC(attackRoll, hitMod, target.ac, passive.critRange);
+  const modStr = hitMod >= 0 ? ` +${hitMod}` : ` ${hitMod}`;
+  const dmgModStr = dmgMod >= 0 ? ` +${dmgMod}` : ` ${dmgMod}`;
   let damage = 0, damageRolls = [];
   if (res.hit) {
-    const dmg = dndRollDamage(naDmgDie, naDmgCount, mod + passive.dmg + statusMods.dmg + naDmgBonus, res.crit);
+    const dmg = dndRollDamage(naDmgDie, naDmgCount, dmgMod, res.crit);
     damage = dmg.damage; damageRolls = dmg.rolls;
     const oldHp = target.hp;
     target.applyDamage(damage);
@@ -2312,14 +2626,14 @@ function dndHandleNormalAttack(ws, targetType, targetId) {
   }
   // ไม่บอกเลือดที่เหลือของมอนสเตอร์ในข้อความแชท — ผู้เล่นจะไม่รู้ HP มอนสเตอร์จากตรงนี้
   const hpPart = (res.hit && target.type !== 'token') ? ` | ❤️ ${target.name} HP ${target.hp + damage} → ${target.hp}` : '';
-  const dmgPart = res.hit ? ` | 💥 ${damageRolls.length}d${naDmgDie}${modStr} = [${damageRolls.join(', ')}]${modStr} = ${damage}` : '';
+  const dmgPart = res.hit ? ` | 💥 ${damageRolls.length}d${naDmgDie}${dmgModStr} = [${damageRolls.join(', ')}]${dmgModStr} = ${damage}` : '';
   dndAddLog(`⚔️ ${c.charName || p.name} ใช้ "${naName}" ใส่ ${target.name}: 🎯 1d20${modStr} = [${attackRoll}] = ${res.total} vs AC ${target.ac}${hitTag}${dmgPart}${hpPart}${itemPart}`);
   dndBroadcastAttackAnim({
     atkKey: 'p' + p.id,
     attacker: c.charName || p.name, target: target.name, targetType: target.type,
     atkTokenId: dndPcTokenId(p.id), tgtTokenId: target.type === 'token' ? target.id : dndPcTokenId(target.id),
-    attackRoll, attackMod: mod, attackTotal: res.total, targetAC: target.ac, hit: res.hit, crit: res.crit, fumble: res.fumble,
-    dmgDie: res.hit ? naDmgDie : null, dmgCount: res.hit ? damageRolls.length : 0, dmgRolls: res.hit ? damageRolls : null, dmgMod: mod, damage: res.hit ? damage : null,
+    attackRoll, attackMod: hitMod, attackTotal: res.total, targetAC: target.ac, hit: res.hit, crit: res.crit, fumble: res.fumble,
+    dmgDie: res.hit ? naDmgDie : null, dmgCount: res.hit ? damageRolls.length : 0, dmgRolls: res.hit ? damageRolls : null, dmgMod: dmgMod, damage: res.hit ? damage : null,
   });
 }
 
@@ -2391,10 +2705,11 @@ function dndHandleTokenCreate(ws, payload) {
   const loot = dndSanitizeLoot(payload.loot);
   // ค่าต้านทานสถานะ/ดีบัฟ (%) — หักออกจากโอกาสติดสถานะของสกิลที่ใช้ใส่มอนสเตอร์ตัวนี้ (0 = ไม่ต้านทานเลย เหมือนพฤติกรรมเดิม)
   const statusResist = Math.max(0, Math.min(100, Math.round(Number(payload.statusResist) || 0)));
+  const backstory = (payload.backstory || '').toString().slice(0, 800);
   const newTokenId = dndNextTokenId++;
   dndTokens.push({
     id: newTokenId, kind: 'npc', ownerId: null, name, color, image, x: pos.x, y: pos.y, mapId: dndCurrentMapId, size,
-    hp: maxHp, maxHp, ac, ...stats, attacks, statuses: [], expReward, goldReward, loot, statusResist,
+    hp: maxHp, maxHp, ac, ...stats, attacks, statuses: [], expReward, goldReward, loot, statusResist, backstory,
   });
   dndAppendTurnEntryIfActive('npc', newTokenId);
   dndAddLog(`🗺️ DM เพิ่ม token "${name}" ลงแผนที่ "${dndCurrentMap().name}" (HP ${maxHp}, AC ${ac})`);
@@ -2422,6 +2737,7 @@ function dndHandleTokenDuplicate(ws, id) {
     attacks: (t.attacks || []).map(a => Object.assign({}, a, { id: dndNextAttackId++ })),
     statuses: [], // สถานะ/ดีบัฟไม่คัดลอกตามมา เพราะเป็นของเฉพาะตัวที่เกิดขึ้นระหว่างเล่น
     statusResist: t.statusResist || 0,
+    backstory: t.backstory || '',
     expReward: t.expReward || 0, goldReward: t.goldReward || 0,
     loot: (t.loot || []).map(item => Object.assign({}, item, { id: dndNextLootId++ })),
   };
@@ -2482,6 +2798,7 @@ function dndHandleTokenEdit(ws, id, updates) {
     if (updates.goldReward !== undefined) { const n = Number(updates.goldReward); if (Number.isFinite(n)) t.goldReward = Math.max(0, Math.min(999999, Math.round(n))); }
     if (updates.statusResist !== undefined) { const n = Number(updates.statusResist); if (Number.isFinite(n)) t.statusResist = Math.max(0, Math.min(100, Math.round(n))); }
     if (updates.loot !== undefined) t.loot = dndSanitizeLoot(updates.loot);
+    if (typeof updates.backstory === 'string') t.backstory = updates.backstory.toString().slice(0, 800);
     if (t.hp > 0) t._rewarded = false;
   }
   dndBroadcastState();
@@ -2548,7 +2865,10 @@ function dndWearArmorOnHit(targetPlayer) {
   const armor = targetPlayer.character.equipment.armor;
   if (!armor || !armor.name || !(armor.maxDurability > 0) || !(armor.durability > 0)) return null;
   armor.durability = Math.max(0, armor.durability - 1);
-  return { armor, broken: armor.durability <= 0 };
+  const broken = armor.durability <= 0;
+  const armorSnapshot = Object.assign({}, armor); // เก็บสำเนาไว้ใช้ทำข้อความ log ก่อนช่องอุปกรณ์จะถูกล้างออก (ถ้าชำรุด)
+  if (broken) dndAutoUnequipBrokenGear(targetPlayer); // คงทนหมดพอดี → ถอดเก็บเข้ากระเป๋าอัตโนมัติทันที ใส่กลับไม่ได้จนกว่าจะซ่อม
+  return { armor: armorSnapshot, broken };
 }
 // ซ่อมเกราะ: จ่ายทองตามจำนวนความคงทนที่หายไป เติมกลับเต็ม 100% ทันที (ผู้เล่นกดเองได้ ไม่ต้องรอ DM)
 const DND_ARMOR_REPAIR_COST_PER_POINT = 5;
@@ -2620,7 +2940,7 @@ function dndHandleTokenAttackUse(ws, tokenId, attackId, targetType, targetId) {
     const wear = dndWearArmorOnHit(targetPlayer);
     if (wear) {
       parts.push(wear.broken
-        ? `💔 เกราะ "${wear.armor.name}" ของ ${target.name} ชำรุด! หมดความคงทน ไม่ได้รับโบนัสป้องกันอีกจนกว่าจะซ่อม`
+        ? `💔 เกราะ "${wear.armor.name}" ของ ${target.name} ชำรุด! ถูกถอดเก็บเข้ากระเป๋าอัตโนมัติ ต้องซ่อมก่อนถึงจะสวมใส่กลับได้`
         : `🛠️ เกราะ "${wear.armor.name}" ของ ${target.name} สึกไป 1 (คงทนเหลือ ${wear.armor.durability}/${wear.armor.maxDurability})`);
     }
   }
@@ -2656,7 +2976,7 @@ function dndHandleTokenAttackUse(ws, tokenId, attackId, targetType, targetId) {
           const aoeTargetPlayer = dndPlayers.find(pp => pp.id === cand.id);
           const aoeWear = dndWearArmorOnHit(aoeTargetPlayer);
           aoeHitsForAnim.push({ tokenId: dndPcTokenId(cand.id), damage: aoeDmg });
-          aoeParts.push(`${aoeTarget.name} -${aoeDmg} HP ${aoeOldHp}→${aoeTarget.hp} (ระยะ ${dist.toFixed(1)})${aoeWear ? (aoeWear.broken ? ` (เกราะ "${aoeWear.armor.name}" ชำรุด!)` : '') : ''}`);
+          aoeParts.push(`${aoeTarget.name} -${aoeDmg} HP ${aoeOldHp}→${aoeTarget.hp} (ระยะ ${dist.toFixed(1)})${aoeWear ? (aoeWear.broken ? ` (เกราะ "${aoeWear.armor.name}" ชำรุด ถูกถอดเก็บกระเป๋าอัตโนมัติ!)` : '') : ''}`);
         }
         if (aoeParts.length) parts.push(`🌊 AOE${atk.aoeShape === 'line' ? 'เส้นตรง' : 'รัศมี'} ${atk.aoeRadius}: ${aoeParts.join(', ')}`);
       }
@@ -2794,6 +3114,13 @@ function dndHandleRestart(ws) {
   dndSummonTemplateOverrides = {};
   dndNextPassiveId = 1;
   dndScene = { location: '', situation: '' };
+  dndCutscene = null;
+  dndCutsceneMedia = null;
+  dndSounds = [];
+  dndNextSoundId = 1;
+  dndMusicTracks = [];
+  dndNextMusicId = 1;
+  dndMusicState = { trackId: null, playing: false, volume: 0.6, loop: true, startedAt: null, offsetSec: 0 };
   dndGameTimeModule.reset();
   dndMaps = cloneDefaultMaps();
   dndNextMapId = Math.max(0, ...DEFAULT_MAPS.map(m => m.id)) + 1;
@@ -2837,6 +3164,12 @@ function dndSerializeState() {
     summonTemplateOverrides: dndSummonTemplateOverrides,
     nextPassiveId: dndNextPassiveId,
     scene: dndScene,
+    sounds: dndSounds,
+    nextSoundId: dndNextSoundId,
+    musicTracks: dndMusicTracks,
+    nextMusicId: dndNextMusicId,
+    musicVolume: dndMusicState.volume,
+    musicLoop: dndMusicState.loop,
     ...dndGameTimeModule.serialize(),
     maps: dndMaps,
     nextMapId: dndNextMapId,
@@ -2869,6 +3202,40 @@ function dndHandleExportState(ws) {
   const snapshot = dndSerializeState();
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'dndExportState', data: snapshot }));
   dndAddLog(`💾 ${p.character.charName || p.name} (DM) บันทึกสถานะห้องทั้งหมดเป็นไฟล์`);
+}
+// ผู้เล่นคนไหนก็ได้ (รวม DM ที่มีการ์ดตัวละครเอง) กดปุ่ม "บันทึกตัวละครเป็นไฟล์" ใน My Sheet — ส่งเฉพาะข้อมูลตัวละครของตัวเองกลับไปให้ดาวน์โหลด
+// ต่างจาก dndHandleExportState ตรงที่ไม่ต้องเป็น DM และได้แค่ตัวละครคนเดียว ไม่ใช่สถานะทั้งห้อง
+// (หมายเหตุ: เดิมมีฟังก์ชัน "DM นำเข้าไฟล์ตัวละครคืนให้ผู้เล่น" คู่กับปุ่มนี้ แต่ปิดออกไปแล้วตามคำขอ — ปุ่มบันทึกยังใช้ได้ปกติ)
+function dndHandleExportCharacter(ws) {
+  const p = dndFindByWs(ws);
+  if (!p) return;
+  if (!p.character || !p.character.locked) { dndSendError(ws, 'ยังไม่ได้สร้างตัวละคร บันทึกเป็นไฟล์ไม่ได้'); return; }
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'dndExportCharacter', data: { character: p.character, savedName: p.character.charName || p.name } }));
+  dndAddLog(`💾 ${p.character.charName || p.name} บันทึกตัวละครของตัวเองเป็นไฟล์`, [p.id]);
+}
+// ผู้เล่นคนไหนก็ได้ (ที่มีตัวละครแล้ว) กดปุ่ม "บันทึกกระเป๋าเป็นไฟล์" ในหน้ากระเป๋า — ส่งเฉพาะกระเป๋า+ทองของตัวเองกลับไปให้ดาวน์โหลด
+// แยกจาก dndHandleExportCharacter เพราะบางทีอยากเซฟ/ย้ายแค่ไอเทมในกระเป๋า ไม่ต้องยุ่งกับสเตตัส/อุปกรณ์สวมใส่/หน้าตาตัวละคร
+function dndHandleExportBag(ws) {
+  const p = dndFindByWs(ws);
+  if (!p) return;
+  if (!p.character || !p.character.locked) { dndSendError(ws, 'ยังไม่ได้สร้างตัวละคร บันทึกกระเป๋าเป็นไฟล์ไม่ได้'); return; }
+  const data = { bag: dndSanitizeBag(p.character.bag), gold: Math.round(Number(p.character.gold) || 0), savedName: p.character.charName || p.name };
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'dndExportBag', data }));
+  dndAddLog(`💾 ${p.character.charName || p.name} บันทึกกระเป๋าของตัวเองเป็นไฟล์`, [p.id]);
+}
+// DM เลือกไฟล์กระเป๋า (จากปุ่ม "บันทึกกระเป๋าเป็นไฟล์" ของผู้เล่นคนไหนก็ได้) มาวางแทนที่กระเป๋า+ทองของผู้เล่นเป้าหมายคนใดคนหนึ่งในห้องนี้
+// ไม่แตะข้อมูลตัวละครส่วนอื่น (สเตตัส/อุปกรณ์สวมใส่/หน้าตา) เลย — แทนที่เฉพาะ bag + gold เท่านั้น
+function dndHandleImportBag(ws, payload) {
+  const p = dndFindByWs(ws);
+  if (!p || !p.isDM) { dndSendError(ws, 'เฉพาะ DM เท่านั้นที่นำเข้าไฟล์กระเป๋าให้ผู้เล่นได้'); return; }
+  if (!payload || typeof payload !== 'object') { dndSendError(ws, 'ไฟล์กระเป๋าไม่ถูกต้องหรือเสียหาย อ่านข้อมูลไม่ได้'); return; }
+  const target = dndPlayers.find(pp => pp.id === Number(payload.targetId) && !pp.isDM);
+  if (!target) { dndSendError(ws, 'ไม่พบผู้เล่นเป้าหมายที่จะวางไฟล์กระเป๋าให้'); return; }
+  if (!target.character || !target.character.locked) { dndSendError(ws, 'ผู้เล่นเป้าหมายยังไม่ได้สร้างตัวละคร วางไฟล์กระเป๋าให้ไม่ได้'); return; }
+  target.character.bag = dndSanitizeBag(payload.bag).slice(0, DND_BAG_CAPACITY);
+  target.character.gold = Math.max(0, Math.round(Number(payload.gold) || 0));
+  dndBroadcastState();
+  dndAddLog(`📂 DM นำเข้าไฟล์กระเป๋าให้ ${target.character.charName || target.name}`);
 }
 // DM เลือกไฟล์เซฟที่เคยบันทึกไว้ (จากปุ่ม "โหลดเกมจากไฟล์") มาแทนที่สถานะห้องทั้งหมดตอนนี้
 // ผู้เล่นทุกคน (รวม DM ที่กดโหลด) จะหลุดกลับไปหน้าหลักเหมือนตอนกด "รีเซตห้องทั้งหมด" แล้วต้องกลับเข้ามา
@@ -2928,6 +3295,24 @@ function dndHandleImportState(ws, data) {
   dndScene = (data.scene && typeof data.scene === 'object')
     ? { location: (data.scene.location || '').toString(), situation: (data.scene.situation || '').toString() }
     : { location: '', situation: '' };
+  dndSounds = Array.isArray(data.sounds)
+    ? data.sounds
+        .filter(s => s && typeof s === 'object' && Number.isFinite(Number(s.id)) && typeof s.data === 'string' && s.data.startsWith('data:audio/'))
+        .map(s => ({ id: Number(s.id), name: (s.name || 'เสียง').toString().slice(0, 30), data: s.data.slice(0, DND_MAX_SOUND_CHARS) }))
+    : [];
+  dndNextSoundId = Number.isFinite(Number(data.nextSoundId)) ? Number(data.nextSoundId) : (Math.max(0, ...dndSounds.map(s => s.id)) + 1);
+  dndMusicTracks = Array.isArray(data.musicTracks)
+    ? data.musicTracks
+        .filter(t => t && typeof t === 'object' && Number.isFinite(Number(t.id)) && typeof t.data === 'string' && t.data.startsWith('data:audio/'))
+        .map(t => ({ id: Number(t.id), name: (t.name || 'เพลง').toString().slice(0, 40), data: t.data.slice(0, DND_MAX_MUSIC_CHARS) }))
+    : [];
+  dndNextMusicId = Number.isFinite(Number(data.nextMusicId)) ? Number(data.nextMusicId) : (Math.max(0, ...dndMusicTracks.map(t => t.id)) + 1);
+  // ไม่โหลดสถานะ "กำลังเล่น/ตำแหน่งเพลง" กลับมาจากเซฟเก่า — เริ่มต้นแบบหยุดเสมอหลังโหลด กันปัญหาตำแหน่งเพลงเพี้ยน แต่คงค่าเสียง/วนลูปที่ DM เคยตั้งไว้
+  dndMusicState = {
+    trackId: null, playing: false, startedAt: null, offsetSec: 0,
+    volume: Number.isFinite(Number(data.musicVolume)) ? Math.max(0, Math.min(1, Number(data.musicVolume))) : 0.6,
+    loop: data.musicLoop !== undefined ? !!data.musicLoop : true,
+  };
   dndGameTimeModule.restore(data);
   dndMaps = (Array.isArray(data.maps) && data.maps.length) ? data.maps : cloneDefaultMaps();
   // เซฟเก่าก่อนมีระบบ "ขนาดช่องแผนที่" จะไม่มีฟิลด์นี้ — ตั้งค่าเริ่มต้นให้เหมือนพฤติกรรมเดิม (10x10 ช่อง)
@@ -3049,6 +3434,7 @@ function dndHandleGiveEquip(ws, targetId, payload) {
   dndAutoRegisterEquipItemEffect(name, c.equipment[slot], slot);
   const slotLabel = DND_EQUIP_SLOT_LABELS[slot] || slot;
   dndAddLog(`🛡️ DM มอบ ${slotLabel} "${name}" (ATK+${atk} / DEF+${def}${maxDurability > 0 ? ` / ทน ${maxDurability}` : ''}) ให้ ${c.charName || target.name}${oldItem && oldItem.name ? ` (ถอด "${oldItem.name}" เก็บเข้ากระเป๋า)` : ''}`);
+  dndAutoUnequipBrokenGear(target); // เผื่อ DM มอบของที่ตั้งความคงทนไว้เป็น 0 ตั้งแต่ต้น (เช่นให้ของชำรุดมาแกล้ง)
 }
 // ถอดของสวมใส่คืนเข้ากระเป๋า — ผู้เล่นถอดของตัวเองได้เอง, DM ถอดให้ผู้เล่นคนไหนก็ได้ (ระบุ targetId)
 function dndHandleUnequip(ws, payload) {
@@ -3118,6 +3504,20 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndTradeCancel') dndHandleTradeCancel(ws, msg.tradeId);
   else if (msg.type === 'dndMapBackgroundUpdate') dndHandleMapBackgroundUpdate(ws, msg.image);
   else if (msg.type === 'dndSceneUpdate') dndHandleSceneUpdate(ws, msg.scene);
+  else if (msg.type === 'dndCutsceneShow') dndHandleCutsceneShow(ws, msg.cutscene);
+  else if (msg.type === 'dndCutsceneShowLocal') dndHandleCutsceneShowLocal(ws, msg.cutscene);
+  else if (msg.type === 'dndCutsceneClose') dndHandleCutsceneClose(ws);
+  else if (msg.type === 'dndSoundAdd') dndHandleSoundAdd(ws, msg.sound);
+  else if (msg.type === 'dndSoundDelete') dndHandleSoundDelete(ws, msg.soundId);
+  else if (msg.type === 'dndSoundPlay') dndHandleSoundPlay(ws, msg.soundId);
+  else if (msg.type === 'dndMusicAdd') dndHandleMusicAdd(ws, msg.track);
+  else if (msg.type === 'dndMusicDelete') dndHandleMusicDelete(ws, msg.trackId);
+  else if (msg.type === 'dndMusicPlay') dndHandleMusicPlay(ws, msg.trackId);
+  else if (msg.type === 'dndMusicPause') dndHandleMusicPause(ws);
+  else if (msg.type === 'dndMusicResume') dndHandleMusicResume(ws);
+  else if (msg.type === 'dndMusicStop') dndHandleMusicStop(ws);
+  else if (msg.type === 'dndMusicVolumeSet') dndHandleMusicVolumeSet(ws, msg.volume);
+  else if (msg.type === 'dndMusicLoopToggle') dndHandleMusicLoopToggle(ws, msg.loop);
   else if (msg.type === 'dndTimeAdvance') dndHandleTimeAdvance(ws, msg.minutes);
   else if (msg.type === 'dndTimeSkipDay') dndHandleTimeSkipDay(ws);
   else if (msg.type === 'dndTimeSet') dndHandleTimeSet(ws, msg.time);
@@ -3153,7 +3553,11 @@ function dndHandleMessage(ws, msg) {
   else if (msg.type === 'dndRestart') dndHandleRestart(ws);
   else if (msg.type === 'dndExportState') dndHandleExportState(ws);
   else if (msg.type === 'dndImportState') dndHandleImportState(ws, msg.data);
+  else if (msg.type === 'dndExportCharacter') dndHandleExportCharacter(ws);
+  else if (msg.type === 'dndExportBag') dndHandleExportBag(ws);
+  else if (msg.type === 'dndImportBag') dndHandleImportBag(ws, msg.data);
   else if (msg.type === 'dndRepairArmor') dndHandleRepairArmor(ws);
+  else if (msg.type === 'dndRepairBagItem') dndHandleRepairBagItem(ws, msg.name);
   else if (msg.type === 'dndGiveItem') dndHandleGiveItem(ws, msg.targetId, msg.name, msg.qty);
   else if (msg.type === 'dndTakeItem') dndHandleTakeItem(ws, msg.targetId, msg.name, msg.qty);
   else if (msg.type === 'dndGiveEquip') dndHandleGiveEquip(ws, msg.targetId, msg.item);

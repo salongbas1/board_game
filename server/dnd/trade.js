@@ -29,7 +29,8 @@ function createTrade({ findByWs, sendError, addLog, getPlayers, sanitizeBag, bag
     if ((character.gold || 0) < gold) return false;
     const bag = sanitizeBag(character.bag);
     for (const it of items) {
-      const row = bag.find(b => b.name === it.name);
+      // ของที่ชำรุด (broken) ห้ามเอาไปแลกเปลี่ยนเด็ดขาด — นับเฉพาะกองของปกติเท่านั้นตอนเช็คว่ามีของพอไหม
+      const row = bag.find(b => b.name === it.name && !b.broken);
       if (!row || row.qty < it.qty) return false;
     }
     return true;
