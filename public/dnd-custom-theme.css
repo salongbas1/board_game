@@ -1,0 +1,85 @@
+/* =====================================================================
+   ธีมกำหนดเอง (dndTheme--custom) — ผู้เล่นตั้งค่าเองผ่านหน้าต่าง "ธีมของฉัน"
+   ค่าทั้งหมดถูก set เป็น CSS custom properties บน <body> จากฝั่ง JS
+   (ดู dndApplyCustomThemeVars ใน app.js) ไฟล์นี้แค่นิยามว่าตัวแปรแต่ละตัว
+   ไปมีผลกับส่วนไหนของหน้าจอบ้าง พร้อมค่า fallback ที่ปลอดภัยถ้ายังไม่ตั้งอะไรไว้
+   ===================================================================== */
+
+/* ---------- พื้นหลังทั้งหน้า ---------- */
+body.dndTheme--custom {
+  background-image: var(--dnd-ct-bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+/* เลเยอร์ทึบแสงคลุมพื้นหลังทั้งหน้า กันตัวหนังสืออ่านไม่ออกเวลาภาพพื้นหลังสว่าง/รกเกินไป */
+body.dndTheme--custom::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: rgba(0, 0, 0, var(--dnd-ct-bg-dim, 0));
+  pointer-events: none;
+}
+
+body.dndTheme--custom #pageTitle,
+body.dndTheme--custom h1,
+body.dndTheme--custom #dndScreen h3,
+body.dndTheme--custom #dndJoinScreen h3,
+body.dndTheme--custom .dndModalBox h3 {
+  color: var(--dnd-ct-accent, #c9a24a);
+}
+
+/* ---------- กรอบ/พื้นหลังการ์ดตัวละครในรายชื่อปาร์ตี้ ---------- */
+body.dndTheme--custom .dndPCard {
+  position: relative;
+  overflow: hidden;
+  border-width: var(--dnd-ct-card-border-width, 1px);
+  border-style: var(--dnd-ct-card-border-style, solid);
+  border-color: var(--dnd-ct-card-border-color, #3a3a34);
+  border-image-source: var(--dnd-ct-card-border-img, none);
+  border-image-slice: 30 fill;
+  border-image-width: 1;
+  border-image-repeat: stretch;
+  background-image: var(--dnd-ct-card-bg-image, none);
+  background-size: cover;
+  background-position: center;
+}
+/* เลเยอร์ทึบแสงคลุมพื้นหลังการ์ด กันข้อความสเตตัส/HP อ่านไม่ออกเวลามีภาพพื้นหลังการ์ด */
+body.dndTheme--custom .dndPCard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: rgba(0, 0, 0, var(--dnd-ct-card-bg-dim, 0));
+  pointer-events: none;
+}
+body.dndTheme--custom .dndPCard > * {
+  position: relative;
+  z-index: 1;
+}
+/* สีขอบตามสถานะ (ของฉัน/DM/ตาย ฯลฯ) ให้แรงกว่าค่าเริ่มต้นเล็กน้อยเพื่อให้ยังสังเกตได้แม้ตั้งสีขอบเองแล้ว */
+body.dndTheme--custom .dndPCard.myTurn { box-shadow: 0 0 0 2px var(--dnd-ct-accent, #c9a24a) inset; }
+
+/* ---------- พื้นหลังการ์ดสกิล (แท็บ ✨ สกิล — ครอบคลุมการ์ดสกิล/พาสซีพ/สัตว์อัญเชิญที่ใช้คลาสเดียวกัน) ---------- */
+body.dndTheme--custom .dndSkillCard {
+  position: relative;
+  overflow: hidden;
+  background-image: var(--dnd-ct-skill-card-bg-image, none);
+  background-size: cover;
+  background-position: center;
+}
+/* เลเยอร์ทึบแสงคลุมพื้นหลังการ์ดสกิล กันข้อความรายละเอียดสกิลอ่านไม่ออกเวลามีภาพพื้นหลัง */
+body.dndTheme--custom .dndSkillCard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: rgba(0, 0, 0, var(--dnd-ct-skill-card-bg-dim, 0));
+  pointer-events: none;
+}
+body.dndTheme--custom .dndSkillCard > * {
+  position: relative;
+  z-index: 1;
+}

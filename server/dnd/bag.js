@@ -4,7 +4,8 @@
 // ============================================================
 
 module.exports = function createBagModule(ctx) {
-  // ---- กระเป๋าไอเทมที่ซื้อจากร้านค้า: [{name, qty}] — แยกจากช่องไอเทม/กระเป๋าแบบข้อความอิสระตอนสร้างตัวละคร ----
+  // ---- กระเป๋าไอเทมที่ซื้อจากร้านค้า: [{name, qty}] หรือของชำรุด: [{name, qty, broken:true, maxDurability}] — แยกจากช่องไอเทม/กระเป๋าแบบข้อความอิสระตอนสร้างตัวละคร ----
+  // broken: ของสวมใส่ที่คงทนหมด ถูกถอดเก็บเข้ากระเป๋าอัตโนมัติ — ใช้/สวมใส่กลับไม่ได้จนกว่าจะซ่อม (ดู dndHandleRepairBagItem ใน dnd.js)
   function dndSanitizeBag(raw) {
     const arr = Array.isArray(raw) ? raw : [];
     const out = [];
@@ -12,34 +13,44 @@ module.exports = function createBagModule(ctx) {
       if (!it || typeof it !== 'object') continue;
       const name = (it.name || '').toString().trim().slice(0, 40);
       const qty = Math.max(0, Math.min(9999, Math.round(Number(it.qty) || 0)));
-      if (name && qty > 0) out.push({ name, qty });
+      if (!name || qty <= 0) continue;
+      const row = { name, qty };
+      if (it.broken) { row.broken = true; row.maxDurability = Math.max(0, Math.min(999, Math.round(Number(it.maxDurability) || 0))); }
+      out.push(row);
     }
     return out;
   }
 
   // เช็คว่ากระเป๋ายังมีที่ว่างพอสำหรับไอเทมชื่อนี้ไหม — ถ้ามีไอเทมชื่อนี้อยู่แล้วถือว่ามีที่เสมอ (กองรวมช่องเดิม ไม่กินช่องเพิ่ม)
   // ถ้าเป็นไอเทมชนิดใหม่ ต้องดูว่าจำนวนช่องที่ใช้อยู่ยังไม่เต็ม DND_BAG_CAPACITY
-  function dndBagHasRoomFor(character, name) {
+  // broken: ของชำรุด (คงทนหมด) จะแยกกองจากของปกติชื่อเดียวกันเสมอ (ไม่กองรวมกัน) กันสวมใส่ของชำรุดหลุดไปปนกับของดี
+  function dndBagHasRoomFor(character, name, broken) {
     const bag = dndSanitizeBag(character.bag);
-    if (bag.some(it => it.name === name)) return true;
+    if (bag.some(it => it.name === name && !!it.broken === !!broken)) return true;
     return bag.length < ctx.DND_BAG_CAPACITY;
   }
 
   // เพิ่มไอเทมเข้ากระเป๋า — คืนค่า true ถ้าเพิ่มสำเร็จ, false ถ้ากระเป๋าเต็ม (ช่องไอเทมไม่พอสำหรับไอเทมชนิดใหม่) แล้วไม่ได้แก้ไขอะไร
   // force: true = บังคับเพิ่มแม้กระเป๋าเต็ม (ใช้เฉพาะตอนถอดของสวมใส่คืนกระเป๋า กันไม่ให้ไอเทมที่ใส่อยู่แล้วหายไปเฉยๆ เพราะกระเป๋าเต็มพอดี)
-  function dndBagAdd(character, name, qty, force) {
+  // broken: true = นี่คือของสวมใส่ที่ถูกถอดออกเพราะคงทนหมด (ชำรุด) — แยกกองจากของปกติ ห้ามใช้/สวมใส่จนกว่าจะซ่อม (ดู dndHandleRepairBagItem)
+  // maxDurabilityForRepair: เก็บค่าความคงทนเต็มไว้ในกองของชำรุดนี้ ใช้คำนวณค่าซ่อมทีหลัง (ของปกติไม่ต้องใส่ค่านี้)
+  function dndBagAdd(character, name, qty, force, broken, maxDurabilityForRepair) {
     character.bag = dndSanitizeBag(character.bag);
-    const row = character.bag.find(it => it.name === name);
+    const isBroken = !!broken;
+    const row = character.bag.find(it => it.name === name && !!it.broken === isBroken);
     if (row) { row.qty += qty; return true; }
     if (!force && character.bag.length >= ctx.DND_BAG_CAPACITY) return false;
-    character.bag.push({ name, qty });
+    const newRow = { name, qty };
+    if (isBroken) { newRow.broken = true; newRow.maxDurability = Math.max(0, Math.min(999, Math.round(Number(maxDurabilityForRepair) || 0))); }
+    character.bag.push(newRow);
     return true;
   }
 
   // คืน true ถ้าลบสำเร็จ (มีของพอให้ลบ), false ถ้าของไม่พอ
-  function dndBagRemove(character, name, qty) {
+  function dndBagRemove(character, name, qty, broken) {
     character.bag = dndSanitizeBag(character.bag);
-    const row = character.bag.find(it => it.name === name);
+    const isBroken = !!broken;
+    const row = character.bag.find(it => it.name === name && !!it.broken === isBroken);
     if (!row || row.qty < qty) return false;
     row.qty -= qty;
     if (row.qty <= 0) character.bag = character.bag.filter(it => it !== row);

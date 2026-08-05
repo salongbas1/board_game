@@ -31,6 +31,8 @@ let dndMapGridSize = 10; // จำนวนช่องตาราง (grid) �
 let dndMaps = [];
 let dndCurrentMapId = 1;
 let dndTokenEditTargetId = null;
+const dndTokenPeekWindows = new Map(); // tokenId -> { el, bodyEl, titleEl } ของหน้าต่างลอย "ดูรายละเอียดคร่าวๆ" ที่เปิดอยู่ (เปิดพร้อมกันได้หลายอัน)
+let dndPeekZTop = 0; // ตัวนับ z-index สำหรับดันหน้าต่างที่เพิ่งคลิก/เปิดขึ้นมาไว้บนสุด
 
 // ---- ขนาดกรอบแมพที่ผู้ใช้ปรับเองได้ (บันทึกไว้ในเบราว์เซอร์เครื่องนี้ ไม่ sync กับใคร — ผู้เล่น/DM แต่ละคนตั้งขนาดของตัวเองได้อิสระ) ----
 const DND_MAP_SIZE_STORAGE_KEY = 'dndMapFrameSizePx';
@@ -270,17 +272,40 @@ function dndSpawnFloatNum(layer, pos, text, extraClass) {
   requestAnimationFrame(() => el.classList.add('dndFxFloat'));
   setTimeout(() => el.remove(), 950);
 }
+function dndShakeMapCanvas() {
+  const canvas = document.getElementById('dndMapCanvas');
+  if (!canvas) return;
+  canvas.classList.remove('dndFxMapShake');
+  void canvas.offsetWidth; // รีสตาร์ท animation ให้เล่นใหม่ทุกครั้งแม้จะสั่นถี่ ๆ ติดกัน
+  canvas.classList.add('dndFxMapShake');
+  setTimeout(() => canvas.classList.remove('dndFxMapShake'), 300);
+}
 function playDndMapAttackAnim(data) {
   const layer = dndGetMapFxLayer();
   if (!layer) return;
   const atkPos = dndTokenPosPct(data.atkTokenId);
   const tgtPos = dndTokenPosPct(data.tgtTokenId);
+  // ท่าโจมตีปกติของผู้เล่น (ไม่มีทั้ง skillName และ attackName ต่างจากสกิล/ท่าโจมตีมอนสเตอร์) — ให้เอฟเฟกต์ฟันดาบระยะประชิดแทนลูกแสงเวทมนตร์
+  const isNormalAttack = !data.skillName && !data.attackName;
 
   // ผู้โจมตี (ผู้เล่นหรือมอนสเตอร์) เด้งตัวตอนออกท่า — เห็นได้ชัดว่าใครเป็นคนลงมือ
   if (data.atkTokenId != null) dndFlashToken(data.atkTokenId, 'dndFxAttacking', 320);
 
-  // ยิงเส้นแสง/กระสุนจากผู้โจมตีไปยังเป้าหมาย ถ้ารู้ตำแหน่งทั้งคู่บนแผนที่ปัจจุบัน
-  if (atkPos && tgtPos && data.atkTokenId !== data.tgtTokenId) {
+  let impactDelay = 0;
+  if (isNormalAttack) {
+    // ท่าโจมตีปกติ = ระยะประชิด ฟันดาบที่ตัวเป้าหมายทันที (ไม่ยิงกระสุนข้ามแผนที่แบบสกิล) ให้ความรู้สึกไวและหนักแน่นกว่า
+    if (tgtPos) {
+      const slash = document.createElement('div');
+      slash.className = 'dndAtkSlash';
+      slash.style.left = tgtPos.x + '%';
+      slash.style.top = tgtPos.y + '%';
+      layer.appendChild(slash);
+      requestAnimationFrame(() => slash.classList.add('dndFxSlash'));
+      setTimeout(() => slash.remove(), 340);
+      impactDelay = 130;
+    }
+  } else if (atkPos && tgtPos && data.atkTokenId !== data.tgtTokenId) {
+    // ยิงเส้นแสง/กระสุนจากผู้โจมตีไปยังเป้าหมาย (สกิล/ท่าโจมตีมอนสเตอร์) ถ้ารู้ตำแหน่งทั้งคู่บนแผนที่ปัจจุบัน
     const proj = document.createElement('div');
     proj.className = 'dndAtkProjectile';
     proj.style.left = atkPos.x + '%';
@@ -293,13 +318,14 @@ function playDndMapAttackAnim(data) {
       proj.style.top = tgtPos.y + '%';
     });
     setTimeout(() => proj.remove(), 420);
+    impactDelay = 360;
   }
 
-  const impactDelay = (atkPos && tgtPos) ? 360 : 0;
   setTimeout(() => {
     if (!tgtPos || data.tgtTokenId == null) return;
+    const isSolidHit = isNormalAttack && data.hit !== false && !data.fumble;
     const burst = document.createElement('div');
-    burst.className = 'dndAtkBurst dndFxBurst' + ((data.fumble || data.hit === false) ? ' dndFxBurstMiss' : (data.crit ? ' dndFxBurstCrit' : ''));
+    burst.className = 'dndAtkBurst dndFxBurst' + ((data.fumble || data.hit === false) ? ' dndFxBurstMiss' : (data.crit ? ' dndFxBurstCrit' : (isSolidHit ? ' dndFxBurstNormal' : '')));
     burst.style.left = tgtPos.x + '%';
     burst.style.top = tgtPos.y + '%';
     layer.appendChild(burst);
@@ -311,8 +337,11 @@ function playDndMapAttackAnim(data) {
     } else if (data.damage != null) {
       dndFlashToken(data.tgtTokenId, 'dndFxHit', 420);
       dndSpawnFloatNum(layer, tgtPos, (data.crit ? '💥 -' : '-') + data.damage, data.crit ? 'dndFxFloatCrit' : '');
+      // ท่าโจมตีปกติที่โดนเป้าหมาย ให้แผนที่สั่นเบา ๆ เพิ่มความรู้สึกหนักหน่วง (สกิล/ท่ามอนสเตอร์ไม่สั่น กันจอสั่นถี่เกินไปตอนใช้สกิลหลายจังหวะ)
+      if (isSolidHit) dndShakeMapCanvas();
     } else if (data.hit === true) {
       dndFlashToken(data.tgtTokenId, 'dndFxHit', 420);
+      if (isSolidHit) dndShakeMapCanvas();
     }
 
     // ---- AOE: วาดพื้นที่ตามรูปแบบที่ตั้งไว้ — วงกลม (ขยายวงแหวนรอบเป้าหมายหลัก) หรือเส้นตรง (คานแสงจากผู้โจมตีไปเป้าหมายหลัก)
@@ -424,6 +453,8 @@ function dndTokenBgStyle(t) {
 function dndSendTokenMove(id, x, y) {
   send({ type: 'dndTokenMove', id, x, y });
 }
+// ระยะที่นิ้ว/เมาส์ต้องขยับเกินก่อนจะนับว่าเป็นการ "ลาก" จริงๆ (หน่วยพิกเซลบนจอ) — ต่ำกว่านี้ถือว่าแค่ "คลิก" เฉยๆ เพื่อเปิดดูรายละเอียด
+const DND_TOKEN_CLICK_MOVE_THRESHOLD_PX = 5;
 function dndAttachTokenDrag(el, tokenId) {
   el.addEventListener('pointerdown', ev => {
     const t = dndTokens.find(tt => tt.id === tokenId);
@@ -437,6 +468,8 @@ function dndAttachTokenDrag(el, tokenId) {
         if (reason) showDndErrorToast(reason);
         else if (t.kind === 'npc' && typeof amIDead === 'function' && amIDead()) showDndErrorToast(dndDeadMsgForMe());
       }
+      // ลาก token ไม่ได้ (ของคนอื่น/มอนสเตอร์) — แต่ยังคลิกเพื่อดูรายละเอียดคร่าวๆ ได้ตามปกติ
+      openTokenPeek(tokenId);
       return;
     }
     ev.preventDefault();
@@ -444,10 +477,13 @@ function dndAttachTokenDrag(el, tokenId) {
     dndDraggingId = tokenId;
     el.classList.add('dndTokenDragging');
     el.setPointerCapture(ev.pointerId);
+    const startX = ev.clientX, startY = ev.clientY;
+    let moved = false; // จะเปลี่ยนเป็น true ก็ต่อเมื่อขยับเกิน threshold จริงๆ — ถ้ายังเป็น false ตอนปล่อยมือ แปลว่าผู้ใช้แค่ "คลิก" ไม่ได้ลาก
     // สำคัญ: ระหว่างลาก จะขยับแค่ตำแหน่ง token บนหน้าจอตัวเอง (local, ลื่นเต็มที่ ไม่ต้องรอเน็ตเวิร์ก)
     // ไม่ยิง dndTokenMove ไปเซิร์ฟเวอร์ทุกครั้งที่ขยับแล้ว เพราะแต่ละครั้งเซิร์ฟเวอร์จะ broadcast state ทั้งก้อน
     // กลับมาให้ทุกคน (รวมถึงคนลากเอง) ทำให้กระตุก/หน่วง — จะส่งตำแหน่งจริงไปเซิร์ฟเวอร์แค่ "ครั้งเดียว" ตอนปล่อยมือ
     const move = (mev) => {
+      if (!moved && Math.hypot(mev.clientX - startX, mev.clientY - startY) > DND_TOKEN_CLICK_MOVE_THRESHOLD_PX) moved = true;
       const rect = canvas.getBoundingClientRect();
       let x = ((mev.clientX - rect.left) / rect.width) * 100;
       let y = ((mev.clientY - rect.top) / rect.height) * 100;
@@ -463,6 +499,12 @@ function dndAttachTokenDrag(el, tokenId) {
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
       el.removeEventListener('pointercancel', up);
+      if (!moved) {
+        // ไม่ได้ลากจริง แค่คลิกเฉยๆ — เปิดป็อปอัพดูรายละเอียดคร่าวๆ แทนที่จะขยับ token
+        dndDraggingId = null;
+        openTokenPeek(tokenId);
+        return;
+      }
       const rect = canvas.getBoundingClientRect();
       let x = ((uev.clientX - rect.left) / rect.width) * 100;
       let y = ((uev.clientY - rect.top) / rect.height) * 100;
@@ -476,6 +518,160 @@ function dndAttachTokenDrag(el, tokenId) {
     el.addEventListener('pointercancel', up);
   });
 }
+// ---- หน้าต่างลอย "ดูรายละเอียดคร่าวๆ" ของ token — เปิดจากการคลิก token ผู้เล่นอื่น/มอนสเตอร์บนแผนที่ (อ่านอย่างเดียว ไม่มีปุ่มแก้ไข) ----
+// เป็นหน้าต่างลอยที่ลากไปมาได้ และเปิดพร้อมกันได้หลายอันซ้อนกัน (คลิก token ตัวใหม่ = เปิดหน้าต่างใหม่เพิ่ม, คลิกซ้ำตัวเดิม = ดันขึ้นบนสุด)
+function dndPeekBringToFront(win) {
+  dndPeekZTop += 1;
+  win.el.style.zIndex = String(200 + dndPeekZTop);
+}
+function dndPeekMakeDraggable(el, handle) {
+  handle.addEventListener('pointerdown', ev => {
+    if (ev.target.closest('.dndPeekWindowClose')) return;
+    ev.preventDefault();
+    const rect = el.getBoundingClientRect();
+    const offsetX = ev.clientX - rect.left;
+    const offsetY = ev.clientY - rect.top;
+    handle.setPointerCapture(ev.pointerId);
+    const move = mev => {
+      const maxX = Math.max(0, window.innerWidth - el.offsetWidth);
+      const maxY = Math.max(0, window.innerHeight - el.offsetHeight);
+      const x = Math.max(0, Math.min(maxX, mev.clientX - offsetX));
+      const y = Math.max(0, Math.min(maxY, mev.clientY - offsetY));
+      el.style.left = x + 'px';
+      el.style.top = y + 'px';
+    };
+    const up = uev => {
+      handle.releasePointerCapture(uev.pointerId);
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  });
+}
+// หน้าต่างลอย "สกิล" ก็ใช้ตัวลากเดียวกันนี้ (dndSkillOverlay ถูกปรับให้เป็นหน้าต่างลอยแทนโมดัลเต็มจอในไฟล์ index.html/app.js แล้ว)
+(function dndInitSkillWindowDrag() {
+  const box = document.getElementById('dndSkillBox');
+  const header = document.getElementById('dndSkillBoxHeader');
+  if (box && header) dndPeekMakeDraggable(box, header);
+})();
+// หน้าต่างลอย "ทอยลูกเต๋า" ก็ใช้ตัวลากเดียวกันนี้เช่นกัน (dndDiceOverlay ถูกปรับให้เป็นหน้าต่างลอยแทนโมดัลเต็มจอในไฟล์ index.html/app.js แล้ว)
+(function dndInitDiceWindowDrag() {
+  const box = document.getElementById('dndDiceBox');
+  const header = document.getElementById('dndDiceBoxHeader');
+  if (box && header) dndPeekMakeDraggable(box, header);
+})();
+function openTokenPeek(tokenId) {
+  const layer = document.getElementById('dndTokenPeekWindows');
+  if (!layer) return;
+  const existing = dndTokenPeekWindows.get(tokenId);
+  if (existing) {
+    dndPeekBringToFront(existing);
+    renderTokenPeek(tokenId);
+    return;
+  }
+  const el = document.createElement('div');
+  el.className = 'dndPeekWindow';
+  const cascade = (dndTokenPeekWindows.size % 8) * 26;
+  const startLeft = Math.max(10, (window.innerWidth - 560) / 2) + cascade;
+  const startTop = Math.max(10, window.innerHeight * 0.12) + cascade;
+  el.style.left = startLeft + 'px';
+  el.style.top = startTop + 'px';
+  el.innerHTML = `
+    <div class="dndPeekWindowHeader">
+      <span class="dndPeekWindowTitle"></span>
+      <button type="button" class="dndPeekWindowClose" aria-label="ปิด" title="ปิด">✕</button>
+    </div>
+    <div class="dndPeekWindowBody"></div>
+  `;
+  layer.appendChild(el);
+  const win = { el, bodyEl: el.querySelector('.dndPeekWindowBody'), titleEl: el.querySelector('.dndPeekWindowTitle') };
+  dndTokenPeekWindows.set(tokenId, win);
+  el.addEventListener('pointerdown', () => dndPeekBringToFront(win));
+  el.querySelector('.dndPeekWindowClose').addEventListener('click', () => closeTokenPeek(tokenId));
+  dndPeekMakeDraggable(el, el.querySelector('.dndPeekWindowHeader'));
+  dndPeekBringToFront(win);
+  renderTokenPeek(tokenId);
+}
+function closeTokenPeek(tokenId) {
+  const win = dndTokenPeekWindows.get(tokenId);
+  if (!win) return;
+  win.el.remove();
+  dndTokenPeekWindows.delete(tokenId);
+}
+function dndPeekAvatarHtml(t) {
+  if (t.image) return `<img src="${t.image}" alt="">`;
+  return `<div class="dndPeekAvatarInitials" style="${dndTokenBgStyle(t)}; width:100%; height:100%; display:flex; align-items:center; justify-content:center;">${escapeHtml(dndTokenInitials(t.name))}</div>`;
+}
+function renderTokenPeek(tokenId) {
+  const win = dndTokenPeekWindows.get(tokenId);
+  if (!win) return;
+  const { bodyEl: body, titleEl } = win;
+  const t = dndTokens.find(tt => tt.id === tokenId);
+  if (!t) { closeTokenPeek(tokenId); return; }
+  if (titleEl) titleEl.textContent = t.kind === 'pc' ? 'ตัวละคร' : (t.summoned ? 'สัตว์อัญเชิญ' : 'มอนสเตอร์');
+
+  if (t.kind === 'pc') {
+    const owner = dndPlayersList.find(p => p.id === t.ownerId);
+    if (!owner) { body.innerHTML = '<p>ไม่พบข้อมูลผู้เล่นนี้แล้ว</p>'; return; }
+    const c = owner.character;
+    const raceInfo = dndRaceByKey(c.raceKey);
+    const clsInfo = dndClassByKey(c.classKey);
+    const passiveInfo = dndPassiveByKey(c.raceKey, c.passiveKey);
+    body.innerHTML = `
+      <div class="dndPeekHeader">
+        <div class="dndPeekAvatarWrap" id="dndPeekAvatarWrap${tokenId}">${dndBuildAvatarSVG(c, 150, 190)}<button type="button" class="dndAvatarPoseBtn" title="เปลี่ยนท่าทาง" onclick="dndCycleAvatarPose('peek-${tokenId}','renderTokenPeek',${tokenId})">🔄</button></div>
+        <div class="dndPeekTitleBox">
+          <div class="dndPeekName">${escapeHtml(c.charName || owner.name)}</div>
+          <div class="dndPeekSub">${(raceInfo ? raceInfo.icon + ' ' : '') + escapeHtml(c.race || '-')} · ${(clsInfo ? clsInfo.icon + ' ' : '') + escapeHtml(c.cls || '-')}</div>
+          <div class="dndPeekTag">Lv.${c.level}${passiveInfo ? ` · ${passiveInfo.icon || '✨'} ${escapeHtml(passiveInfo.name)}` : ''}</div>
+          <div class="dndPeekBadgeRow">
+            <div class="dndPeekBadge"><span>HP</span>${c.hp} / ${c.maxHp}</div>
+            <div class="dndPeekBadge"><span>AC</span>${c.ac}</div>
+            <div class="dndPeekBadge"><span>SP</span>${c.sp != null ? c.sp : 0} / ${c.maxSp != null ? c.maxSp : 0}</div>
+          </div>
+        </div>
+      </div>
+      ${c.backstory ? `<div class="dndPeekSectionTitle">ประวัติที่มา</div><div class="dndPeekBackstory">${escapeHtml(c.backstory)}</div>` : ''}
+    `;
+    dndApplyAvatarPose(document.getElementById('dndPeekAvatarWrap' + tokenId), 'peek-' + tokenId);
+    return;
+  }
+
+  // มอนสเตอร์ / สัตว์อัญเชิญ (kind: 'npc')
+  const isMySummonToken = t.summoned && !!dndYou && t.ownerId === dndYou.id;
+  const hideHp = !(dndYou && (dndYou.isDM || isMySummonToken));
+  const summonOwner = t.summoned ? dndPlayersList.find(pp => pp.id === t.ownerId) : null;
+  const summonOwnerName = summonOwner ? (summonOwner.character.charName || summonOwner.name) : null;
+  const attacks = t.attacks || [];
+  body.innerHTML = `
+    <div class="dndPeekHeader">
+      <div class="dndPeekAvatarWrap">${dndPeekAvatarHtml(t)}</div>
+      <div class="dndPeekTitleBox">
+        <div class="dndPeekName">${t.summoned ? '🐾 ' : ''}${escapeHtml(t.name)}</div>
+        <div class="dndPeekSub">${t.summoned ? 'สัตว์อัญเชิญ' : 'มอนสเตอร์'}${t.summoned && dndYou && dndYou.isDM && summonOwnerName ? ` (ของ ${escapeHtml(summonOwnerName)})` : ''}</div>
+        <div class="dndPeekTag">ขนาด: ${t.size === 'large' ? 'ใหญ่' : t.size === 'huge' ? 'ใหญ่มาก' : 'ปกติ'}</div>
+        <div class="dndPeekBadgeRow">
+          ${hideHp ? '' : `<div class="dndPeekBadge"><span>HP</span>${t.hp} / ${t.maxHp}</div>`}
+          <div class="dndPeekBadge"><span>AC</span>${t.ac != null ? t.ac : '-'}</div>
+        </div>
+        ${hideHp ? '<div class="dndPeekHiddenNote" style="margin-top:8px;">(ไม่เปิดเผยเลือดที่เหลือ)</div>' : ''}
+      </div>
+    </div>
+    ${(!hideHp && attacks.length) ? `<div class="dndPeekSectionTitle">ท่าโจมตี</div>` + attacks.map(a => {
+      const abilityMod = a.stat ? dndAbilityMod(Number(t[a.stat]) || 10) : 0;
+      const totalHit = (a.toHit || 0) + abilityMod;
+      const totalDmgMod = (a.dmgMod || 0) + abilityMod;
+      const hitStr = totalHit ? (totalHit > 0 ? `+${totalHit}` : `${totalHit}`) : '+0';
+      const dmgStr = a.dmgDie ? `${a.dmgCount}d${a.dmgDie}${totalDmgMod ? (totalDmgMod > 0 ? '+' + totalDmgMod : totalDmgMod) : ''}` : 'ไม่มีดาเมจ';
+      return `<div class="dndPeekAttackRow"><b>${escapeHtml(a.name)}</b> — ทอย 1d20${hitStr} · ดาเมจ ${dmgStr}</div>`;
+    }).join('') : ''}
+    ${t.backstory ? `<div class="dndPeekSectionTitle">ประวัติที่มา</div><div class="dndPeekBackstory">${escapeHtml(t.backstory)}</div>` : ''}
+  `;
+}
+
 function renderDndMapTabs() {
   const row = document.getElementById('dndMapTabsRow');
   const label = document.getElementById('dndMapCurrentLabel');
@@ -718,7 +914,7 @@ function renderDndMap() {
     if (!el) {
       el = document.createElement('div');
       el.className = 'dndToken';
-      el.innerHTML = '<span class="dndTokenInner"></span><span class="dndTokenLabel"></span><span class="dndTokenAcBadge"></span><span class="dndTokenStatusRow"></span><span class="dndTokenHpWrap"><span class="dndTokenHpBarFill"></span></span>';
+      el.innerHTML = '<span class="dndTokenInner"></span><span class="dndTokenLabel"></span><span class="dndTokenStatusRow"></span><span class="dndTokenHpWrap"><span class="dndTokenHpBarFill"></span></span>';
       canvas.appendChild(el);
       dndTokenEls[t.id] = el;
       dndAttachTokenDrag(el, t.id);
@@ -752,7 +948,6 @@ function renderDndMap() {
     }
     el.querySelector('.dndTokenLabel').textContent = labelText;
     el.title = t.summoned ? `${t.name} — สัตว์อัญเชิญของ ${summonOwnerName || '?'}` : (t.name + (t.kind === 'npc' ? ' (NPC)' : ''));
-    el.querySelector('.dndTokenAcBadge').textContent = '🛡' + (t.ac != null ? t.ac : '-');
     const maxHp = t.maxHp || 0;
     const pct = maxHp > 0 ? Math.max(0, Math.min(100, Math.round((t.hp / maxHp) * 100))) : 0;
     const fill = el.querySelector('.dndTokenHpBarFill');
@@ -809,6 +1004,7 @@ function refreshOpenDndModals() {
       renderDndStatusChips('dndTokenStatusList', t.statuses || [], 'token', dndTokenEditTargetId);
     }
   }
+  dndTokenPeekWindows.forEach((win, tokenId) => renderTokenPeek(tokenId));
 }
 function renderDndMyTokenColorRow() {
   const row = document.getElementById('dndMyTokenColorRow');
@@ -1014,6 +1210,7 @@ function openTokenEdit(tokenId) {
   document.getElementById('dndTokenEditGold').value = t.goldReward || 0;
   document.getElementById('dndTokenEditLoot').value = (t.loot || []).map(item => `${item.name} x${item.qty}`).join('\n');
   document.getElementById('dndTokenEditStatusResist').value = t.statusResist || 0;
+  document.getElementById('dndTokenEditBackstory').value = t.backstory || '';
   document.getElementById('dndTokenEditError').textContent = '';
   renderTokenAttackList(t);
   renderDndStatusChips('dndTokenStatusList', t.statuses || [], 'token', tokenId);
@@ -1096,6 +1293,7 @@ document.getElementById('dndTokenEditSaveBtn').onclick = (ev) => {
       expReward: document.getElementById('dndTokenEditExp').value,
       goldReward: document.getElementById('dndTokenEditGold').value,
       statusResist: document.getElementById('dndTokenEditStatusResist').value,
+      backstory: document.getElementById('dndTokenEditBackstory').value,
       loot: document.getElementById('dndTokenEditLoot').value.split('\n').map(line => {
         const m = line.trim().match(/^(.*?)(?:\s+x(\d+))?$/i);
         return m && m[1] ? { name: m[1].trim(), qty: Number(m[2] || 1) } : null;

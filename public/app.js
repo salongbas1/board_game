@@ -47,7 +47,15 @@ function connect() {
     else if (msg.type === 'dndCommandResult') appendDndCommandResult(msg.text);
     else if (msg.type === 'dndError') { showDndCreateError(msg.msg); showDndErrorToast(msg.msg); }
     else if (msg.type === 'dndAttackAnim') { playDndAttackAnim(msg); playDndMapAttackAnim(msg); }
+    else if (msg.type === 'dndRollResult') playDndDiceTabRollAnim(msg);
     else if (msg.type === 'dndExportState') downloadDndSave(msg.data);
+    else if (msg.type === 'dndExportCharacter') downloadDndCharacterSave(msg.data);
+    else if (msg.type === 'dndExportBag') downloadDndBagSave(msg.data);
+    else if (msg.type === 'dndSoundsList') renderDndSoundboard(msg.sounds);
+    else if (msg.type === 'dndSoundPlay') playDndSound(msg.id, msg.name);
+    else if (msg.type === 'dndMusicList') renderDndMusicList(msg.tracks);
+    else if (msg.type === 'dndMusicState') applyDndMusicState(msg.state);
+    else if (msg.type === 'dndCutsceneMedia') { dndCutsceneMediaData = msg.cutsceneMedia; dndCutsceneLastKey = null; renderDndCutscene(dndCutsceneLastState, dndCutsceneLastIsDM); }
   };
 }
 connect();
@@ -73,6 +81,7 @@ function showJoinError(msg) {
 
 function showJoinScreen() {
   mySeat = null;
+  document.getElementById('pageTitle').style.display = '';
   document.getElementById('mainMenuScreen').style.display = 'none';
   document.getElementById('joinScreen').style.display = 'block';
   document.getElementById('dndJoinScreen').style.display = 'none';
@@ -86,8 +95,431 @@ function showJoinScreen() {
   closeDndModals();
 }
 
+// ---- ธีมหน้าจอ D&D: เลือกได้เอง "ปกติ", ธีมพิกเซล 3 แบบสี, หรือ "กำหนดเอง" — จำค่าไว้ในเครื่อง ----
+// ค่าธีม (และธีมของฉัน) ถูกเก็บแยกตามชื่อผู้เล่น ในเครื่องเดียวกัน เพื่อไม่ให้ผู้เล่นคนอื่นเห็น/ใช้ธีมของกันและกัน
+let dndMyName = '';
+function dndThemeKeySuffix() {
+  const input = document.getElementById('dndNameInput');
+  const name = (dndMyName || (input && input.value) || '').trim();
+  return name ? ('::' + name) : '';
+}
+const DND_THEME_KEY_BASE = 'dndThemeChoice';
+const DND_CUSTOM_THEME_KEY_BASE = 'dndCustomThemeSettings';
+function dndThemeStorageKey() { return DND_THEME_KEY_BASE + dndThemeKeySuffix(); }
+function dndCustomThemeStorageKey() { return DND_CUSTOM_THEME_KEY_BASE + dndThemeKeySuffix(); }
+const DND_THEMES = [
+  { id: 'pixel', label: '🕹️ พิกเซล: จักรวาล' },
+  { id: 'forest', label: '🌲 พิกเซล: ป่าลึกลับ' },
+  { id: 'ember', label: '🔥 พิกเซล: เพลิงมังกร' },
+  { id: 'custom', label: '🖌️ ธีมของฉัน (กำหนดเอง)' },
+  { id: 'classic', label: '⬜ ปกติ' },
+];
+function dndGetThemeChoice() {
+  try {
+    const v = localStorage.getItem(dndThemeStorageKey());
+    return DND_THEMES.some(t => t.id === v) ? v : 'classic';
+  } catch (e) { return 'classic'; }
+}
+function dndApplyTheme() {
+  const choice = dndGetThemeChoice();
+  document.body.classList.toggle('dndTheme', choice === 'pixel' || choice === 'forest' || choice === 'ember');
+  document.body.classList.toggle('dndTheme--forest', choice === 'forest');
+  document.body.classList.toggle('dndTheme--ember', choice === 'ember');
+  document.body.classList.toggle('dndTheme--custom', choice === 'custom');
+  if (choice === 'custom') dndApplyCustomThemeVars();
+}
+function dndRenderThemePicker() {
+  const choice = dndGetThemeChoice();
+  const list = document.getElementById('dndThemePickerList');
+  list.innerHTML = DND_THEMES.map(t => `
+    <button type="button" class="optBtn dndThemePickBtn${t.id === choice ? ' active' : ''}" data-id="${t.id}" style="width:100%; text-align:left; padding:10px 12px;">${t.label}${t.id === choice ? ' ✓' : ''}</button>
+  `).join('');
+  list.querySelectorAll('.dndThemePickBtn').forEach(btn => {
+    btn.onclick = (ev) => {
+      flashBtn(ev.currentTarget);
+      const id = btn.dataset.id;
+      try { localStorage.setItem(dndThemeStorageKey(), id); } catch (e) {}
+      dndApplyTheme();
+      document.getElementById('dndThemePickerOverlay').style.display = 'none';
+      if (id === 'custom') dndOpenCustomThemeModal();
+    };
+  });
+}
+document.getElementById('dndThemeToggleBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  closeDndModals();
+  dndRenderThemePicker();
+  document.getElementById('dndThemePickerOverlay').style.display = 'flex';
+};
+document.getElementById('dndThemePickerCloseBtn').onclick = () => { document.getElementById('dndThemePickerOverlay').style.display = 'none'; };
+
+// ---- "ธีมของฉัน" (กำหนดเอง): พื้นหลังหน้าเกม + กรอบ/พื้นหลังการ์ดตัวละคร — เก็บไว้ในเครื่องนี้เท่านั้น (localStorage) ไม่ส่งขึ้นเซิร์ฟเวอร์ ----
+// ---- เคอร์เซอร์เมาส์ของฉัน — ผู้เล่นใส่ลิงก์รูปภาพ หรือลากไฟล์ (.png .gif .jpg .svg .cur .ico .ani) มาวางเพื่อใช้แทนลูกศรปกติได้เอง (เก็บแยกตามผู้เล่น ในเครื่องนี้เท่านั้น ไม่กระทบผู้เล่นคนอื่น) ----
+const DND_CURSOR_KEY_BASE = 'dndCursorUrl';
+const DND_CURSOR_PRESETS = [
+  { id: 'megaman', label: '🔷 Mega Man', url: 'images/cursor-megaman.png' },
+];
+function dndCursorStorageKey() { return DND_CURSOR_KEY_BASE + dndThemeKeySuffix(); }
+function dndGetCursorUrl() {
+  try { return localStorage.getItem(dndCursorStorageKey()) || ''; } catch (e) { return ''; }
+}
+// ค่าที่ใช้เป็นเคอร์เซอร์ได้มี 3 แบบ: ลิงก์ http(s) ที่ผู้เล่นพิมพ์เอง, data URL ที่แปลงจากไฟล์ที่แนบ, หรือไฟล์ที่มากับเกม (path ธรรมดาไม่มี scheme)
+function dndIsUsableCursorValue(v) {
+  const s = (v || '').toString().trim();
+  if (!s) return false;
+  if (/["'\\]/.test(s)) return false; // กันอักขระที่จะทำให้ CSS หลุด
+  if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(s)) return true;
+  if (/^https?:\/\/\S+$/i.test(s)) return true;
+  if (/^[a-zA-Z0-9_\-./]+\.(png|gif|jpe?g|svg|cur|ico|webp)$/i.test(s)) return true;
+  return false;
+}
+function dndApplyCursor() {
+  const url = dndGetCursorUrl();
+  if (url && dndIsUsableCursorValue(url)) {
+    // ใส่ ", auto" ต่อท้ายเสมอ เผื่อรูปโหลดไม่ขึ้นหรือไฟล์ใหญ่เกินที่เบราว์เซอร์รองรับ จะได้ไม่หายไปเป็นเคอร์เซอร์ที่มองไม่เห็น
+    document.body.style.cursor = `url("${url}") 0 0, auto`;
+  } else {
+    document.body.style.cursor = '';
+  }
+}
+function dndCursorSetValue(val, ev) {
+  if (ev) flashBtn(ev.currentTarget || ev);
+  try { localStorage.setItem(dndCursorStorageKey(), val); } catch (e) {}
+  dndApplyCursor();
+  dndRenderCursorStatus();
+}
+function dndRenderCursorStatus() {
+  const cur = dndGetCursorUrl();
+  const box = document.getElementById('dndCursorStatus');
+  if (!box) return;
+  if (!cur) { box.textContent = 'ตอนนี้ใช้ลูกศรปกติ'; return; }
+  if (/^data:/i.test(cur)) { box.textContent = 'ตอนนี้ใช้: ไฟล์ที่แนบไว้ ✓'; return; }
+  const preset = DND_CURSOR_PRESETS.find(p => p.url === cur);
+  box.textContent = 'ตอนนี้ใช้: ' + (preset ? preset.label : cur);
+}
+// อ่านไฟล์เคอร์เซอร์ — ภาพทั่วไป (.png .gif .jpg .svg) แปลงเป็น data URL ตรงๆ, ส่วน .cur/.ico/.ani ต้องอ่านเป็นไบต์ดิบแล้วห่อเป็น data:image/x-icon เอง เพราะเบราว์เซอร์มักไม่รู้จัก MIME ของไฟล์พวกนี้
+function dndUint8ToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return btoa(binary);
+}
+// ไฟล์ .ani คือ RIFF container ที่บรรจุภาพ .cur หลายเฟรม (สำหรับอนิเมชัน) — เว็บเบราว์เซอร์ใช้เคอร์เซอร์แบบเคลื่อนไหวไม่ได้ จึงดึงมาแค่เฟรมแรกมาใช้เป็นภาพนิ่ง
+function dndParseAniFirstFrame(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const fourCC = (off) => String.fromCharCode(bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]);
+  if (bytes.length < 12 || fourCC(0) !== 'RIFF' || fourCC(8) !== 'ACON') return null;
+  const riffSize = view.getUint32(4, true);
+  const end = Math.min(12 + riffSize - 4, bytes.length);
+  let i = 12;
+  while (i + 8 <= end) {
+    const cid = fourCC(i);
+    const size = view.getUint32(i + 4, true);
+    const cStart = i + 8, cEnd = cStart + size;
+    if (cid === 'LIST' && fourCC(cStart) === 'fram') {
+      let j = cStart + 4;
+      while (j + 8 <= cEnd) {
+        const scid = fourCC(j);
+        const ssize = view.getUint32(j + 4, true);
+        const sStart = j + 8, sEnd = sStart + ssize;
+        if (scid === 'icon') return bytes.slice(sStart, sEnd);
+        j = sEnd + (ssize % 2);
+      }
+    }
+    i = cEnd + (size % 2);
+  }
+  return null;
+}
+function dndReadCursorFile(file, cb) {
+  if (!file) return cb(null);
+  if (file.size > 500 * 1024) { alert('ไฟล์ใหญ่เกินไป — จำกัดประมาณ 500KB'); return cb(null); }
+  const name = (file.name || '').toLowerCase();
+  const isAni = name.endsWith('.ani');
+  const isCurIco = name.endsWith('.cur') || name.endsWith('.ico');
+  if (isAni || isCurIco) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        let bytes = isAni ? dndParseAniFirstFrame(reader.result) : new Uint8Array(reader.result);
+        if (!bytes) { alert('ไม่พบภาพเคอร์เซอร์ในไฟล์ .ani นี้'); return cb(null); }
+        cb('data:image/x-icon;base64,' + dndUint8ToBase64(bytes));
+      } catch (e) { alert('อ่านไฟล์เคอร์เซอร์ไม่สำเร็จ'); cb(null); }
+    };
+    reader.readAsArrayBuffer(file);
+  } else if (file.type.startsWith('image/') || /\.(png|gif|jpe?g|svg|webp)$/i.test(name)) {
+    const reader = new FileReader();
+    reader.onload = () => cb(reader.result);
+    reader.readAsDataURL(file);
+  } else {
+    alert('รองรับเฉพาะไฟล์ภาพ (.png .gif .jpg .svg) หรือไฟล์เคอร์เซอร์ (.cur .ico .ani)');
+    cb(null);
+  }
+}
+function dndRenderCursorPresets() {
+  const box = document.getElementById('dndCursorPresetList');
+  if (!box) return;
+  box.innerHTML = DND_CURSOR_PRESETS.map(p => `<button type="button" class="linkBtn dndCursorPresetBtn" data-url="${p.url}">${p.label}</button>`).join('');
+  box.querySelectorAll('.dndCursorPresetBtn').forEach(btn => {
+    btn.onclick = (ev) => {
+      document.getElementById('dndCursorUrlInput').value = '';
+      dndCursorSetValue(btn.dataset.url, ev);
+    };
+  });
+}
+function dndOpenCursorModal() {
+  const cur = dndGetCursorUrl();
+  document.getElementById('dndCursorUrlInput').value = /^https?:\/\//i.test(cur) ? cur : '';
+  document.getElementById('dndCursorError').textContent = '';
+  dndRenderCursorPresets();
+  dndRenderCursorStatus();
+  document.getElementById('dndCursorOverlay').style.display = 'flex';
+}
+document.getElementById('dndCursorOpenBtn').onclick = () => {
+  document.getElementById('dndThemePickerOverlay').style.display = 'none';
+  dndOpenCursorModal();
+};
+document.getElementById('dndCursorCloseBtn').onclick = () => { document.getElementById('dndCursorOverlay').style.display = 'none'; };
+document.getElementById('dndCursorBackBtn').onclick = () => {
+  document.getElementById('dndCursorOverlay').style.display = 'none';
+  dndRenderThemePicker();
+  document.getElementById('dndThemePickerOverlay').style.display = 'flex';
+};
+(function setupDndCursorFileInputs() {
+  const zone = document.getElementById('dndCursorDropZone');
+  const input = document.getElementById('dndCursorFileInput');
+  if (!zone || !input) return;
+  zone.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    dndReadCursorFile(file, (dataUrl) => { if (dataUrl) dndCursorSetValue(dataUrl); input.value = ''; });
+  });
+  ['dragenter', 'dragover'].forEach(evt => zone.addEventListener(evt, (ev) => { ev.preventDefault(); zone.classList.add('dndCursorDragOver'); }));
+  ['dragleave', 'drop'].forEach(evt => zone.addEventListener(evt, (ev) => { ev.preventDefault(); zone.classList.remove('dndCursorDragOver'); }));
+  zone.addEventListener('drop', (ev) => {
+    ev.preventDefault();
+    const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+    dndReadCursorFile(file, (dataUrl) => { if (dataUrl) dndCursorSetValue(dataUrl); });
+  });
+})();
+document.getElementById('dndCursorSaveBtn').onclick = (ev) => {
+  const url = document.getElementById('dndCursorUrlInput').value.trim();
+  if (url && !dndIsUsableCursorValue(url)) {
+    document.getElementById('dndCursorError').textContent = 'ลิงก์รูปภาพต้องขึ้นต้นด้วย http:// หรือ https:// เท่านั้น';
+    return;
+  }
+
+  flashBtn(ev.currentTarget);
+  try { localStorage.setItem(dndCursorStorageKey(), url); } catch (e) {}
+  dndApplyCursor();
+  dndRenderCursorStatus();
+  document.getElementById('dndCursorOverlay').style.display = 'none';
+};
+document.getElementById('dndCursorResetBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  try { localStorage.removeItem(dndCursorStorageKey()); } catch (e) {}
+  dndApplyCursor();
+  dndOpenCursorModal();
+};
+
+const DND_CUSTOM_THEME_DEFAULTS = {
+  bgUrl: '', bgDim: 40,
+  accent: '#c9a24a',
+  cardBorderColor: '#c94a3d', cardBorderWidth: 2, cardBorderStyle: 'solid',
+  cardBorderImg: '', cardBgImg: '', cardBgDim: 55,
+  skillCardBgImg: '', skillCardBgDim: 55,
+};
+function dndGetCustomThemeSettings() {
+  try {
+    const raw = localStorage.getItem(dndCustomThemeStorageKey());
+    if (!raw) return Object.assign({}, DND_CUSTOM_THEME_DEFAULTS);
+    return Object.assign({}, DND_CUSTOM_THEME_DEFAULTS, JSON.parse(raw));
+  } catch (e) { return Object.assign({}, DND_CUSTOM_THEME_DEFAULTS); }
+}
+// ห่อ URL ที่ผู้เล่นกรอกเองเป็นค่า CSS url(...) แบบปลอดภัย — ตัดอักขระที่จะหลุดออกจาก string ได้ทิ้งไปก่อน
+function dndCssUrlValue(raw) {
+  const v = (raw || '').toString().trim();
+  if (!v) return 'none';
+  return `url("${v.replace(/["\\]/g, '')}")`;
+}
+function dndApplyCustomThemeVars() {
+  const s = dndGetCustomThemeSettings();
+  const st = document.body.style;
+  st.setProperty('--dnd-ct-bg-image', dndCssUrlValue(s.bgUrl));
+  st.setProperty('--dnd-ct-bg-dim', Math.max(0, Math.min(90, Number(s.bgDim) || 0)) / 100);
+  st.setProperty('--dnd-ct-accent', s.accent || DND_CUSTOM_THEME_DEFAULTS.accent);
+  st.setProperty('--dnd-ct-card-border-color', s.cardBorderColor || DND_CUSTOM_THEME_DEFAULTS.cardBorderColor);
+  st.setProperty('--dnd-ct-card-border-width', `${Math.max(1, Math.min(10, Number(s.cardBorderWidth) || 1))}px`);
+  st.setProperty('--dnd-ct-card-border-style', s.cardBorderStyle || 'solid');
+  st.setProperty('--dnd-ct-card-border-img', dndCssUrlValue(s.cardBorderImg));
+  st.setProperty('--dnd-ct-card-bg-image', dndCssUrlValue(s.cardBgImg));
+  st.setProperty('--dnd-ct-card-bg-dim', Math.max(0, Math.min(90, Number(s.cardBgDim) || 0)) / 100);
+  st.setProperty('--dnd-ct-skill-card-bg-image', dndCssUrlValue(s.skillCardBgImg));
+  st.setProperty('--dnd-ct-skill-card-bg-dim', Math.max(0, Math.min(90, Number(s.skillCardBgDim) || 0)) / 100);
+}
+function dndIsLikelyImageUrl(v) { return /^https?:\/\/\S+$/i.test((v || '').toString().trim()); }
+function dndOpenCustomThemeModal() {
+  const s = dndGetCustomThemeSettings();
+  document.getElementById('dndCtBgUrl').value = s.bgUrl || '';
+  document.getElementById('dndCtBgDim').value = s.bgDim;
+  document.getElementById('dndCtBgDimVal').textContent = `${s.bgDim}%`;
+  document.getElementById('dndCtAccent').value = s.accent;
+  document.getElementById('dndCtCardBorderColor').value = s.cardBorderColor;
+  document.getElementById('dndCtCardBorderWidth').value = s.cardBorderWidth;
+  document.getElementById('dndCtCardBorderWidthVal').textContent = `${s.cardBorderWidth}px`;
+  document.getElementById('dndCtCardBorderStyle').value = s.cardBorderStyle;
+  document.getElementById('dndCtCardBorderImg').value = s.cardBorderImg || '';
+  document.getElementById('dndCtCardBgImg').value = s.cardBgImg || '';
+  document.getElementById('dndCtCardBgDim').value = s.cardBgDim;
+  document.getElementById('dndCtCardBgDimVal').textContent = `${s.cardBgDim}%`;
+  document.getElementById('dndCtSkillCardBgImg').value = s.skillCardBgImg || '';
+  document.getElementById('dndCtSkillCardBgDim').value = s.skillCardBgDim;
+  document.getElementById('dndCtSkillCardBgDimVal').textContent = `${s.skillCardBgDim}%`;
+  document.getElementById('dndCtError').textContent = '';
+  document.getElementById('dndCustomThemeOverlay').style.display = 'flex';
+}
+document.getElementById('dndCtCloseBtn').onclick = () => { document.getElementById('dndCustomThemeOverlay').style.display = 'none'; };
+document.getElementById('dndCtBackBtn').onclick = () => {
+  document.getElementById('dndCustomThemeOverlay').style.display = 'none';
+  dndRenderThemePicker();
+  document.getElementById('dndThemePickerOverlay').style.display = 'flex';
+};
+document.getElementById('dndCtBgDim').oninput = (ev) => { document.getElementById('dndCtBgDimVal').textContent = `${ev.target.value}%`; };
+document.getElementById('dndCtCardBorderWidth').oninput = (ev) => { document.getElementById('dndCtCardBorderWidthVal').textContent = `${ev.target.value}px`; };
+document.getElementById('dndCtCardBgDim').oninput = (ev) => { document.getElementById('dndCtCardBgDimVal').textContent = `${ev.target.value}%`; };
+document.getElementById('dndCtSkillCardBgDim').oninput = (ev) => { document.getElementById('dndCtSkillCardBgDimVal').textContent = `${ev.target.value}%`; };
+document.getElementById('dndCtSaveBtn').onclick = (ev) => {
+  const fields = {
+    bgUrl: document.getElementById('dndCtBgUrl').value.trim(),
+    bgDim: Number(document.getElementById('dndCtBgDim').value) || 0,
+    accent: document.getElementById('dndCtAccent').value,
+    cardBorderColor: document.getElementById('dndCtCardBorderColor').value,
+    cardBorderWidth: Number(document.getElementById('dndCtCardBorderWidth').value) || 2,
+    cardBorderStyle: document.getElementById('dndCtCardBorderStyle').value,
+    cardBorderImg: document.getElementById('dndCtCardBorderImg').value.trim(),
+    cardBgImg: document.getElementById('dndCtCardBgImg').value.trim(),
+    cardBgDim: Number(document.getElementById('dndCtCardBgDim').value) || 0,
+    skillCardBgImg: document.getElementById('dndCtSkillCardBgImg').value.trim(),
+    skillCardBgDim: Number(document.getElementById('dndCtSkillCardBgDim').value) || 0,
+  };
+  const badUrl = [fields.bgUrl, fields.cardBorderImg, fields.cardBgImg, fields.skillCardBgImg].find(u => u && !dndIsLikelyImageUrl(u));
+  if (badUrl) {
+    document.getElementById('dndCtError').textContent = 'ลิงก์รูปภาพต้องขึ้นต้นด้วย http:// หรือ https:// เท่านั้น';
+    return;
+  }
+  flashBtn(ev.currentTarget);
+  try { localStorage.setItem(dndCustomThemeStorageKey(), JSON.stringify(fields)); } catch (e) {}
+  try { localStorage.setItem(dndThemeStorageKey(), 'custom'); } catch (e) {}
+  dndApplyTheme();
+  document.getElementById('dndCustomThemeOverlay').style.display = 'none';
+};
+document.getElementById('dndCtResetBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  try { localStorage.removeItem(dndCustomThemeStorageKey()); } catch (e) {}
+  dndOpenCustomThemeModal();
+  if (dndGetThemeChoice() === 'custom') dndApplyCustomThemeVars();
+};
+
+// ---- สติกเกอร์มุมกล่อง "ลำดับเทิร์นผู้เล่น" — ลากไฟล์ .gif มาวางแล้วลากย้ายตำแหน่งได้อิสระ (เก็บแยกตามผู้เล่นในเครื่องนี้เท่านั้น ไม่ส่งขึ้นเซิร์ฟเวอร์) ----
+const DND_TURN_STICKER_KEY_BASE = 'dndTurnBoxSticker';
+function dndTurnStickerStorageKey() { return DND_TURN_STICKER_KEY_BASE + dndThemeKeySuffix(); }
+function dndGetTurnSticker() {
+  try {
+    const raw = localStorage.getItem(dndTurnStickerStorageKey());
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function dndSaveTurnSticker(data) {
+  try { localStorage.setItem(dndTurnStickerStorageKey(), JSON.stringify(data)); } catch (e) {}
+}
+function dndRemoveTurnSticker() {
+  try { localStorage.removeItem(dndTurnStickerStorageKey()); } catch (e) {}
+  renderDndTurnSticker();
+}
+// สถานะการลากอยู่ตัวเดียวใช้ร่วมกัน (ผูก listener ที่ window ครั้งเดียวตอนโหลดสคริปต์ ไม่ผูกซ้ำทุกครั้งที่ render)
+let dndTurnStickerDragState = null;
+function dndTurnStickerPointerDown(ev, wrap, x, y, imgData) {
+  if (ev.target.closest('.dndTurnStickerRemoveBtn')) return;
+  const box = document.getElementById('dndTurnBox');
+  if (!box) return;
+  const boxRect = box.getBoundingClientRect();
+  const point = ev.touches ? ev.touches[0] : ev;
+  dndTurnStickerDragState = { wrap, boxRect, startX: point.clientX, startY: point.clientY, startLeftPct: x, startTopPct: y, imgData };
+  wrap.classList.add('dragging');
+  ev.preventDefault();
+}
+function dndTurnStickerPointerMove(ev) {
+  const st = dndTurnStickerDragState;
+  if (!st) return;
+  const point = ev.touches ? ev.touches[0] : ev;
+  const dxPct = ((point.clientX - st.startX) / st.boxRect.width) * 100;
+  const dyPct = ((point.clientY - st.startY) / st.boxRect.height) * 100;
+  const nx = Math.max(0, Math.min(92, st.startLeftPct + dxPct));
+  const ny = Math.max(0, Math.min(88, st.startTopPct + dyPct));
+  st.wrap.style.left = nx + '%';
+  st.wrap.style.top = ny + '%';
+  st.curX = nx; st.curY = ny;
+  ev.preventDefault();
+}
+function dndTurnStickerPointerUp() {
+  const st = dndTurnStickerDragState;
+  if (!st) return;
+  st.wrap.classList.remove('dragging');
+  dndSaveTurnSticker({ imgData: st.imgData, x: st.curX != null ? st.curX : st.startLeftPct, y: st.curY != null ? st.curY : st.startTopPct });
+  dndTurnStickerDragState = null;
+}
+window.addEventListener('mousemove', dndTurnStickerPointerMove);
+window.addEventListener('mouseup', dndTurnStickerPointerUp);
+window.addEventListener('touchmove', dndTurnStickerPointerMove, { passive: false });
+window.addEventListener('touchend', dndTurnStickerPointerUp);
+function renderDndTurnSticker() {
+  const layer = document.getElementById('dndTurnStickerLayer');
+  if (!layer) return;
+  const s = dndGetTurnSticker();
+  layer.innerHTML = '';
+  if (!s || !s.imgData) return;
+  const x = Math.max(0, Math.min(100, Number(s.x)));
+  const y = Math.max(0, Math.min(100, Number(s.y)));
+  const wrap = document.createElement('div');
+  wrap.className = 'dndTurnSticker';
+  wrap.style.left = (Number.isFinite(x) ? x : 2) + '%';
+  wrap.style.top = (Number.isFinite(y) ? y : 2) + '%';
+  wrap.innerHTML = `<img src="${s.imgData}" alt=""><button type="button" class="dndTurnStickerRemoveBtn" title="ลบสติกเกอร์">×</button>`;
+  wrap.addEventListener('mousedown', (ev) => dndTurnStickerPointerDown(ev, wrap, Number.isFinite(x) ? x : 2, Number.isFinite(y) ? y : 2, s.imgData));
+  wrap.addEventListener('touchstart', (ev) => dndTurnStickerPointerDown(ev, wrap, Number.isFinite(x) ? x : 2, Number.isFinite(y) ? y : 2, s.imgData), { passive: false });
+  wrap.querySelector('.dndTurnStickerRemoveBtn').onclick = (ev) => { ev.stopPropagation(); dndRemoveTurnSticker(); };
+  layer.appendChild(wrap);
+}
+(function setupDndTurnStickerDrop() {
+  const box = document.getElementById('dndTurnBox');
+  if (!box) return;
+  ['dragenter', 'dragover'].forEach(evt => box.addEventListener(evt, (ev) => {
+    ev.preventDefault();
+    box.classList.add('dndTurnStickerDragOver');
+  }));
+  ['dragleave', 'drop'].forEach(evt => box.addEventListener(evt, (ev) => {
+    ev.preventDefault();
+    box.classList.remove('dndTurnStickerDragOver');
+  }));
+  box.addEventListener('drop', (ev) => {
+    ev.preventDefault();
+    const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+    if (!file) return;
+    readDndImageFile(file, (dataUrl) => {
+      if (!dataUrl) return;
+      const prev = dndGetTurnSticker();
+      dndSaveTurnSticker({ imgData: dataUrl, x: (prev && Number.isFinite(prev.x)) ? prev.x : 2, y: (prev && Number.isFinite(prev.y)) ? prev.y : 2 });
+      renderDndTurnSticker();
+    });
+  });
+})();
+
 function showMainMenu() {
   mySeat = null;
+  document.body.classList.remove('dndTheme', 'dndTheme--forest', 'dndTheme--ember', 'dndTheme--custom');
+  document.body.style.cursor = '';
+  document.getElementById('dndThemeToggleBtn').style.display = 'none';
+  document.getElementById('pageTitle').style.display = '';
   document.getElementById('mainMenuScreen').style.display = 'block';
   document.getElementById('joinScreen').style.display = 'none';
   document.getElementById('dndJoinScreen').style.display = 'none';
@@ -98,6 +530,9 @@ function showMainMenu() {
   document.getElementById('chatPanel').style.display = 'none';
   document.getElementById('alarmBtn').style.display = 'none';
   document.getElementById('newGameBtn').style.display = 'none';
+  document.getElementById('dndCutsceneOverlay').style.display = 'none';
+  document.getElementById('dndCutsceneMediaWrap').innerHTML = '';
+  dndCutsceneLastKey = null;
   closeDndModals();
 }
 
@@ -106,8 +541,12 @@ document.getElementById('gameCardHearts').onclick = () => {
   document.getElementById('joinScreen').style.display = 'block';
 };
 document.getElementById('gameCardDnd').onclick = () => {
+  document.getElementById('pageTitle').style.display = 'none';
   document.getElementById('mainMenuScreen').style.display = 'none';
   document.getElementById('dndJoinScreen').style.display = 'block';
+  document.getElementById('dndThemeToggleBtn').style.display = 'inline-block';
+  dndApplyTheme();
+  dndApplyCursor();
   send({ type: 'dndListSeats' });
 };
 document.getElementById('backToMenuBtn').onclick = (ev) => { flashBtn(ev.currentTarget); showMainMenu(); };
@@ -601,7 +1040,7 @@ function dndAnySkillById(id) {
   const sid = Number(id);
   return dndSkills.find(s => s.id === sid) || dndLibrarySkillCatalog.find(s => s.id === sid) || null;
 }
-let dndActiveTool = 'dice';
+let dndActiveTool = 'map';
 const DND_STAT_LABELS = { str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA' };
 // ค่าตั้งต้นของ "โจมตีปกติ" ฝั่งไคลเอนต์ — ต้องตรงกับ DND_NORMAL_ATTACK_DEFAULT ฝั่งเซิร์ฟเวอร์ (server/dnd.js)
 const DND_NORMAL_ATTACK_DEFAULT_CLIENT = { name: 'โจมตีปกติ', stat: 'auto', dmgDie: 6, dmgCount: 1, atkBonus: 0, dmgBonus: 0, range: 0, reqItemName: '', reqItemQty: 0 };
@@ -769,6 +1208,9 @@ document.getElementById('dndJoinBtn').onclick = (ev) => {
   const name = document.getElementById('dndNameInput').value.trim();
   if (!name) return;
   flashBtn(ev.currentTarget);
+  dndMyName = name;
+  dndApplyTheme();
+  dndApplyCursor();
   send({ type: 'dndJoin', name });
   document.getElementById('dndJoinScreen').style.display = 'none';
   document.getElementById('chatPanel').style.display = 'none';
@@ -789,6 +1231,8 @@ function renderDndSeatList(seats) {
   list.querySelectorAll('.seatTakeBtn').forEach(btn => {
     btn.onclick = (ev) => {
       flashBtn(ev.currentTarget);
+      const seatInfo = seats.find(s => s.id === Number(btn.dataset.id));
+      if (seatInfo) { dndMyName = seatInfo.name; dndApplyTheme(); dndApplyCursor(); }
       send({ type: 'dndTakeSeat', id: Number(btn.dataset.id) });
       document.getElementById('dndJoinScreen').style.display = 'none';
       document.getElementById('chatPanel').style.display = 'none';
@@ -864,6 +1308,83 @@ function downloadDndSave(data) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+// เซิร์ฟเวอร์ส่งข้อมูลตัวละครของเรากลับมาให้ (ตอบรับปุ่ม "บันทึกตัวละครเป็นไฟล์" ใน My Sheet) — สร้างไฟล์ .json ให้ดาวน์โหลดทันที
+// ไฟล์นี้เก็บไว้เป็นสำรอง — เผื่ออยากดูข้อมูลตัวละครของตัวเองย้อนหลัง หรือส่งให้ DM ช่วยตรวจสอบ
+function downloadDndCharacterSave(data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const safeName = ((data && data.savedName) || 'character').toString().replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 40) || 'character';
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `hearts8-dnd-char-${safeName}-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+document.getElementById('dndMySheetSaveCharBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndExportCharacter' });
+};
+// เซิร์ฟเวอร์ส่งข้อมูลกระเป๋า+ทองของเรากลับมาให้ (ตอบรับปุ่ม "บันทึกกระเป๋าเป็นไฟล์") — สร้างไฟล์ .json ให้ดาวน์โหลดทันที
+// ไฟล์นี้เอาไปให้ DM นำเข้ากลับให้ผู้เล่นคนไหนก็ได้ทีหลัง ผ่านปุ่ม "📂 นำเข้าไฟล์กระเป๋า" ในหน้ากระเป๋า (แท็บ DM)
+function downloadDndBagSave(data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const safeName = ((data && data.savedName) || 'bag').toString().replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 40) || 'bag';
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `hearts8-dnd-bag-${safeName}-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+const dndBagSaveFileBtnEl = document.getElementById('dndBagSaveFileBtn');
+if (dndBagSaveFileBtnEl) {
+  dndBagSaveFileBtnEl.onclick = (ev) => {
+    flashBtn(ev.currentTarget);
+    send({ type: 'dndExportBag' });
+  };
+}
+const dndImportBagBtnEl = document.getElementById('dndImportBagBtn');
+const dndImportBagFileInputEl = document.getElementById('dndImportBagFileInput');
+if (dndImportBagBtnEl && dndImportBagFileInputEl) {
+  dndImportBagBtnEl.onclick = () => {
+    const targetSelect = document.getElementById('dndGiveTargetSelect');
+    if (!targetSelect || !targetSelect.value) { alert('กรุณาเลือกผู้เล่นเป้าหมายในช่อง "ผู้เล่น" ก่อน'); return; }
+    dndImportBagFileInputEl.click();
+  };
+  dndImportBagFileInputEl.onchange = (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    const targetSelect = document.getElementById('dndGiveTargetSelect');
+    const targetId = targetSelect ? Number(targetSelect.value) : null;
+    if (!targetId) return;
+    const targetOpt = targetSelect.selectedOptions && targetSelect.selectedOptions[0];
+    if (!confirm(`นำเข้าไฟล์นี้แทนที่กระเป๋า+ทองทั้งหมดของ "${targetOpt ? targetOpt.textContent : targetId}"? แก้กลับคืนไม่ได้`)) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(reader.result);
+      } catch (e) {
+        alert('ไฟล์นี้ไม่ใช่ไฟล์กระเป๋าที่ถูกต้อง (อ่านเป็น JSON ไม่ได้)');
+        return;
+      }
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.bag)) {
+        alert('ไฟล์นี้ไม่มีข้อมูลกระเป๋า นำเข้าไม่ได้');
+        return;
+      }
+      send({ type: 'dndImportBag', data: { targetId, bag: parsed.bag, gold: parsed.gold } });
+    };
+    reader.onerror = () => alert('อ่านไฟล์นี้ไม่สำเร็จ ลองใหม่อีกครั้ง');
+    reader.readAsText(file);
+  };
 }
 
 // ---- อุปกรณ์สวมใส่: อาวุธ / เกราะ / รองเท้า / เครื่องประดับ — ค่าป้องกัน + ความคงทน ต่อชิ้น ----
@@ -1018,6 +1539,285 @@ document.getElementById('dndSceneClearBtn').onclick = (ev) => {
   send({ type: 'dndSceneUpdate', scene: { location: '', situation: '' } });
 };
 
+// ---- คัตซีน DM: DM ใส่ลิงก์ภาพหรือวิดีโอ หรืออัปโหลดไฟล์จากเครื่องตัวเอง แล้วกดแสดง — ระบบจอเต็มขึ้นให้ผู้เล่นทุกคนในห้องเห็นพร้อมกันทันที ----
+let dndCutsceneLastKey = null; // กันไม่ให้ render ซ้ำ (วิดีโอรีสตาร์ท) ทุกครั้งที่ state อัปเดตทั้งที่คัตซีนยังเหมือนเดิม
+let dndCutsceneLastState = null; // จำ cutscene/isDM ล่าสุดไว้ เผื่อไฟล์ dndCutsceneMedia มาถึงทีหลัง state จะได้ re-render ได้ถูกต้อง
+let dndCutsceneLastIsDM = false;
+let dndCutsceneMediaData = null; // { kind, data } ไฟล์คัตซีนจากเครื่อง DM ที่ได้รับผ่าน dndCutsceneMedia (แยกจาก dndState เพราะไฟล์หนัก)
+let dndCutsceneUploadData = null; // base64 data URI ของไฟล์ที่เพิ่งเลือกไว้ รอกดปุ่ม "แสดงไฟล์นี้ให้ทุกคนดู"
+function renderDndCutscene(cutscene, isDM) {
+  dndCutsceneLastState = cutscene;
+  dndCutsceneLastIsDM = isDM;
+  const overlay = document.getElementById('dndCutsceneOverlay');
+  const wrap = document.getElementById('dndCutsceneMediaWrap');
+  const closeBtn = document.getElementById('dndCutsceneCloseBtn');
+  closeBtn.style.display = isDM ? 'inline-block' : 'none';
+  const isLocal = !!(cutscene && cutscene.local);
+  const localReady = isLocal && dndCutsceneMediaData && dndCutsceneMediaData.data;
+  const key = cutscene ? (isLocal ? `local::${cutscene.kind}::${localReady ? dndCutsceneMediaData.data.length : 0}` : `${cutscene.kind}::${cutscene.url}`) : '';
+  if (key === dndCutsceneLastKey) return;
+  if (isLocal && !localReady) return; // รอไฟล์ dndCutsceneMedia มาถึงก่อน ยังไม่ต้อง render/เคลียร์จอ
+  dndCutsceneLastKey = key;
+  if (!cutscene || (!isLocal && !cutscene.url) || (isLocal && !localReady)) {
+    overlay.style.display = 'none';
+    wrap.innerHTML = '';
+    return;
+  }
+  const srcUrl = isLocal ? dndCutsceneMediaData.data : (cutscene.url || '').toString().replace(/["<>]/g, '');
+  wrap.innerHTML = cutscene.kind === 'video'
+    ? `<video src="${srcUrl}" autoplay controls playsinline></video>`
+    : `<img src="${srcUrl}" alt="">`;
+  overlay.style.display = 'flex';
+}
+document.getElementById('dndCutsceneShowBtn').onclick = (ev) => {
+  const url = document.getElementById('dndCutsceneUrlInput').value.trim();
+  if (!url) return;
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndCutsceneShow', cutscene: { url } });
+};
+const dndCutsceneFileInputEl = document.getElementById('dndCutsceneFileInput');
+if (dndCutsceneFileInputEl) {
+  dndCutsceneFileInputEl.addEventListener('change', (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) { dndCutsceneUploadData = null; return; }
+    if (!/^image\/|^video\//.test(file.type || '')) {
+      alert('รองรับเฉพาะไฟล์รูปภาพหรือวิดีโอเท่านั้น');
+      ev.target.value = '';
+      dndCutsceneUploadData = null;
+      return;
+    }
+    if (file.size > 4500000) {
+      alert('ไฟล์ใหญ่เกินไป (ควรไม่เกินประมาณ 4.5MB) กรุณาเลือกไฟล์ที่เล็กลงหรือบีบอัดก่อน');
+      ev.target.value = '';
+      dndCutsceneUploadData = null;
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => { dndCutsceneUploadData = reader.result; };
+    reader.readAsDataURL(file);
+  });
+}
+const dndCutsceneShowLocalBtnEl = document.getElementById('dndCutsceneShowLocalBtn');
+if (dndCutsceneShowLocalBtnEl) {
+  dndCutsceneShowLocalBtnEl.onclick = (ev) => {
+    if (!dndCutsceneUploadData) { alert('กรุณาเลือกไฟล์ก่อน'); return; }
+    flashBtn(ev.currentTarget);
+    send({ type: 'dndCutsceneShowLocal', cutscene: { data: dndCutsceneUploadData } });
+    if (dndCutsceneFileInputEl) dndCutsceneFileInputEl.value = '';
+    dndCutsceneUploadData = null;
+  };
+}
+document.getElementById('dndCutsceneCloseAllBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndCutsceneClose' });
+};
+document.getElementById('dndCutsceneCloseBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndCutsceneClose' });
+};
+
+// ---- กล่องเสียง (Soundboard): DM เพิ่ม/ลบ/สั่งเล่นเสียงเอฟเฟกต์ให้ทุกคนในห้องได้ยินพร้อมกัน ----
+let dndSoundsClient = []; // [{id, name, data}] — แคชไว้ฝั่งนี้ ได้รับจากเซิร์ฟเวอร์ผ่าน dndSoundsList (ไม่ได้มากับ dndState ปกติ เพราะไฟล์เสียงหนัก ไม่อยากให้ส่งซ้ำทุกครั้ง)
+let dndSoundUploadData = null; // base64 data URI ของไฟล์เสียงที่เพิ่งเลือกไว้ รอกดปุ่ม "เพิ่มเสียงเข้ากล่อง"
+function renderDndSoundboard(sounds) {
+  dndSoundsClient = Array.isArray(sounds) ? sounds : [];
+  const box = document.getElementById('dndSoundboardList');
+  if (!box) return;
+  if (!dndSoundsClient.length) { box.innerHTML = '<div class="dndRangeHint">ยังไม่มีเสียงในกล่อง — เพิ่มไฟล์เสียงด้านบนได้เลย</div>'; return; }
+  box.innerHTML = dndSoundsClient.map(s => `
+    <div class="dndSoundRow">
+      <span class="dndSoundName">🔊 ${escapeHtml(s.name)}</span>
+      <button type="button" class="dndSoundPlayBtn" data-play="${s.id}">▶️ เล่น</button>
+      <button type="button" class="dndSoundDelBtn" data-sdel="${s.id}">ลบ</button>
+    </div>`).join('');
+  box.querySelectorAll('[data-play]').forEach(btn => {
+    btn.onclick = () => send({ type: 'dndSoundPlay', soundId: Number(btn.dataset.play) });
+  });
+  box.querySelectorAll('[data-sdel]').forEach(btn => {
+    btn.onclick = () => {
+      if (confirm('ลบเสียงนี้ออกจากกล่อง?')) send({ type: 'dndSoundDelete', soundId: Number(btn.dataset.sdel) });
+    };
+  });
+}
+// เล่นเสียงจริงในเบราว์เซอร์เครื่องนี้ — ทำงานเหมือนกันทั้งฝั่ง DM (คนกดเอง) และผู้เล่นทุกคน (ได้รับ broadcast มา)
+function playDndSound(id, name) {
+  const s = dndSoundsClient.find(ss => ss.id === Number(id));
+  if (!s || !s.data) return;
+  try {
+    const audio = new Audio(s.data);
+    audio.play().catch(() => {}); // เบราว์เซอร์บางตัวบล็อกการเล่นเสียงอัตโนมัติถ้ายังไม่เคยมีการโต้ตอบกับหน้าเว็บเลย — ปล่อยผ่านเงียบๆ ไม่ต้อง error
+  } catch (e) { /* ไฟล์เสียงเสีย/รูปแบบไม่รองรับ — ไม่ต้องทำอะไรต่อ */ }
+}
+document.getElementById('dndSoundFileInput').addEventListener('change', (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) { dndSoundUploadData = null; return; }
+  if (file.size > 550000) {
+    alert('ไฟล์เสียงใหญ่เกินไป (ควรไม่เกินประมาณ 500KB) กรุณาเลือกคลิปสั้นๆ หรือไฟล์บีบอัด');
+    ev.target.value = '';
+    dndSoundUploadData = null;
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => { dndSoundUploadData = reader.result; };
+  reader.readAsDataURL(file);
+});
+document.getElementById('dndSoundAddBtn').onclick = (ev) => {
+  const name = document.getElementById('dndSoundNameInput').value.trim();
+  if (!name) { alert('กรุณาตั้งชื่อเสียงก่อน'); return; }
+  if (!dndSoundUploadData) { alert('กรุณาเลือกไฟล์เสียงก่อน'); return; }
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndSoundAdd', sound: { name, data: dndSoundUploadData } });
+  document.getElementById('dndSoundNameInput').value = '';
+  document.getElementById('dndSoundFileInput').value = '';
+  dndSoundUploadData = null;
+};
+
+// ---- ดนตรีพื้นหลัง (Background Music): DM คุมเพลง/เล่น/หยุด/เสียงให้ทุกคนในห้องได้ยินพร้อมกัน (ผู้เล่นแต่ละคนยังปรับเสียง/ปิดเสียงในเครื่องตัวเองทับได้อีกที) ----
+let dndMusicTracksClient = []; // [{id, name, data}] แคชไว้ฝั่งนี้ เหมือน dndSoundsClient ด้านบน
+let dndMusicUploadData = null; // base64 data URI ของไฟล์เพลงที่เพิ่งเลือกไว้ รอกดปุ่ม "เพิ่มเพลงเข้าเพลย์ลิสต์"
+let dndMusicAudioEl = null; // <audio> ตัวเดียวที่ใช้เล่นเพลงพื้นหลังตลอด (ต่างจากเอฟเฟกต์เสียงที่สร้าง Audio ใหม่ทุกครั้ง) เพราะต้องคุม pause/resume/seek ต่อเนื่องได้
+let dndMusicLastState = null; // state ล่าสุดจากเซิร์ฟเวอร์ (trackId/playing/volume/loop/positionSec) ใช้คำนวณตอนปรับเสียงส่วนตัว
+let dndMusicPersonalVolume = 1; // 0..1 ตัวคูณเสียงส่วนตัวในเครื่องนี้เท่านั้น ไม่กระทบคนอื่นในห้อง
+let dndMusicPersonalMuted = false;
+(function loadDndMusicPersonalPrefs() {
+  try {
+    const savedVol = localStorage.getItem('dndMusicPersonalVolume');
+    const savedMuted = localStorage.getItem('dndMusicPersonalMuted');
+    if (savedVol !== null && Number.isFinite(Number(savedVol))) dndMusicPersonalVolume = Math.max(0, Math.min(1, Number(savedVol)));
+    if (savedMuted !== null) dndMusicPersonalMuted = savedMuted === '1';
+  } catch (e) { /* localStorage อาจถูกบล็อก (เช่นโหมดส่วนตัว) — ใช้ค่าเริ่มต้นแทนเงียบๆ */ }
+})();
+function dndMusicEnsureAudioEl() {
+  if (!dndMusicAudioEl) dndMusicAudioEl = new Audio();
+  return dndMusicAudioEl;
+}
+function dndMusicApplyVolume() {
+  if (!dndMusicAudioEl || !dndMusicLastState) return;
+  const eff = dndMusicPersonalMuted ? 0 : ((dndMusicLastState.volume || 0) * dndMusicPersonalVolume);
+  dndMusicAudioEl.volume = Math.max(0, Math.min(1, eff));
+}
+function renderDndMusicList(tracks) {
+  dndMusicTracksClient = Array.isArray(tracks) ? tracks : [];
+  const box = document.getElementById('dndMusicList');
+  if (!box) return;
+  if (!dndMusicTracksClient.length) { box.innerHTML = '<div class="dndRangeHint">ยังไม่มีเพลงในเพลย์ลิสต์ — เพิ่มไฟล์เพลงด้านบนได้เลย</div>'; return; }
+  const nowPlayingId = dndMusicLastState ? dndMusicLastState.trackId : null;
+  box.innerHTML = dndMusicTracksClient.map(t => `
+    <div class="dndSoundRow">
+      <span class="dndSoundName">${t.id === nowPlayingId ? '▶️' : '🎵'} ${escapeHtml(t.name)}</span>
+      <button type="button" class="dndSoundPlayBtn" data-mplay="${t.id}">▶️ เล่น</button>
+      <button type="button" class="dndSoundDelBtn" data-mdel="${t.id}">ลบ</button>
+    </div>`).join('');
+  box.querySelectorAll('[data-mplay]').forEach(btn => {
+    btn.onclick = () => send({ type: 'dndMusicPlay', trackId: Number(btn.dataset.mplay) });
+  });
+  box.querySelectorAll('[data-mdel]').forEach(btn => {
+    btn.onclick = () => {
+      if (confirm('ลบเพลงนี้ออกจากเพลย์ลิสต์?')) send({ type: 'dndMusicDelete', trackId: Number(btn.dataset.mdel) });
+    };
+  });
+}
+// เรียกทุกครั้งที่ได้ dndMusicState จากเซิร์ฟเวอร์ — sync การเล่น/หยุด/ตำแหน่ง/เสียงในเครื่องนี้ (ทั้ง DM และผู้เล่นทุกคน) ให้ตรงกับสถานะจริงของห้อง
+function applyDndMusicState(state) {
+  if (!state) return;
+  dndMusicLastState = state;
+  const bar = document.getElementById('dndMusicBar');
+  const track = dndMusicTracksClient.find(t => t.id === state.trackId);
+
+  if (bar) {
+    if (state.trackId && track) {
+      bar.style.display = 'flex';
+      document.getElementById('dndMusicBarTrackName').textContent = track.name + (state.playing ? '' : ' (หยุดชั่วคราว)');
+    } else {
+      bar.style.display = 'none';
+    }
+  }
+
+  // อัปเดตแผงคุมของ DM ให้ตรงกับ state จริงเสมอ (เผื่อ DM เปิดสองแท็บพร้อมกัน หรือรีเฟรชหน้าระหว่างเพลงเล่นอยู่)
+  const pauseResumeBtn = document.getElementById('dndMusicPauseResumeBtn');
+  if (pauseResumeBtn) pauseResumeBtn.textContent = state.playing ? '⏸️ หยุดชั่วคราว' : '▶️ เล่นต่อ';
+  const loopInput = document.getElementById('dndMusicLoopInput');
+  if (loopInput && document.activeElement !== loopInput) loopInput.checked = !!state.loop;
+  const volInput = document.getElementById('dndMusicVolumeInput');
+  if (volInput && document.activeElement !== volInput) volInput.value = Math.round((state.volume || 0) * 100);
+
+  renderDndMusicList(dndMusicTracksClient); // รีเฟรชป้าย ▶️ ที่เพลงกำลังเล่นอยู่ในรายการ
+
+  // sync <audio> จริงในเครื่องนี้ให้ตรงกับสถานะห้อง
+  const audio = dndMusicEnsureAudioEl();
+  if (!state.trackId || !track) {
+    audio.pause();
+    audio.removeAttribute('src');
+    return;
+  }
+  if (audio.src !== track.data) audio.src = track.data;
+  audio.loop = !!state.loop;
+  dndMusicApplyVolume();
+  const targetPos = Number(state.positionSec) || 0;
+  const applyPos = () => {
+    // ปรับตำแหน่งเฉพาะตอนต่างกันเกิน 1 วินาที กันการกระตุกเวลามี broadcast ถี่ๆ ระหว่างเล่นเพลงปกติ (เช่น ตอนปรับเสียง)
+    if (Math.abs((audio.currentTime || 0) - targetPos) > 1) audio.currentTime = Math.max(0, targetPos);
+  };
+  if (audio.readyState >= 1) applyPos();
+  else audio.addEventListener('loadedmetadata', applyPos, { once: true });
+  if (state.playing) {
+    audio.play().catch(() => {}); // เบราว์เซอร์บางตัวบล็อกการเล่นเสียงอัตโนมัติถ้ายังไม่เคยมีการโต้ตอบกับหน้าเว็บเลย — ปล่อยผ่านเงียบๆ
+  } else {
+    audio.pause();
+  }
+}
+document.getElementById('dndMusicBarMuteBtn').onclick = (ev) => {
+  dndMusicPersonalMuted = !dndMusicPersonalMuted;
+  ev.currentTarget.textContent = dndMusicPersonalMuted ? '🔇' : '🔊';
+  try { localStorage.setItem('dndMusicPersonalMuted', dndMusicPersonalMuted ? '1' : '0'); } catch (e) {}
+  dndMusicApplyVolume();
+};
+document.getElementById('dndMusicBarVolumeInput').oninput = (ev) => {
+  dndMusicPersonalVolume = Number(ev.target.value) / 100;
+  try { localStorage.setItem('dndMusicPersonalVolume', String(dndMusicPersonalVolume)); } catch (e) {}
+  dndMusicApplyVolume();
+};
+document.getElementById('dndMusicFileInput').addEventListener('change', (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) { dndMusicUploadData = null; return; }
+  if (file.size > 6300000) {
+    alert('ไฟล์เพลงใหญ่เกินไป (ควรไม่เกินประมาณ 6MB) กรุณาเลือกไฟล์ที่บีบอัดแล้วหรือคลิปสั้นลง');
+    ev.target.value = '';
+    dndMusicUploadData = null;
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => { dndMusicUploadData = reader.result; };
+  reader.readAsDataURL(file);
+});
+document.getElementById('dndMusicAddBtn').onclick = (ev) => {
+  const name = document.getElementById('dndMusicNameInput').value.trim();
+  if (!name) { alert('กรุณาตั้งชื่อเพลงก่อน'); return; }
+  if (!dndMusicUploadData) { alert('กรุณาเลือกไฟล์เพลงก่อน'); return; }
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndMusicAdd', track: { name, data: dndMusicUploadData } });
+  document.getElementById('dndMusicNameInput').value = '';
+  document.getElementById('dndMusicFileInput').value = '';
+  dndMusicUploadData = null;
+};
+document.getElementById('dndMusicPauseResumeBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  send({ type: (dndMusicLastState && dndMusicLastState.playing) ? 'dndMusicPause' : 'dndMusicResume' });
+};
+document.getElementById('dndMusicStopBtn').onclick = (ev) => {
+  flashBtn(ev.currentTarget);
+  send({ type: 'dndMusicStop' });
+};
+document.getElementById('dndMusicLoopInput').onchange = (ev) => {
+  send({ type: 'dndMusicLoopToggle', loop: ev.target.checked });
+};
+let dndMusicVolumeSendTimer = null;
+document.getElementById('dndMusicVolumeInput').oninput = (ev) => {
+  const volume = Number(ev.target.value) / 100;
+  clearTimeout(dndMusicVolumeSendTimer);
+  dndMusicVolumeSendTimer = setTimeout(() => send({ type: 'dndMusicVolumeSet', volume }), 80); // ดีบาวซ์กันยิง ws ถี่เกินไปตอนลากสไลเดอร์
+};
+
 // ---- นาฬิกาในเกม — ทุกคนเห็นป้ายเวลาบนจอ / DM เท่านั้นเดินเวลา ข้ามวัน หรือแก้ไขเวลาเองได้ ----
 function dndTimeIconForHour(hour) {
   if (hour >= 5 && hour < 8) return '🌅';   // เช้าตรู่
@@ -1100,23 +1900,61 @@ document.getElementById('dndRollBtn').onclick = (ev) => {
     stat: document.getElementById('dndDiceStatSelect').value,
   });
 };
+// ---- แอนิเมชันลูกเต๋าในหน้าต่าง "ทอยลูกเต๋า" — เซิร์ฟเวอร์ตอบผลทอยจริงกลับมาเฉพาะคนที่ทอย (dndRollResult) แล้วเล่นสปินก่อนโชว์ค่าจริง ----
+function playDndDiceTabRollAnim(data) {
+  const area = document.getElementById('dndDiceRollAnimArea');
+  if (!area) return;
+  area.innerHTML = '';
+  area.classList.remove('dndDiceRollAnimFadeOut');
+  const stamp = String(Date.now());
+  area.dataset.stamp = stamp;
+  const rolls = Array.isArray(data.rolls) ? data.rolls : [];
+  const sides = Number(data.die) || 20;
+  rolls.forEach((val, i) => {
+    setTimeout(() => { if (area.dataset.stamp === stamp) dndSpinFace(area, sides, val, 550); }, i * 90);
+  });
+  const totalMs = 550 + Math.max(0, rolls.length - 1) * 90 + 60;
+  setTimeout(() => {
+    if (!document.body.contains(area) || area.dataset.stamp !== stamp) return;
+    const tag = document.createElement('div');
+    tag.className = 'dndDiceSumTag';
+    const modText = dndModText(data.mod);
+    tag.textContent = `${data.label ? data.label + ': ' : ''}รวม ${modText ? `[${rolls.join(', ')}]${modText}` : rolls.join(' + ')} = ${data.sum}`;
+    area.appendChild(tag);
+  }, totalMs);
+  // ทอยเสร็จโชว์ผลไว้สักพักแล้วค่อย ๆ จางหายไปเอง ไม่ต้องรอให้ทอยรอบถัดไปถึงจะเคลียร์
+  const clearDelayMs = totalMs + 1400;
+  setTimeout(() => {
+    if (!document.body.contains(area) || area.dataset.stamp !== stamp) return;
+    area.classList.add('dndDiceRollAnimFadeOut');
+    setTimeout(() => {
+      if (area.dataset.stamp !== stamp) return; // มีการทอยรอบใหม่แทรกมาแล้ว อย่าไปเคลียร์ของรอบใหม่
+      area.innerHTML = '';
+      area.classList.remove('dndDiceRollAnimFadeOut');
+    }, 350);
+  }, clearDelayMs);
+}
 
 // ---- แท็บ ทอยลูกเต๋า / สกิล ----
+// แผนที่ (map) เป็นแผงหลักที่อยู่กับที่เสมอ ส่วนแท็บอื่น ๆ (ลูกเต๋า/โจมตี/สกิล/ร้านค้า/กระเป๋า)
+// จะเปิดเป็นหน้าต่าง (modal) ลอยขึ้นมาทับหน้าจอแทน ปิดแล้วกลับไปเห็นแผนที่ตามเดิม
 function dndShowTool(tool) {
   dndActiveTool = tool;
-  document.getElementById('dndDiceBox').style.display = tool === 'dice' ? 'block' : 'none';
-  document.getElementById('dndAttackBox').style.display = tool === 'attack' ? 'block' : 'none';
-  document.getElementById('dndSkillBox').style.display = tool === 'skill' ? 'block' : 'none';
-  document.getElementById('dndMapBox').style.display = tool === 'map' ? 'block' : 'none';
-  document.getElementById('dndShopBox').style.display = tool === 'shop' ? 'block' : 'none';
-  document.getElementById('dndBagBox').style.display = tool === 'bag' ? 'block' : 'none';
+  document.getElementById('dndMapBox').style.display = 'block';
+  document.getElementById('dndDiceOverlay').style.display = tool === 'dice' ? 'block' : 'none';
+  if (tool === 'dice') dndPositionDiceWindowIfNeeded();
+  document.getElementById('dndAttackOverlay').style.display = tool === 'attack' ? 'flex' : 'none';
+  document.getElementById('dndSkillOverlay').style.display = tool === 'skill' ? 'block' : 'none';
+  if (tool === 'skill') dndPositionSkillWindowIfNeeded();
+  document.getElementById('dndShopOverlay').style.display = tool === 'shop' ? 'flex' : 'none';
+  document.getElementById('dndBagOverlay').style.display = tool === 'bag' ? 'flex' : 'none';
   document.getElementById('dndToolTabDice').classList.toggle('active', tool === 'dice');
   document.getElementById('dndToolTabAttack').classList.toggle('active', tool === 'attack');
   document.getElementById('dndToolTabSkill').classList.toggle('active', tool === 'skill');
   document.getElementById('dndToolTabMap').classList.toggle('active', tool === 'map');
   document.getElementById('dndToolTabShop').classList.toggle('active', tool === 'shop');
   document.getElementById('dndToolTabBag').classList.toggle('active', tool === 'bag');
-  if (tool === 'map') renderDndMap();
+  renderDndMap();
   if (tool === 'shop') renderDndShops();
   if (tool === 'bag') renderDndBag();
 }
@@ -1126,6 +1964,42 @@ document.getElementById('dndToolTabAttack').onclick = () => dndShowTool('attack'
 document.getElementById('dndToolTabMap').onclick = () => dndShowTool('map');
 document.getElementById('dndToolTabShop').onclick = () => dndShowTool('shop');
 document.getElementById('dndToolTabBag').onclick = () => dndShowTool('bag');
+// คลิกพื้นหลังมืด (นอกกล่องฟอร์ม) ของหน้าต่างลอย ให้ปิดกลับไปแผนที่ (ไม่รวม dndSkillOverlay/dndDiceOverlay ซึ่งไม่มีพื้นหลังมืดแล้ว เพราะกลายเป็นหน้าต่างลอยที่ลากได้ ปิดผ่านปุ่ม ✕ แทน)
+['dndAttackOverlay', 'dndShopOverlay', 'dndBagOverlay'].forEach(id => {
+  const overlayEl = document.getElementById(id);
+  if (overlayEl) overlayEl.addEventListener('mousedown', (ev) => {
+    if (ev.target === overlayEl) dndShowTool('map');
+  });
+});
+// หน้าต่างลอย "สกิล" — ลากย้ายตำแหน่งได้เหมือนหน้าต่างดูรายละเอียด token, จำตำแหน่งล่าสุดไว้จนกว่าจะรีเฟรชหน้า
+const dndSkillCloseBtnEl = document.getElementById('dndSkillCloseBtn');
+if (dndSkillCloseBtnEl) dndSkillCloseBtnEl.onclick = () => dndShowTool('map');
+let dndSkillWindowPositioned = false;
+function dndPositionSkillWindowIfNeeded() {
+  const box = document.getElementById('dndSkillBox');
+  if (!box || dndSkillWindowPositioned) return;
+  dndSkillWindowPositioned = true;
+  const startLeft = Math.max(10, (window.innerWidth - box.offsetWidth) / 2);
+  const startTop = Math.max(10, window.innerHeight * 0.08);
+  box.style.left = startLeft + 'px';
+  box.style.top = startTop + 'px';
+}
+
+// หน้าต่างลอย "ทอยลูกเต๋า" — ลากย้ายตำแหน่งได้แบบเดียวกับหน้าต่างสกิล, จำตำแหน่งล่าสุดไว้จนกว่าจะรีเฟรชหน้า
+const dndDiceBoxCloseBtnEl = document.getElementById('dndDiceBoxCloseBtn');
+if (dndDiceBoxCloseBtnEl) dndDiceBoxCloseBtnEl.onclick = () => dndShowTool('map');
+let dndDiceWindowPositioned = false;
+function dndPositionDiceWindowIfNeeded() {
+  const box = document.getElementById('dndDiceBox');
+  if (!box || dndDiceWindowPositioned) return;
+  dndDiceWindowPositioned = true;
+  const startLeft = Math.max(10, (window.innerWidth - box.offsetWidth) / 2);
+  const startTop = Math.max(10, window.innerHeight * 0.08);
+  box.style.left = startLeft + 'px';
+  box.style.top = startTop + 'px';
+}
+// การลากหน้าต่างนี้ (dndPeekMakeDraggable) ถูก bind ไว้ใน public/js/dnd-map.js (โหลดทีหลัง app.js) เหมือนกับหน้าต่างสกิล
+
 
 // ---- สกิล: DM ออกแบบ/แก้ไขสกิลได้ทุกเมื่อ / ทุกคนใช้สกิลได้ (ถ้ามีสิทธิ์) ----
 function fillSkillStatSelect(id) {
@@ -1243,6 +2117,7 @@ document.getElementById('dndSkillAddBtn').onclick = (ev) => {
       stat: document.getElementById('dndSkillStat').value,
       desc: document.getElementById('dndSkillDesc').value,
       guaranteedHit: document.getElementById('dndSkillGuaranteedHit').checked,
+      atkMod: document.getElementById('dndSkillAtkMod').value,
       damage: {
         die: document.getElementById('dndSkillDmgDie').value,
         count: document.getElementById('dndSkillDmgCount').value,
@@ -1309,6 +2184,7 @@ document.getElementById('dndSkillAddBtn').onclick = (ev) => {
   document.getElementById('dndSkillHealMod').value = '0';
   document.getElementById('dndSkillHealRevive').value = '0';
   document.getElementById('dndSkillDmgMod').value = '0';
+  document.getElementById('dndSkillAtkMod').value = '0';
   document.getElementById('dndSkillStatusName').value = '';
   document.getElementById('dndSkillStatusNote').value = '';
   document.getElementById('dndSkillStatusIcon').value = '';
@@ -2184,6 +3060,7 @@ function openDndSkillEdit(skillId) {
   document.getElementById('dndSkillEditDmgDie').value = String(skill.dmgDie || 0);
   document.getElementById('dndSkillEditDmgCount').value = skill.dmgCount || 1;
   document.getElementById('dndSkillEditDmgMod').value = skill.dmgMod || 0;
+  document.getElementById('dndSkillEditAtkMod').value = skill.atkMod || 0;
   document.getElementById('dndSkillEditHealDie').value = String(skill.healDie || 0);
   document.getElementById('dndSkillEditHealCount').value = skill.healCount || 1;
   document.getElementById('dndSkillEditHealMod').value = skill.healMod || 0;
@@ -2244,6 +3121,7 @@ document.getElementById('dndSkillEditSaveBtn').onclick = (ev) => {
       stat: document.getElementById('dndSkillEditStat').value,
       desc: document.getElementById('dndSkillEditDesc').value,
       guaranteedHit: document.getElementById('dndSkillEditGuaranteedHit').checked,
+      atkMod: document.getElementById('dndSkillEditAtkMod').value,
       damage: {
         die: document.getElementById('dndSkillEditDmgDie').value,
         count: document.getElementById('dndSkillEditDmgCount').value,
@@ -2656,15 +3534,32 @@ function dndHairSVG(hair, color) {
 function dndFaceFeaturesSVG(face) {
   const ink = '#2b2b2b';
   switch (face) {
-    case 'smile': return `<circle cx="52" cy="30" r="2.4" fill="${ink}"/><circle cx="68" cy="30" r="2.4" fill="${ink}"/><path d="M50 40 Q60 48 70 40" stroke="${ink}" stroke-width="2.4" fill="none" stroke-linecap="round"/>`;
-    case 'serious': return `<rect x="47" y="27" width="8" height="2.4" rx="1.2" fill="${ink}"/><rect x="65" y="27" width="8" height="2.4" rx="1.2" fill="${ink}"/><circle cx="52" cy="32" r="2" fill="${ink}"/><circle cx="68" cy="32" r="2" fill="${ink}"/><path d="M51 42 L69 42" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/>`;
-    case 'surprised': return `<circle cx="52" cy="30" r="2.8" fill="${ink}"/><circle cx="68" cy="30" r="2.8" fill="${ink}"/><ellipse cx="60" cy="42" rx="4" ry="5" fill="${ink}"/>`;
+    case 'smile': return `<g class="dndAvatarEyes"><circle cx="52" cy="30" r="2.4" fill="${ink}"/><circle cx="68" cy="30" r="2.4" fill="${ink}"/></g><path d="M50 40 Q60 48 70 40" stroke="${ink}" stroke-width="2.4" fill="none" stroke-linecap="round"/>`;
+    case 'serious': return `<rect x="47" y="27" width="8" height="2.4" rx="1.2" fill="${ink}"/><rect x="65" y="27" width="8" height="2.4" rx="1.2" fill="${ink}"/><g class="dndAvatarEyes"><circle cx="52" cy="32" r="2" fill="${ink}"/><circle cx="68" cy="32" r="2" fill="${ink}"/></g><path d="M51 42 L69 42" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/>`;
+    case 'surprised': return `<g class="dndAvatarEyes"><circle cx="52" cy="30" r="2.8" fill="${ink}"/><circle cx="68" cy="30" r="2.8" fill="${ink}"/></g><ellipse cx="60" cy="42" rx="4" ry="5" fill="${ink}"/>`;
     case 'wink': return `<path d="M48 30 L56 30" stroke="${ink}" stroke-width="2.4" stroke-linecap="round"/><circle cx="68" cy="30" r="2.4" fill="${ink}"/><path d="M50 40 Q60 47 70 39" stroke="${ink}" stroke-width="2.4" fill="none" stroke-linecap="round"/>`;
     case 'neutral':
-    default: return `<circle cx="52" cy="30" r="2.2" fill="${ink}"/><circle cx="68" cy="30" r="2.2" fill="${ink}"/><path d="M51 41 L69 41" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/>`;
+    default: return `<g class="dndAvatarEyes"><circle cx="52" cy="30" r="2.2" fill="${ink}"/><circle cx="68" cy="30" r="2.2" fill="${ink}"/></g><path d="M51 41 L69 41" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/>`;
   }
 }
 let dndAvatarSvgSeq = 0;
+const DND_AVATAR_POSE_COUNT = 4; // ท่า 0 = ยืนปกติ, 1 = ชูอาวุธ, 2 = กอดอก, 3 = โบกมือ
+const dndAvatarPoseState = {}; // key (เช่น 'me' หรือ 'peek-<id>') -> เลขท่าปัจจุบัน
+function dndAvatarPoseGet(key) { return dndAvatarPoseState[key] || 0; }
+// เรียกทันทีหลังตั้ง innerHTML ที่มีอวาตาร์ เพื่อคง class ท่าทางที่ผู้เล่นเลือกไว้ (เพราะ re-render ทับ DOM ใหม่ทุกครั้งที่ state อัปเดต)
+function dndApplyAvatarPose(wrapEl, key) {
+  if (!wrapEl) return;
+  const svg = wrapEl.querySelector('svg.dndAvatarSvg');
+  if (!svg) return;
+  for (let i = 0; i < DND_AVATAR_POSE_COUNT; i++) svg.classList.remove('dndPose' + i);
+  svg.classList.add('dndPose' + dndAvatarPoseGet(key));
+}
+// วนไปท่าถัดไปแล้วสั่งเรนเดอร์ซ้ำ (ปุ่ม 🔄 บนอวาตาร์เรียกฟังก์ชันนี้) — argsForRerender คือพารามิเตอร์ที่จะส่งต่อให้ฟังก์ชันเรนเดอร์ (เช่น tokenId ของหน้าต่าง peek)
+function dndCycleAvatarPose(key, rerenderFnName, ...argsForRerender) {
+  dndAvatarPoseState[key] = (dndAvatarPoseGet(key) + 1) % DND_AVATAR_POSE_COUNT;
+  const fn = window[rerenderFnName];
+  if (typeof fn === 'function') fn(...argsForRerender);
+}
 function dndBuildAvatarSVG(c, w, h) {
   w = w || 120; h = h || 160;
   const eq = (c && c.equipment) || {};
@@ -2695,6 +3590,7 @@ function dndBuildAvatarSVG(c, w, h) {
       <clipPath id="${uid}acc"><circle cx="60" cy="68" r="9"/></clipPath>
       <clipPath id="${uid}shoes"><rect x="40" y="134" width="40" height="14" rx="5"/></clipPath>
     </defs>
+    <g class="dndAvatarIdleBob">
     <g transform="translate(60,90) scale(${raceAv.scale}) translate(-60,-90)">
       <ellipse cx="60" cy="152" rx="30" ry="6" fill="#000" opacity="0.18"/>
       <rect x="42" y="104" width="14" height="38" rx="5" fill="#3a3f4b"/>
@@ -2704,27 +3600,34 @@ function dndBuildAvatarSVG(c, w, h) {
           ? `<image href="${shoesIcon}" x="38" y="132" width="44" height="18" preserveAspectRatio="xMidYMid slice" clip-path="url(#${uid}shoes)"/>`
           : `<rect x="40" y="136" width="18" height="10" rx="4" fill="#6b4423"/><rect x="62" y="136" width="18" height="10" rx="4" fill="#6b4423"/>`)
         : `<circle cx="49" cy="141" r="6" fill="${skin}"/><circle cx="71" cy="141" r="6" fill="${skin}"/>`}
-      <rect x="24" y="66" width="12" height="40" rx="6" fill="${skin}"/>
-      <rect x="84" y="66" width="12" height="40" rx="6" fill="${skin}"/>
-      <rect x="36" y="58" width="48" height="50" rx="14" fill="${hasArmor ? bodyColor : '#cfd6de'}"/>
-      ${armorIcon ? `<image href="${armorIcon}" x="34" y="56" width="52" height="54" preserveAspectRatio="xMidYMid slice" clip-path="url(#${uid}armor)"/>` : ''}
-      ${hasArmor && !armorIcon ? `<rect x="36" y="58" width="48" height="14" rx="8" fill="#000" opacity="0.14"/>` : ''}
-      ${armorBroken ? `<text x="60" y="88" font-size="16" text-anchor="middle">💔</text>` : ''}
-      <circle cx="60" cy="34" r="24" fill="${skin}"/>
-      ${dndFaceFeaturesSVG(ap.face)}
-      ${hairSvg}
-      ${extraHead}
-      ${raceInfo ? `<text x="60" y="14" font-size="14" text-anchor="middle">${raceInfo.icon}</text>` : ''}
-      ${hasAcc
-        ? (accIcon
-          ? `<image href="${accIcon}" x="51" y="59" width="18" height="18" preserveAspectRatio="xMidYMid slice" clip-path="url(#${uid}acc)"/>`
-          : `<text x="60" y="68" font-size="14" text-anchor="middle">✨</text>`)
-        : ''}
-      ${hasWeapon
-        ? (weaponIcon
-          ? `<image href="${weaponIcon}" x="83" y="79" width="22" height="22" preserveAspectRatio="xMidYMid slice" clip-path="url(#${uid}weapon)"/>`
-          : `<text x="94" y="90" font-size="22" text-anchor="middle">${(clsInfo && clsInfo.icon) || '🗡️'}</text>`)
-        : `<circle cx="94" cy="90" r="10" fill="none" stroke="#8899aa" stroke-width="1.5" stroke-dasharray="3,3"/>`}
+      <g class="dndAvatarArmL"><rect x="24" y="66" width="12" height="40" rx="6" fill="${skin}"/></g>
+      <g class="dndAvatarArmR">
+        <rect x="84" y="66" width="12" height="40" rx="6" fill="${skin}"/>
+        ${hasWeapon
+          ? (weaponIcon
+            ? `<image href="${weaponIcon}" x="83" y="79" width="22" height="22" preserveAspectRatio="xMidYMid slice" clip-path="url(#${uid}weapon)"/>`
+            : `<text x="94" y="90" font-size="22" text-anchor="middle">${(clsInfo && clsInfo.icon) || '🗡️'}</text>`)
+          : `<circle cx="94" cy="90" r="10" fill="none" stroke="#8899aa" stroke-width="1.5" stroke-dasharray="3,3"/>`}
+      </g>
+      <g class="dndAvatarChest">
+        <rect x="36" y="58" width="48" height="50" rx="14" fill="${hasArmor ? bodyColor : '#cfd6de'}"/>
+        ${armorIcon ? `<image href="${armorIcon}" x="34" y="56" width="52" height="54" preserveAspectRatio="xMidYMid slice" clip-path="url(#${uid}armor)"/>` : ''}
+        ${hasArmor && !armorIcon ? `<rect x="36" y="58" width="48" height="14" rx="8" fill="#000" opacity="0.14"/>` : ''}
+        ${armorBroken ? `<text x="60" y="88" font-size="16" text-anchor="middle">💔</text>` : ''}
+        ${hasAcc
+          ? (accIcon
+            ? `<image href="${accIcon}" x="51" y="59" width="18" height="18" preserveAspectRatio="xMidYMid slice" clip-path="url(#${uid}acc)"/>`
+            : `<text x="60" y="68" font-size="14" text-anchor="middle">✨</text>`)
+          : ''}
+      </g>
+      <g class="dndAvatarHead">
+        <circle cx="60" cy="34" r="24" fill="${skin}"/>
+        ${dndFaceFeaturesSVG(ap.face)}
+        <g class="dndAvatarHair">${hairSvg}</g>
+        ${extraHead}
+        ${raceInfo ? `<text x="60" y="14" font-size="14" text-anchor="middle">${raceInfo.icon}</text>` : ''}
+      </g>
+    </g>
     </g>
   </svg>`;
 }
@@ -3063,7 +3966,7 @@ function renderMySheetView() {
     ['ทอง', c.gold || 0],
     ['แต้มสเตตัส (จากเลเวลอัพ)', statPoints],
   ];
-  box.innerHTML = `<div class="dndAvatarWrap">${dndBuildAvatarSVG(c, 120, 160)}</div>`
+  box.innerHTML = `<div class="dndAvatarWrap" id="dndMyAvatarWrap">${dndBuildAvatarSVG(c, 120, 160)}<button type="button" class="dndAvatarPoseBtn" title="เปลี่ยนท่าทาง" onclick="dndCycleAvatarPose('me','renderMySheetView')">🔄</button></div>`
     + rows.map(([k, v]) => `<div class="dndSheetViewRow"><span>${escapeHtml(k)}</span><span>${escapeHtml(String(v))}</span></div>`).join('')
     + `<div class="dndSheetStatRow">${Object.keys(DND_STAT_LABELS).map(k => {
       // ต้นทุนต้องอิงค่ารวม (ดิบ+โบนัสเผ่า/คลาส) ไม่ใช่ค่าดิบเฉยๆ — ให้ตรงกับตำแหน่งค่ารวมจริงที่สเตตัสยืนอยู่
@@ -3078,6 +3981,7 @@ function renderMySheetView() {
     + ((c.statuses && c.statuses.length) ? `<div class="dndPCardSkills">${c.statuses.map(s => dndStatusChipHtml(s)).join('')}</div>` : '')
     + `<div class="dndSheetViewRow" style="border-bottom:none; flex-direction:column; align-items:flex-start; gap:4px;"><span>ประวัติที่มา</span><span style="text-align:left; white-space:pre-wrap;">${escapeHtml(c.backstory || '-')}</span></div>`
     + `<div class="dndSheetViewRow" style="border-bottom:none; flex-direction:column; align-items:flex-start; gap:4px;"><span>ไอเทม / กระเป๋า</span><span style="text-align:left; white-space:pre-wrap;">${escapeHtml(c.inventory || '-')}</span></div>`;
+  dndApplyAvatarPose(document.getElementById('dndMyAvatarWrap'), 'me');
 
   renderEquipGrid('dndEquipGrid', c.equipment, true);
   const totalDefEl = document.getElementById('dndTotalDefVal');
@@ -3093,6 +3997,15 @@ function renderMySheetView() {
 function dndSpendStatPointClick(stat) {
   send({ type: 'dndSpendStatPoint', stat });
 }
+function openMySheetModal() {
+  renderMySheetView();
+  document.getElementById('dndMySheetOverlay').style.display = 'flex';
+}
+document.getElementById('dndMySheetCloseBtn').onclick = () => { document.getElementById('dndMySheetOverlay').style.display = 'none'; };
+// คลิกพื้นหลังมืด (นอกกล่องการ์ด) ของหน้าต่างดูรายละเอียดตัวละครของตัวเอง ให้ปิดได้เหมือนหน้าต่างลอยอื่น ๆ (ทอยลูกเต๋า/โจมตี/สกิล/ร้านค้า/กระเป๋า)
+document.getElementById('dndMySheetOverlay').addEventListener('mousedown', (ev) => {
+  if (ev.target === ev.currentTarget) document.getElementById('dndMySheetOverlay').style.display = 'none';
+});
 
 // ---- DM: หน้าต่างแก้ไขข้อมูลผู้เล่นคนไหนก็ได้ ทุกช่อง ----
 function fillSelectOptions(selectEl, items, selectedKey) {
@@ -3260,6 +4173,7 @@ function openDndClassSkillEdit(playerId, skillId) {
   document.getElementById('dndClassSkillEditDmgDie').value = String(skill.dmgDie || 0);
   document.getElementById('dndClassSkillEditDmgCount').value = skill.dmgCount || 1;
   document.getElementById('dndClassSkillEditDmgMod').value = skill.dmgMod || 0;
+  document.getElementById('dndClassSkillEditAtkMod').value = skill.atkMod || 0;
   document.getElementById('dndClassSkillEditHealDie').value = String(skill.healDie || 0);
   document.getElementById('dndClassSkillEditHealCount').value = skill.healCount || 1;
   document.getElementById('dndClassSkillEditHealMod').value = skill.healMod || 0;
@@ -3311,6 +4225,7 @@ document.getElementById('dndClassSkillEditSaveBtn').onclick = (ev) => {
       stat: document.getElementById('dndClassSkillEditStat').value,
       desc: document.getElementById('dndClassSkillEditDesc').value,
       guaranteedHit: document.getElementById('dndClassSkillEditGuaranteedHit').checked,
+      atkMod: document.getElementById('dndClassSkillEditAtkMod').value,
       damage: {
         die: document.getElementById('dndClassSkillEditDmgDie').value,
         count: document.getElementById('dndClassSkillEditDmgCount').value,
@@ -3457,6 +4372,10 @@ function closeDndModals() {
   document.getElementById('dndTokenEditOverlay').style.display = 'none';
   document.getElementById('dndHowToOverlay').style.display = 'none';
   document.getElementById('dndPatchNotesOverlay').style.display = 'none';
+  document.getElementById('dndCustomThemeOverlay').style.display = 'none';
+  document.getElementById('dndThemePickerOverlay').style.display = 'none';
+  document.getElementById('dndCursorOverlay').style.display = 'none';
+  document.getElementById('dndMySheetOverlay').style.display = 'none';
   dndDmEditTargetId = null;
   dndClassSkillEditTarget = { playerId: null, skillId: null };
   dndSkillEditTargetId = null;
@@ -3531,10 +4450,22 @@ document.getElementById('dndHowToCloseBtn').onclick = () => { document.getElemen
 document.getElementById('dndPatchNotesBtn').onclick = (ev) => { flashBtn(ev.currentTarget); document.getElementById('dndPatchNotesOverlay').style.display = 'flex'; };
 document.getElementById('dndPatchNotesCloseBtn').onclick = () => { document.getElementById('dndPatchNotesOverlay').style.display = 'none'; };
 
+// จัดลำดับการ์ดผู้เล่นในปาร์ตี้ — แค่ย้ายการ์ดของคนที่กำลังเล่นตานี้ (currentTurn) ไปไว้บนสุดเฉยๆ
+// ส่วนที่เหลือคงลำดับเดิมไว้ทั้งหมด ไม่จัดเรียงใหม่ตามคิวเทิร์นทั้งวง ส่วน DM อยู่บนสุดเสมอเหมือนเดิม
+function dndPartyDisplayOrder(players) {
+  const dmEntries = players.filter(p => p.isDM);
+  const members = players.filter(p => !p.isDM);
+  if (dndTurnIndexClient < 0 || dndCurrentTurnPlayerId == null) return dmEntries.concat(members);
+  const curIdx = members.findIndex(p => p.id === dndCurrentTurnPlayerId);
+  if (curIdx <= 0) return dmEntries.concat(members);
+  const cur = members[curIdx];
+  const rest = members.slice(0, curIdx).concat(members.slice(curIdx + 1));
+  return dmEntries.concat([cur], rest);
+}
 function renderDndParty() {
   const list = document.getElementById('dndPartyList');
   list.innerHTML = '';
-  dndPlayersList.forEach(p => {
+  dndPartyDisplayOrder(dndPlayersList).forEach(p => {
     const isMe = dndYou && p.id === dndYou.id;
     const isCurrentTurn = dndTurnIndexClient >= 0 && dndCurrentTurnPlayerId === p.id;
     const isDead = !p.isDM && Number(p.character && p.character.hp) <= 0;
@@ -3612,6 +4543,13 @@ function renderDndParty() {
         }
       };
       div.appendChild(kickBtn);
+    } else if (isMe && c.locked) {
+      const btn = document.createElement('button');
+      btn.className = 'dndEditBtn';
+      btn.type = 'button';
+      btn.textContent = '🔍 ดูรายละเอียด';
+      btn.onclick = () => openMySheetModal();
+      div.appendChild(btn);
     }
     list.appendChild(div);
   });
@@ -3711,9 +4649,11 @@ function renderDndState(state) {
   dndCurrentTurnPlayerId = state.currentTurnPlayerId != null ? state.currentTurnPlayerId : null;
   if (Array.isArray(state.levelExpTable) && state.levelExpTable.length) window.DND_LEVEL_EXP_CLIENT = state.levelExpTable;
   renderDndScene(state.scene);
+  renderDndCutscene(state.cutscene, !!(dndYou && dndYou.isDM));
   renderDndGameTime(state.gameTime);
   renderDndTimeAuto(state.timeAuto);
 
+  document.getElementById('pageTitle').style.display = 'none';
   document.getElementById('mainMenuScreen').style.display = 'none';
   document.getElementById('joinScreen').style.display = 'none';
   document.getElementById('dndJoinScreen').style.display = 'none';
@@ -3721,6 +4661,10 @@ function renderDndState(state) {
   document.getElementById('seatPickerScreen').style.display = 'none';
   document.getElementById('gameScreen').style.display = 'none';
   document.getElementById('dndScreen').style.display = 'block';
+  document.getElementById('dndThemeToggleBtn').style.display = 'inline-block';
+  dndApplyTheme();
+  dndApplyCursor();
+  renderDndTurnSticker();
   document.getElementById('chatPanel').style.display = 'none';
   document.getElementById('alarmBtn').style.display = 'none';
   document.getElementById('newGameBtn').style.display = 'block';
@@ -3736,10 +4680,13 @@ function renderDndState(state) {
   document.getElementById('dndDmSkillsOverviewBox').style.display = isDM ? 'block' : 'none';
   document.getElementById('dndTurnBox').style.display = isDM ? 'block' : 'none';
   document.getElementById('dndSceneEditBox').style.display = isDM ? 'block' : 'none';
+  document.getElementById('dndCutsceneEditBox').style.display = isDM ? 'block' : 'none';
+  document.getElementById('dndSoundboardBox').style.display = isDM ? 'block' : 'none';
+  document.getElementById('dndMusicBox').style.display = isDM ? 'block' : 'none';
   document.getElementById('dndTimeEditBox').style.display = isDM ? 'block' : 'none';
   if (isDM) {
     document.getElementById('dndCreateBox').style.display = 'none';
-    document.getElementById('dndMySheetBox').style.display = 'none';
+    document.getElementById('dndMySheetOverlay').style.display = 'none';
     dndCreateInitialized = false;
     if (!dndSceneEditInitialized) {
       document.getElementById('dndSceneLocationInput').value = (state.scene && state.scene.location) || '';
@@ -3757,8 +4704,8 @@ function renderDndState(state) {
   } else {
     const locked = !!(dndYou && dndYou.locked);
     document.getElementById('dndCreateBox').style.display = locked ? 'none' : 'block';
-    document.getElementById('dndMySheetBox').style.display = locked ? 'block' : 'none';
     if (!locked) {
+      document.getElementById('dndMySheetOverlay').style.display = 'none';
       if (!dndCreateInitialized) { initDndCreateForm(); dndCreateInitialized = true; }
     } else {
       dndCreateInitialized = false;
@@ -4326,6 +5273,48 @@ function renderDndTradePickList(containerId, bag, picked) {
     };
   });
 }
+// ฝั่ง "สิ่งที่คุณต้องการ" ขอจากเพื่อนร่วมทีม — ต้องพิมพ์ชื่อไอเทมเอง เพราะผู้เล่นคนอื่นไม่เห็นกระเป๋าของเพื่อนร่วมทีมแล้ว (เห็นได้เฉพาะ DM + เจ้าของกระเป๋า)
+function renderDndTradeRequestPickList(picked) {
+  const box = document.getElementById('dndTradeRequestItems');
+  if (!box) return;
+  const names = Object.keys(picked).filter(k => picked[k] > 0);
+  box.innerHTML = `
+    ${names.map(name => `
+      <div class="dndTradeItemPickRow">
+        <span class="dndTradeItemPickName">${escapeHtml(name)}</span>
+        <input type="number" min="0" value="${picked[name]}" data-reqpickname="${escapeHtml(name)}">
+        <button type="button" data-reqremove="${escapeHtml(name)}" class="linkBtn">✖</button>
+      </div>`).join('')}
+    <div class="dndTradeItemPickRow">
+      <input type="text" id="dndTradeReqNewName" placeholder="ชื่อไอเทมที่จะขอ" maxlength="40">
+      <input type="number" id="dndTradeReqNewQty" min="1" value="1" style="width:60px;">
+      <button type="button" id="dndTradeReqAddBtn" class="linkBtn">➕ เพิ่ม</button>
+    </div>`;
+  box.querySelectorAll('input[data-reqpickname]').forEach(inp => {
+    inp.onchange = () => {
+      const name = inp.dataset.reqpickname;
+      const v = Math.max(0, Math.round(Number(inp.value) || 0));
+      inp.value = v;
+      if (v > 0) picked[name] = v; else delete picked[name];
+      renderDndTradeRequestPickList(picked);
+    };
+  });
+  box.querySelectorAll('button[data-reqremove]').forEach(btn => {
+    btn.onclick = () => { delete picked[btn.dataset.reqremove]; renderDndTradeRequestPickList(picked); };
+  });
+  const addBtn = document.getElementById('dndTradeReqAddBtn');
+  if (addBtn) {
+    addBtn.onclick = () => {
+      const nameInp = document.getElementById('dndTradeReqNewName');
+      const qtyInp = document.getElementById('dndTradeReqNewQty');
+      const name = (nameInp.value || '').trim().slice(0, 40);
+      const qty = Math.max(1, Math.round(Number(qtyInp.value) || 0));
+      if (!name) return;
+      picked[name] = (picked[name] || 0) + qty;
+      renderDndTradeRequestPickList(picked);
+    };
+  }
+}
 function renderDndTradeForm() {
   const sel = document.getElementById('dndTradeTargetSelect');
   const mates = dndTeammates();
@@ -4337,12 +5326,11 @@ function renderDndTradeForm() {
   dndTradeTargetId = sel.value ? Number(sel.value) : null;
 
   const me = myDndEntry();
-  const myBag = (me && me.character && me.character.bag) || [];
-  const targetP = dndTradeTargetId ? dndPlayerById(dndTradeTargetId) : null;
-  const targetBag = (targetP && targetP.character && targetP.character.bag) || [];
+  // ของที่ชำรุด (broken) ห้ามนำไปแลกเปลี่ยน — กรองออกจากลิสต์ที่เลือกได้ฝั่ง "สิ่งที่คุณจะให้"
+  const myBag = ((me && me.character && me.character.bag) || []).filter(it => !it.broken);
 
   renderDndTradePickList('dndTradeOfferItems', myBag, dndTradeOfferPicked);
-  renderDndTradePickList('dndTradeRequestItems', targetBag, dndTradeRequestPicked);
+  renderDndTradeRequestPickList(dndTradeRequestPicked);
 
   sel.onchange = () => {
     dndTradeTargetId = sel.value ? Number(sel.value) : null;
@@ -4400,6 +5388,24 @@ function renderDndGiveTargetOptions() {
     sel.innerHTML = optionsHtml;
     if (prevVal && members.some(p => String(p.id) === prevVal)) sel.value = prevVal;
   });
+  renderDndGiveTargetBagView();
+  const giveSel = document.getElementById('dndGiveTargetSelect');
+  if (giveSel) giveSel.onchange = () => renderDndGiveTargetBagView();
+}
+// แผงนี้ใช้เฉพาะ DM: โชว์ของในกระเป๋าของผู้เล่นที่เลือกไว้ในช่อง "ผู้เล่น" ด้านบน — DM เท่านั้นที่มองเห็นกระเป๋าคนอื่นได้ (ผู้เล่นทั่วไปไม่เห็น)
+function renderDndGiveTargetBagView() {
+  const box = document.getElementById('dndGiveTargetBagView');
+  if (!box) return;
+  const sel = document.getElementById('dndGiveTargetSelect');
+  const targetId = sel && sel.value ? Number(sel.value) : null;
+  const target = targetId ? dndPlayerById(targetId) : null;
+  if (!target) { box.innerHTML = ''; return; }
+  const bag = (target.character && target.character.bag) || [];
+  const gold = (target.character && target.character.gold) || 0;
+  const bagHtml = bag.length
+    ? `<div class="dndBagList" style="margin-top:4px;">${bag.map(it => `<span class="dndBagChip">${it.broken ? '💔 ' : ''}${escapeHtml(it.name)} x${it.qty}${it.broken ? ' (ชำรุด)' : ''}</span>`).join('')}</div>`
+    : ' กระเป๋าว่างเปล่า';
+  box.innerHTML = `🎒 กระเป๋าของ ${escapeHtml(target.character.charName || target.name)} (ทอง: ${gold}):${bagHtml}`;
 }
 function renderDndAllTrades() {
   const box = document.getElementById('dndAllTradesList');
@@ -4480,6 +5486,10 @@ function renderDndBag() {
     const iAmDead = amIDead();
     bagListEl.innerHTML = bag.length
       ? bag.map(it => {
+          if (it.broken) {
+            const repairCost = (Number(it.maxDurability) || 0) * DND_ARMOR_REPAIR_COST_PER_POINT_CLIENT;
+            return `<span class="dndBagChip dndBagChipUsable">💔 ${escapeHtml(it.name)} x${it.qty} <span class="dndRangeHint">(ชำรุด)</span> <button type="button" class="dndBagRepairBtn" data-repairname="${escapeHtml(it.name)}">🛠️ ซ่อม (${repairCost} ทอง)</button></span>`;
+          }
           const def = dndItemEffects.find(e => e.name === it.name);
           if (!def) return `<span class="dndBagChip">${escapeHtml(it.name)} x${it.qty}</span>`;
           let disabledAttr = iAmDead ? ' disabled' : '';
@@ -4503,6 +5513,12 @@ function renderDndBag() {
           return `<span class="dndBagChip dndBagChipUsable">${escapeHtml(it.name)} x${it.qty} <button type="button" class="dndBagUseBtn" data-usename="${escapeHtml(it.name)}" data-efftype="${escapeHtml(def.effectType || '')}"${disabledAttr}${titleAttr}>ใช้</button></span>`;
         }).join('')
       : `<span class="dndRangeHint">กระเป๋าว่างเปล่า</span>`;
+    bagListEl.querySelectorAll('button[data-repairname]').forEach(btn => {
+      btn.onclick = (ev) => {
+        flashBtn(ev.currentTarget);
+        send({ type: 'dndRepairBagItem', name: btn.dataset.repairname });
+      };
+    });
     bagListEl.querySelectorAll('button[data-usename]').forEach(btn => {
       btn.onclick = (ev) => {
         if (amIDead()) { showDndErrorToast(dndDeadMsgForMe()); return; }
